@@ -1,0 +1,30 @@
+RFC 004: Agent Harness & Context Window Manager Spec
+1. Harness Overview
+The pure-Go agent harness acts as the bridge between MQTT event streams and the local RKLLM inference engine. It maintains a short-term conversational context buffer and formats environment state into structured prompts [cite: OurVillage].
+2. Context Window Assembly Template
+=== YOUR PROFILE ===
+Name: Eldon the Millwright
+Current Location: Town Mill
+Gold: 15 | Inventory: 4x Wheat, 2x Flour
+Need: Low Energy (Hunger 7/10)
+
+=== LOCATION RULES (Town Mill) ===
+- You must charge a fair fee (1-2 gold) for grinding wheat.
+- Only trade-related talk during work hours.
+
+=== RECENT LOGS ===
+[10:04] Farmer Luke says: "Eldon, I have 10 sacks of wheat. What's your rate today?"
+[10:05] SYSTEM: Server tick. Time is 10:05 AM. Sunny.
+
+=== INSTRUCTION ===
+Decide your next action. You can communicate, whisper, move, or trade.
+Respond in valid JSON:
+{
+  "thought": "Luke wants to mill 10 sacks. I am low on gold and hungry, so I will charge 2 gold.",
+  "action": "chat",
+  "payload": "Good morning Luke! Rates are 2 gold per batch today. Shall we strike a deal?"
+}
+
+
+
+

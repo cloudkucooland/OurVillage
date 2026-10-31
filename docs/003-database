@@ -1,0 +1,59 @@
+RFC 003: Database Schema (SQLite)
+The core SQLite schema supporting characters, locations, items, inventories, and transactions [cite: OurVillage]:
+-- Locations Table
+CREATE TABLE locations (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,
+    owner_id TEXT,
+    is_public_property BOOLEAN DEFAULT 0,
+    open_time TEXT,
+    close_time TEXT,
+    rules_prompt TEXT,
+    FOREIGN KEY (owner_id) REFERENCES characters(id)
+);
+
+-- Location Operators
+CREATE TABLE location_operators (
+    location_id TEXT NOT NULL,
+    character_id TEXT NOT NULL,
+    granted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (location_id, character_id),
+    FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE,
+    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+);
+
+-- Characters Table
+CREATE TABLE characters (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    persona_prompt TEXT NOT NULL,
+    occupation TEXT NOT NULL,
+    gold INTEGER NOT NULL DEFAULT 10,
+    hunger INTEGER NOT NULL DEFAULT 100,
+    current_location TEXT NOT NULL DEFAULT 'town_square',
+    is_online BOOLEAN NOT NULL DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (current_location) REFERENCES locations(id)
+);
+
+-- Items & Inventories Table
+CREATE TABLE items (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    is_consumable BOOLEAN DEFAULT 0,
+    hunger_restore INTEGER DEFAULT 0
+);
+
+CREATE TABLE inventories (
+    character_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (character_id, item_id),
+    FOREIGN KEY (character_id) REFERENCES characters(id),
+    FOREIGN KEY (item_id) REFERENCES items(id)
+);
+
+
+

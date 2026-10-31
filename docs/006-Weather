@@ -1,0 +1,37 @@
+RFC 006: Weather Integration & OpenWeatherMap Bridge
+1. System Architecture
+RFC 006 defines the asynchronous weather bridge connecting physical real-world weather metrics to in-game environmental state variables via the OpenWeatherMap API [cite: OurVillage].
+2. Real-World to In-Game Parameter Mapping
+OpenWeather Metric
+In-Game Condition
+Mechanical Impact
+ 
+Precipitation > 2.0 mm/h
+RAIN / STORM
+Crop growth tick rate x1.5; outdoor resting efficiency -50%; increases tavern traffic [cite: OurVillage].
+Temperature < 0° C
+FREEZING / SNOW
+Increases firewood consumption rate x2; outdoor resting without shelter causes energy loss [cite: OurVillage].
+Clear / Low Wind
+SUNNY / CLEAR
+Standard crop growth; normal outdoor resting; high market trade volume [cite: OurVillage].
+
+3. Server Weather Tick Schema
+The server broadcasts weather updates inside master tick payloads on world/global/time [cite: OurVillage]:
+{
+  "tick": 8420,
+  "in_game_time": "14:00",
+  "season": "AUTUMN",
+  "weather": {
+    "condition": "HEAVY_RAIN",
+    "temp_c": 11.2,
+    "effects": {
+      "crop_growth_multiplier": 1.5,
+      "outdoor_rest_penalty": 0.5,
+      "firewood_consumption": 1.2
+    }
+  }
+}
+
+
+

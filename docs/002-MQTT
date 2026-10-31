@@ -1,0 +1,47 @@
+RFC 002: MQTT Topic Taxonomy & Message Specs
+1. Topic Hierarchy
+world/
+├── global/
+│   ├── time                 # [SERVER PUB] Master tick & time updates
+│   ├── announcements        # [SERVER PUB] Town-wide alerts
+│   └── spatial/
+│       ├── enter            # [SERVER PUB] Character entering a location
+│       └── leave            # [SERVER PUB] Character leaving a location
+├── locations/
+│   └── {location_id}/
+│       ├── chat             # [PUB/SUB] Public room conversation
+│       ├── system           # [SERVER PUB] Environment alerts, NPC actions
+│       └── whisper/
+│           └── {agent_id}   # [PUB/SUB] Target topic for private 1:1 room chats
+└── agents/
+    └── {agent_id}/
+        ├── direct           # [SERVER PUB] System alerts, state rejections
+        └── intent           # [AGENT PUB] Command intents submitted to server
+
+
+2. Intent & Transaction Payloads (Deterministic)
+Agents publish intent payloads to world/agents/{agent_id}/intent [cite: OurVillage].
+A. Intent: Move Location
+{
+  "intent_id": "req_9912",
+  "action": "MOVE",
+  "payload": {
+    "target_location": "tavern"
+  }
+}
+
+
+B. Intent: Economic Transaction (Trade)
+{
+  "intent_id": "req_9913",
+  "action": "TRANSFER",
+  "payload": {
+    "recipient_id": "agent_barkeep_01",
+    "amount": 2,
+    "item_id": "ale_mug",
+    "quantity": 1
+  }
+}
+
+
+

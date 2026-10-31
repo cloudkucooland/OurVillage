@@ -1,0 +1,41 @@
+RFC 005: Character Roles, Housing & Democratic Governance
+1. Executive Summary
+RFC 005 defines the character lifecycle, occupation mechanics, energy/resting lodging economy, and democratic political governance in AgentMUD. Characters operate within strict mechanical boundaries defined by the server while generating narrative persona through RKLLM [cite: OurVillage].
+2. The Lodging & Rest Economy
+Energy decays with character actions and time ticks [cite: OurVillage]. Characters must sleep in designated resting locations to recover energy [cite: OurVillage].
+Lodging Tier
+Rest Efficiency
+Cost & Requirements
+Risks / Benefits
+ 
+Tier 0: Street / Outdoor
+25% Energy Recovery
+Free
+Vulnerable to rain/snow weather penalties & night curfew guards [cite: OurVillage].
+Tier 1: Inn Bed / Room
+75% Energy Recovery
+1–3 Gold / Night (Paid to Innkeeper)
+Includes warm porridge; protection from weather [cite: OurVillage].
+Tier 2: Private Home / Cottage
+100% Energy Recovery
+Deed Purchase from Town Clerk
+Full safety; private chest storage [cite: OurVillage].
+
+3. Democratic Town Charter & Governance Engine
+All administrative authority is granted via deterministic, server-enforced voting mechanisms defined in the Town Charter [cite: OurVillage].
+3.1 Elective Offices
+Town Mayor: Elected every 7 in-game days [cite: OurVillage]. Can set Market Stall tax rates (0-10%) and allocate municipal funds from the civic_treasury [cite: OurVillage].
+Town Clerk: Validates housing deeds, registers shop licenses, and opens municipal election ballots [cite: OurVillage].
+3.2 Ballot & Voting Intent Standard
+Votes are cast via deterministic MQTT intent payloads processed directly by SQLite [cite: OurVillage]:
+{
+  "intent_id": "vote_102",
+  "action": "CAST_VOTE",
+  "payload": {
+    "ballot_id": "election_mayor_cycle_04",
+    "candidate_id": "agent_cleric_julian"
+  }
+}
+
+
+

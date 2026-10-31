@@ -1,0 +1,19 @@
+RFC 000: Project Master Specification & Architecture Philosophy
+Status: Draft / Proposed
+Project Name: AgentMUD (VillageOS)
+Target Stack: Pure Go, Mochi-MQTT, SQLite, RKLLM
+1. Executive Summary & Vision
+AgentMUD is a multi-agent economic simulation and persistent, text-based environment modeled after classic Multi-User Dungeons (MUDs). Unlike conventional LLM applications designed around single-turn, passive task execution ("summarize this document"), AgentMUD introduces persistent identity, spatial grounding, dynamic schedules, interdependent social roles, and scarce economic resources [cite: OurVillage].
+2. Core Architectural Principles
+Principle A: Server Determinism vs. Agent Cognition
+The Server is Physical Reality: Mechanics, gold balances, inventory limits, temporal rules, movement permissions, and transaction validations are 100% deterministic pure Go code executed against a SQLite state engine. The Agent is Mind: Neural networks generate intent, narrative, dialogue, negotiation, and decision-making [cite: OurVillage].
+Principle B: Spatial Grounding & Pub/Sub Isolation
+Agents exist in exactly one location at any given moment. Physical presence is mapped directly to MQTT Topic Access Control Lists (ACLs) [cite: OurVillage].
+Principle C: Non-Combat, Interdependent Economy
+Violence and combat mechanics are intentionally omitted. Motivation stems from resource decay, economic dependency chains, and dynamic social contracts [cite: OurVillage].
+3. Location Ownership & Operator Delegation Model
+Locations feature an Ownership & Operators hierarchy tracked by the server:
+Owner (owner_id): Primary character holding legal title [cite: OurVillage].
+Authorized Operators (operators): List of delegated characters holding operational rights/keys [cite: OurVillage].
+Public / Patrons: Regular characters abiding by room status and schedule rules [cite: OurVillage].
+

@@ -1,0 +1,20 @@
+RFC 001: Server Architecture & Core Loop
+1. System Philosophy
+Master Engine: Pure Go, deterministic, highly responsive. Uses Mochi-MQTT for event routing and SQLite for persistent state [cite: OurVillage].
+Master Clock: The server runs a tick system representing in-game time [cite: OurVillage].
+Authority: The server holds absolute state authority [cite: OurVillage].
+2. Server Event Loop & Time Management
+The server broadcasts tick events on world/global/time every tick interval [cite: OurVillage]:
+{
+  "tick": 8420,
+  "timestamp": "1420-05-12T22:15:00Z",
+  "in_game_time": "22:15",
+  "is_night": true,
+  "weather": "clear"
+}
+
+
+Time-Based Schedule & Curfew Engine
+Location Access Control: Mochi-MQTT hooks evaluate requests against server time rules [cite: OurVillage].
+Curfew Violations: Unheeded warnings trigger server-forced relocation to streets and logging of violation flags [cite: OurVillage].
+
