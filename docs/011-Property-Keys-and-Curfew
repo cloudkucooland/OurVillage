@@ -1,0 +1,68 @@
+RFC 011: Property Ownership, Locks & Curfew Enforcement Spec
+Status: Proposed / Future Development
+Target Stack: Pure Go, Mochi-MQTT, SQLite
+
+1. Executive Summary
+Agentville balances individual property rights with civic order. RFC 011 defines physical door locks, key delegation, trespassing violations, and municipal curfew enforcement (night watch sweeps).
+
+2. Locks & Key Access Control
+Locations can have their doors toggled between `UNLOCKED` and `LOCKED`:
+- Keyholders: The registered `owner_id` or any character listed in `location_operators` possesses physical key access.
+- Locking Intent: Authorized operators can issue `LOCK_DOOR` or `UNLOCK_DOOR`.
+- Automatic Schedules: Commercial shops auto-lock at `close_time` and unlock at `open_time`.
+- Unauthorized Entry: Submitting a `MOVE` intent into a `LOCKED` room without operator rights triggers an immediate server rejection (`DOOR_LOCKED`) or a trespassing event if entered via bypass.
+
+3. Trespassing & Infractions
+If an agent enters or refuses to vacate a private property outside business hours:
+- Server logs an infraction record in `civic_infractions`.
+- Broadcasts alert on `world/locations/{location_id}/system`: "[ALERT] Martha the Barkeep discovers an intruder inside The Boar's Tusk after hours!"
+- The property owner may issue an `EJECT` intent, forcing the intruder into the street/town square.
+
+4. Town Curfew & Night Watch (Bailiff Engine)
+At night (between 22:00 and 05:00 in-game time):
+- Curfew Enforcement: Unhoused agents found idling outdoors in public squares or alleys receive a curfew warning.
+- Bailiff Patrol Tick: On unheeded warnings, the server's deterministic bailiff routine:
+  1. Forcibly relocates the offending agent to the Town Hall holding cell or Church sanctuary.
+  2. Imposes a 2 gold municipal curfew fine automatically transferred to the `civic_treasury`.
+  3. Deducts rest efficiency, preventing overnight energy restoration.
+
+5. Database Schema
+```sql
+CREATE TABLE location_doors (
+    location_id TEXT PRIMARY KEY,
+    is_locked BOOLEAN NOT NULL DEFAULT 0,
+    lock_level INTEGER DEFAULT 1,
+    key_item_id TEXT,
+    FOREIGN KEY (location_id) REFERENCES locations(id)
+);
+
+CREATE TABLE civic_infractions (
+    id TEXT PRIMARY KEY,
+    character_id TEXT NOT NULL,
+    infraction_type TEXT NOT NULL, -- 'TRESPASSING', 'CURFEW_VIOLATION', 'UNPAID_DEBT'
+    fine_gold INTEGER DEFAULT 0,
+    tick INTEGER NOT NULL,
+    is_resolved BOOLEAN DEFAULT 0,
+    FOREIGN KEY (character_id) REFERENCES characters(id)
+);
+```
+
+6. MQTT Intent Standard
+```json
+{
+  "intent_id": "lock_101",
+  "action": "LOCK_DOOR",
+  "payload": {
+    "location_id": "bakery"
+  }
+}
+```
+```json
+{
+  "intent_id": "eject_102",
+  "action": "EJECT",
+  "payload": {
+    "target_character_id": "suspicious_wanderer"
+  }
+}
+```

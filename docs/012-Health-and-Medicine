@@ -1,0 +1,59 @@
+RFC 012: Weather Exposure, Health & Herbal Medicine Spec
+Status: Proposed / Future Development
+Target Stack: Pure Go, Mochi-MQTT, SQLite, RKLLM
+
+1. Executive Summary & Physiological Reality
+RFC 012 connects real-world weather states (RFC 006) to character physiological health, giving the Herbalist, Apothecary, and Tavern a vital role in communal survival. Environmental exposure, malnutrition, and fatigue lead to distinct mechanical sickness states that require medical intervention.
+
+2. Health & Vigor Variables
+Characters maintain health indicators in SQLite:
+- `health`: 0 - 100 (Physical integrity; at 0, character collapses from exhaustion).
+- `sickness_state`: NONE, CHILL, FEVER, FOOD_POISONING, HYPOTHERMIA.
+- `warmth`: 0 - 100 (Thermal insulation based on shelter, clothing, and fire proximity).
+
+3. Environmental Exposure & Contraction Conditions
+- Freezing Cold (< 0° C, Snow): Idling outdoors without a wool cloak or active hearth decreases `warmth` by 5 per hour. When `warmth < 20`, character contracts `CHILL` or `HYPOTHERMIA`.
+- Heavy Rain & Storms: Increases illness contraction probability by 3x during outdoor foraging.
+- Eating Near-Spoiled / Rotting Food: 40% chance of contracting `FOOD_POISONING`.
+
+4. Mechanical Debuffs & Prompt Injection
+When afflicted by sickness:
+- Energy Decay: Energy drains at 2.5x normal rate; physical actions require +50% ticks.
+- Persona & Cognitive Prompt Injection: Sickness state is injected into the RKLLM prompt context:
+  `[PHYSICAL STATE]: You are suffering from a shivering chill. Your voice is raspy, thoughts sluggish, and you desperately desire warm soup and rest.`
+  This organically reflects illness in agent dialogue and negotiation priorities.
+
+5. Herbal Medicine & Remedies
+Remedies crafted by the Herbalist (RFC 008) directly cure conditions:
+| Remedy | Ingredients | Cures Condition | Extra Effects |
+|:-------|:------------|:----------------|:--------------|
+| Willowbark Tea | Medicinal Herbs + Fresh Water | CHILL, MILD_FEVER | Restores +15 Warmth |
+| Activated Charcoal Draught | Lump of Coal + Clay Lumps | FOOD_POISONING | Halts nausea; restores +20 Health |
+| Warming Winter Broth | Roasted Mutton + Herbs + Water | HYPOTHERMIA | Restores +50 Warmth, +30 Energy |
+
+6. Database Schema
+```sql
+CREATE TABLE character_health (
+    character_id TEXT PRIMARY KEY,
+    health INTEGER NOT NULL DEFAULT 100,
+    warmth INTEGER NOT NULL DEFAULT 100,
+    sickness_state TEXT NOT NULL DEFAULT 'NONE',
+    afflicted_at_tick INTEGER DEFAULT 0,
+    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+);
+```
+
+7. Medical Consumption Intent
+```json
+{
+  "intent_id": "heal_201",
+  "action": "CONSUME",
+  "payload": {
+    "item_id": "willowbark_tea"
+  }
+}
+```
+Validation rules:
+- Consumes item from inventory.
+- Clears matching `sickness_state`.
+- Restores health and warmth instantly.

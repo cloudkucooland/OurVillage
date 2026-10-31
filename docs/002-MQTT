@@ -6,21 +6,23 @@ world/
 │   ├── announcements        # [SERVER PUB] Town-wide alerts
 │   └── spatial/
 │       ├── enter            # [SERVER PUB] Character entering a location
-│       └── leave            # [SERVER PUB] Character leaving a location
+│       ├── leave            # [SERVER PUB] Character leaving a location
+│       └── move             # [SERVER PUB] Character movement transition
 ├── locations/
 │   └── {location_id}/
 │       ├── chat             # [PUB/SUB] Public room conversation
-│       ├── system           # [SERVER PUB] Environment alerts, NPC actions
+│       ├── system           # [SERVER PUB] Environment alerts, NPC actions, ground items
 │       └── whisper/
 │           └── {agent_id}   # [PUB/SUB] Target topic for private 1:1 room chats
 └── agents/
     └── {agent_id}/
-        ├── direct           # [SERVER PUB] System alerts, state rejections
+        ├── direct           # [SERVER PUB] System alerts, state rejections, action results
         └── intent           # [AGENT PUB] Command intents submitted to server
 
 
 2. Intent & Transaction Payloads (Deterministic)
 Agents publish intent payloads to world/agents/{agent_id}/intent [cite: OurVillage].
+
 A. Intent: Move Location
 {
   "intent_id": "req_9912",
@@ -29,7 +31,6 @@ A. Intent: Move Location
     "target_location": "tavern"
   }
 }
-
 
 B. Intent: Economic Transaction (Trade)
 {
@@ -43,5 +44,48 @@ B. Intent: Economic Transaction (Trade)
   }
 }
 
+C. Intent: Public Chat
+{
+  "intent_id": "req_9914",
+  "action": "CHAT",
+  "payload": {
+    "message": "Greetings, everyone."
+  }
+}
 
+D. Intent: Forage Resource (Duration Action)
+{
+  "intent_id": "req_9915",
+  "action": "FORAGE",
+  "payload": {
+    "target_resource": "firewood",
+    "duration_ticks": 60
+  }
+}
 
+E. Intent: Cancel Ongoing Action
+{
+  "intent_id": "req_9916",
+  "action": "CANCEL_ACTION",
+  "payload": {}
+}
+
+F. Intent: Drop Item (Ground Transfer)
+{
+  "intent_id": "req_9917",
+  "action": "DROP",
+  "payload": {
+    "item_id": "wood_log",
+    "quantity": 2
+  }
+}
+
+G. Intent: Pick Up Ground Item
+{
+  "intent_id": "req_9918",
+  "action": "PICKUP",
+  "payload": {
+    "item_id": "wood_log",
+    "quantity": 2
+  }
+}

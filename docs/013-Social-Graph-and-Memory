@@ -1,0 +1,67 @@
+RFC 013: Episodic Memory & Social Relationship Graph
+Status: Proposed / Future Development
+Target Stack: Pure Go, SQLite, RKLLM
+
+1. Executive Summary & Persistent Social Grounding
+Human-like communities rely on memory: past trade fairness, broken promises, shared hardships, and political loyalties. RFC 013 introduces a deterministic SQLite relationship ledger paired with compressed episodic memory snippets that the Go harness injects into the RKLLM context window.
+
+2. Social Graph Ledger & Metrics
+For every pairwise character relationship (A -> B), the server tracks:
+- `sentiment`: -100 (Hostile / Bitter) to +100 (Devoted / Trusted Ally).
+- `trust`: 0 to 100 (Reliability in honoring verbal commitments and trades).
+- `trade_volume_gold`: Cumulative gold exchanged.
+- `last_interacted_tick`: Timestamp of the most recent interaction.
+
+Relationship Adjustments (Deterministic Triggers):
+- Successful Trade / Contract Fulfillment: +5 Sentiment, +10 Trust.
+- Price Gouging / Rejected Loan: -5 Sentiment.
+- Eviction / Trespassing Report: -25 Sentiment, -30 Trust.
+- Gift / Relief Aid during Illness: +20 Sentiment, +25 Trust.
+
+3. Compressed Episodic Memory Bank
+In addition to numerical scores, agents maintain short, high-salience episodic memory strings:
+- Generated during significant interactions (e.g. trades, election votes, conflicts).
+- Max 5 active memories per pairwise relationship (FIFO or decay by importance).
+- Examples:
+  * "Luke remembers: Eldon gave me an emergency sack of flour when my crop was flooded."
+  * "Martha remembers: Gideon started a loud tavern brawl and left without paying his tab."
+
+4. Context Window Injection (RFC 004 Synergy)
+When agent A enters a room containing agent B, or receives a chat/whisper from agent B, the harness retrieves relevant memories and inserts them into the profile prompt:
+
+```
+=== KNOWN RELATIONSHIPS IN ROOM ===
+With Martha the Barkeep:
+- Sentiment: +65 (Warm Friendly) | Trust: 80/100
+- Memory: Martha regularly serves warm mutton and lent you 2 gold last week.
+
+With Gideon the Blacksmith:
+- Sentiment: -30 (Distrustful) | Trust: 40/100
+- Memory: Gideon overcharged you for your iron hammer repair.
+```
+
+5. Database Schema
+```sql
+CREATE TABLE character_relationships (
+    character_id TEXT NOT NULL,
+    target_character_id TEXT NOT NULL,
+    sentiment INTEGER NOT NULL DEFAULT 0,
+    trust INTEGER NOT NULL DEFAULT 50,
+    trade_volume_gold INTEGER NOT NULL DEFAULT 0,
+    last_interacted_tick INTEGER DEFAULT 0,
+    PRIMARY KEY (character_id, target_character_id),
+    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+    FOREIGN KEY (target_character_id) REFERENCES characters(id) ON DELETE CASCADE
+);
+
+CREATE TABLE episodic_memories (
+    id TEXT PRIMARY KEY,
+    character_id TEXT NOT NULL,
+    target_character_id TEXT NOT NULL,
+    memory_summary TEXT NOT NULL,
+    emotional_salience INTEGER DEFAULT 5, -- 1 to 10
+    created_at_tick INTEGER NOT NULL,
+    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+    FOREIGN KEY (target_character_id) REFERENCES characters(id) ON DELETE CASCADE
+);
+```

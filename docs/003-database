@@ -1,5 +1,6 @@
 RFC 003: Database Schema (SQLite)
-The core SQLite schema supporting characters, locations, items, inventories, and transactions [cite: OurVillage]:
+The core SQLite schema supporting characters, locations, items, inventories, skills, spatial containers, and ground resources:
+
 -- Locations Table
 CREATE TABLE locations (
     id TEXT PRIMARY KEY,
@@ -7,6 +8,8 @@ CREATE TABLE locations (
     description TEXT NOT NULL,
     owner_id TEXT,
     is_public_property BOOLEAN DEFAULT 0,
+    is_indoor BOOLEAN DEFAULT 0,
+    vehicle_access_tier TEXT DEFAULT 'ALL', -- 'ALL', 'FOOT_AND_WHEELBARROW', 'FOOT_ONLY'
     open_time TEXT,
     close_time TEXT,
     rules_prompt TEXT,
@@ -23,6 +26,29 @@ CREATE TABLE location_operators (
     FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
 );
 
+-- Location Ground Items (Unburdened / Dropped Items)
+CREATE TABLE location_items (
+    location_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    dropped_by TEXT,
+    dropped_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (location_id, item_id),
+    FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE,
+    FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+);
+
+-- Location Dynamic Ecological Resource Pools
+CREATE TABLE location_resources (
+    location_id TEXT NOT NULL,
+    resource_id TEXT NOT NULL,
+    current_stock INTEGER NOT NULL DEFAULT 100,
+    max_stock INTEGER NOT NULL DEFAULT 100,
+    replenish_rate_per_day INTEGER NOT NULL DEFAULT 20,
+    PRIMARY KEY (location_id, resource_id),
+    FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE
+);
+
 -- Characters Table
 CREATE TABLE characters (
     id TEXT PRIMARY KEY,
@@ -31,21 +57,43 @@ CREATE TABLE characters (
     occupation TEXT NOT NULL,
     gold INTEGER NOT NULL DEFAULT 10,
     hunger INTEGER NOT NULL DEFAULT 100,
+    energy INTEGER NOT NULL DEFAULT 100,
     current_location TEXT NOT NULL DEFAULT 'town_square',
+    equipped_container_id TEXT,
+    status TEXT NOT NULL DEFAULT 'IDLE', -- 'IDLE', 'FORAGING', 'RESTING', 'CRAFTING'
+    action_end_tick INTEGER DEFAULT 0,
     is_online BOOLEAN NOT NULL DEFAULT 0,
+    controller_type TEXT NOT NULL DEFAULT 'agent',
+    mqtt_password TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (current_location) REFERENCES locations(id)
+    FOREIGN KEY (current_location) REFERENCES locations(id),
+    FOREIGN KEY (equipped_container_id) REFERENCES items(id)
 );
 
--- Items & Inventories Table
+-- Character Skills Table (Skill-based progression through practice)
+CREATE TABLE character_skills (
+    character_id TEXT NOT NULL,
+    skill_id TEXT NOT NULL, -- 'foraging', 'woodcutting', 'herbalism', etc.
+    level INTEGER NOT NULL DEFAULT 1,
+    experience INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (character_id, skill_id),
+    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+);
+
+-- Items Table (Mass, Container & Consumable Properties)
 CREATE TABLE items (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     description TEXT,
+    weight_kg REAL NOT NULL DEFAULT 0.1,
     is_consumable BOOLEAN DEFAULT 0,
-    hunger_restore INTEGER DEFAULT 0
+    hunger_restore INTEGER DEFAULT 0,
+    is_container BOOLEAN DEFAULT 0,
+    capacity_kg REAL DEFAULT 0.0,
+    slot_limit INTEGER DEFAULT 0
 );
 
+-- Inventories Table
 CREATE TABLE inventories (
     character_id TEXT NOT NULL,
     item_id TEXT NOT NULL,
@@ -54,6 +102,3 @@ CREATE TABLE inventories (
     FOREIGN KEY (character_id) REFERENCES characters(id),
     FOREIGN KEY (item_id) REFERENCES items(id)
 );
-
-
-

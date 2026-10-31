@@ -1,6 +1,6 @@
 RFC 004: Agent Harness & Context Window Manager Spec
 1. Harness Overview
-The pure-Go agent harness acts as the bridge between MQTT event streams and the local RKLLM inference engine. It maintains a short-term conversational context buffer and formats environment state into structured prompts [cite: OurVillage].
+The pure-Go agent harness acts as the bridge between MQTT event streams and the pluggable inference engine layer (supporting local edge inference via go-llama-pure for Raspberry Pi, RKLLM for Rockchip NPU, and remote cloud endpoints). It maintains a short-term conversational context buffer and formats environment state into structured prompts (see cmd/agentmud-client/README.md for full model layer specification and client roadmap) [cite: OurVillage].
 2. Context Window Assembly Template
 === YOUR PROFILE ===
 Name: Eldon the Millwright

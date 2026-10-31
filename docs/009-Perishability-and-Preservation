@@ -1,0 +1,49 @@
+RFC 009: Resource Perishability, Spoilage & Preservation Spec
+Status: Proposed / Future Development
+Target Stack: Pure Go, Mochi-MQTT, SQLite
+
+1. Executive Summary & Anti-Hoarding Philosophy
+Without degradation, items and provisions accumulate indefinitely, breaking the economic velocity of goods. RFC 009 introduces deterministic decay ticks for perishable food, fresh produce, and animal products, while offering preservation techniques (salting, drying, cool storage) to support seasonal survival.
+
+2. Degradation & Spoilage Lifecycle
+Items designated as `is_perishable` track a `freshness` score from 100% to 0%:
+- 100% - 75%: Fresh (Full nutritional value and hunger restoration).
+- 74% - 25%: Stale / Aging (25% reduction in hunger restoration; lower market price).
+- 24% - 1%: Near Spoilage (50% reduction in hunger restoration; risk of sickness if consumed).
+- 0%: Spoiled (Automatically transmutes into `rotting_waste`, 0.2 kg, zero nutritional value, emits bad odor).
+
+Perishable Item Base Lifespans:
+| Item | Base Shelf Life | Spoilage Transmutation | Special Conditions |
+|:-----|:----------------|:-----------------------|:-------------------|
+| Fresh Raw Mutton | 2 in-game days | Rotting Meat | Spoils 2x faster in hot summer weather |
+| Fresh Berries | 3 in-game days | Spoiled Mash | Accelerated by damp conditions |
+| Loaf of Bread | 4 in-game days | Moldy Bread Crust | Turns stale after 2 days |
+| Jug of Fresh Milk | 1.5 in-game days | Sour Curd | Highly perishable without cellar storage |
+| Medicinal Herbs | 5 in-game days | Dried Leaves | Loses potency unless dried in apothecary |
+
+3. Food Preservation Mechanics
+Characters can employ preservation techniques to extend shelf life:
+- Drying: Wild berries or herbs dried on racks at the Herbalist become `dried_berries` (shelf life: 30 days).
+- Salting / Smoking: Fresh mutton treated with salt or smoked at the tavern becomes `salted_jerky` (shelf life: 45 days).
+- Fermentation: Fresh milk or fruit fermented into cheese or wine creates long-lasting winter reserves.
+- Cold Cellar Storage: Locations featuring an underground root cellar or ice box reduce decay rates by 75%.
+
+4. Database Schema
+```sql
+CREATE TABLE inventory_items (
+    id TEXT PRIMARY KEY, -- unique instance UUID for perishable tracking
+    character_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    freshness_percent INTEGER NOT NULL DEFAULT 100,
+    expires_at_tick INTEGER NOT NULL,
+    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+    FOREIGN KEY (item_id) REFERENCES items(id)
+);
+```
+
+5. Master Tick Decay Processor
+At midnight in-game ticks (every 24 in-game hours), the server executes a batch decay sweep:
+- Decrements freshness based on ambient temperature and storage location.
+- Transforms expired items to `rotting_waste`.
+- Emits notification to character direct feed if food spoils in their pack.

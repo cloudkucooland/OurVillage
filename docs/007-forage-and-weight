@@ -1,0 +1,145 @@
+RFC 007: Resource Foraging, Weight, Skills & Carrying Capacity Spec
+Status: Draft / Proposed
+Target Stack: Pure Go, Mochi-MQTT, SQLite, RKLLM
+
+1. Executive Summary & Weight Invariants
+RFC 007 establishes the physical resource foraging engine, metric mass (kg) carrying capacity, skill-based progression, and spatial inventory constraints for Agentville. Item transport and physical limits are strictly enforced by the server. Carrying limits directly dictate energy expenditure, movement permissions, and trade logistics.
+
+2. Carrying Capacity & Container Gear
+Base unassisted carrying capacity is 20.0 kg. Exceeding capacity imposes server-enforced encumbrance penalties:
+- 0.0 kg – 20.0 kg (Unencumbered): Standard movement speed and baseline energy decay.
+- 20.1 kg – 30.0 kg (Encumbered): Double energy decay per action tick.
+- > 30.0 kg (Overburdened): Movement intents (MOVE) are strictly rejected by the server until excess weight is relieved.
+
+Container & Vehicle Equipment Table:
+| Item / Equipment     | Item Weight | Max Capacity Granted | Slot Limit | Spatial Access Restriction | Notes & Crafting |
+|:---------------------|:------------|:---------------------|:-----------|:---------------------------|:-----------------|
+| Unassisted (Base)    | 0.0 kg      | 20.0 kg              | 5 slots    | All spaces                 | Default starting state. |
+| Woven Basket         | 0.5 kg      | 30.0 kg              | 8 slots    | All spaces                 | Woven from reeds; ideal for berries and herbs. |
+| Leather Backpack     | 1.5 kg      | 45.0 kg              | 12 slots   | All spaces                 | Crafted by Tanner/Tailor; worn in back slot. |
+| Wheelbarrow          | 8.0 kg      | 100.0 kg             | 20 slots   | Ground & outdoor floors    | Requires 2 hands; blocked from narrow rooms & attics. |
+| Draft Horse & Cart   | 45.0 kg     | 350.0 kg             | 40 slots   | Roads & outdoors only      | Blocked from indoor rooms; must remain hitched outside. |
+
+3. Ground Inventory: Dropping & Unburdening Mechanics
+When an agent becomes overburdened or needs to exchange heavy goods:
+- DROP Intent: Agents can drop items from their inventory onto the location floor.
+- PICKUP Intent: Any agent present in the location may pick up items from the ground, subject to their own carrying capacity.
+- Location Items: Ground items persist in the `location_items` table and are broadcast via room system messages.
+
+4. Spatial & Vehicle Accessibility Constraints
+Locations track spatial dimensions via `is_indoor` (boolean) and `vehicle_access_tier`:
+- ALL: Accessible on foot, wheelbarrow, and vehicle (roads, town square, market, stables).
+- FOOT_AND_WHEELBARROW: Accessible by foot or wheelbarrow (ground-floor shops, mills, churches).
+- FOOT_ONLY: Accessible only by unassisted foot traffic or worn containers (attics, cellar tunnels, narrow paths).
+When a MOVE intent is submitted, the server validates the character's equipped container against the target location's access tier.
+
+5. Skill-Based Proficiency Engine (Practice Over Fixed Roles)
+Progression is based on practice and individual skill acquisition rather than fixed occupation locks. Any character (even a Town Clerk or Millwright) can develop outdoor survival and foraging proficiency through deliberate practice.
+
+Core Skills Associated with Foraging:
+- Foraging (General plant, berry, and resource recovery)
+- Woodcutting (Felling logs, deadwood, and branches)
+- Herbalism (Locating rare medicinal plants and identifying toxic flora)
+
+Skill Level Mechanics:
+- Levels scale from 1 to 100 based on earned experience points (XP awarded per completed foraging tick).
+- Yield Multiplier: Base yield scales by `1.0 + (Skill_Level * 0.01)` (up to 2.0x at skill 100).
+- Secondary Discovery Chance: Base rare discovery chance is increased by `+(Skill_Level * 0.05)%`.
+- Energy Efficiency: Energy consumed per foraging hour decreases as skill increases.
+
+6. Stateful Temporal Foraging Engine & Action Locks
+Foraging is a stateful duration-based action, not an instant click:
+1. Intent Submission: Character submits a `FORAGE` intent with a `target_resource` and requested `duration_ticks` (e.g. 60 ticks = 1 in-game hour).
+2. Action Lock: The server verifies the character is in a valid foraging location and not already busy. Character state transitions from `IDLE` to `status = 'FORAGING'`, with `action_end_tick = current_tick + duration_ticks`.
+3. Concurrency Protection: While busy, movement (`MOVE`) and trading (`TRANSFER`) intents are rejected with `CHARACTER_BUSY`.
+4. Early Cancellation: An agent may submit a `CANCEL_ACTION` intent at any time. The server calculates prorated returns for ticks completed so far.
+5. Tick Resolution: When `current_tick >= action_end_tick`, the server evaluates the yield formula, checks ecological stock, adds items to inventory, applies XP to the character's skill, deducts energy/hunger, and sets status back to `IDLE`.
+
+7. Probabilistic & Fractional Yield Resolution
+To prevent zero-yield deadzones during partial hours:
+Expected_Yield = (Ticks_Spent / 60) * Base_Success_Rate * Skill_Multiplier * Weather_Multiplier * RNG_Factor
+- The integer portion `Floor(Expected_Yield)` is guaranteed.
+- The fractional remainder `Fraction(Expected_Yield)` is resolved via a server pseudorandom roll (e.g., 0.35 yields a 35% chance of an extra unit).
+
+8. Ecological Resource Depletion & Replenishment
+Outdoor locations contain dynamic resource pools in `location_resources`:
+- Each resource has a `current_stock`, `max_stock`, and `replenish_rate_per_day`.
+- Heavy harvesting depletes local stocks. When depleted, base success rate falls by up to 80%, encouraging agents to move between foraging sites.
+- Weather synergy: Rain refills freshwater and accelerates mushroom/herbal regrowth; dry sunny weather restores dry firewood.
+
+9. Secondary & Rare Discovery Table
+| Location ID     | Primary Target    | Secondary Item     | Base Drop Rate / Hour | Discovery Context |
+|:----------------|:------------------|:-------------------|:----------------------|:------------------|
+| deep_forest     | firewood / logs   | wild_mushrooms     | 3.0%                  | Found on damp decaying bark. |
+| deep_forest     | firewood / logs   | bird_feather       | 5.0%                  | Fallen from overhead canopy. |
+| prairie         | animal_fodder     | medicinal_herbs    | 4.0%                  | Hidden among meadow grasses. |
+| prairie         | wild_grain        | field_berries      | 3.5%                  | Shaded under wild brambles. |
+| riverbank       | clay_lumps        | freshwater_pearl   | 0.5%                  | Uncovered in riverbed mussel. |
+| riverbank       | fresh_water       | river_reeds        | 6.0%                  | Gathered along the shoreline. |
+
+10. MQTT Intent & Event Schemas
+
+10.1 Intent: Start Foraging
+Topic: `world/agents/{agent_id}/intent`
+```json
+{
+  "intent_id": "req_8819",
+  "action": "FORAGE",
+  "payload": {
+    "target_resource": "firewood",
+    "duration_ticks": 60
+  }
+}
+```
+
+10.2 Intent: Cancel Current Action
+```json
+{
+  "intent_id": "req_8820",
+  "action": "CANCEL_ACTION",
+  "payload": {}
+}
+```
+
+10.3 Intent: Drop Item
+```json
+{
+  "intent_id": "req_8821",
+  "action": "DROP",
+  "payload": {
+    "item_id": "firewood",
+    "quantity": 2
+  }
+}
+```
+
+10.4 Intent: Pick Up Item
+```json
+{
+  "intent_id": "req_8822",
+  "action": "PICKUP",
+  "payload": {
+    "item_id": "firewood",
+    "quantity": 2
+  }
+}
+```
+
+10.5 Server Event Broadcast (Direct Agent Response on Complete)
+Topic: `world/agents/{agent_id}/direct`
+```json
+{
+  "intent_id": "req_8819",
+  "status": "SUCCESS",
+  "ticks_spent": 60,
+  "energy_deducted": 8,
+  "skill_xp_gained": 15,
+  "yield": [
+    {"item_id": "firewood", "quantity": 1, "weight_kg": 1.0},
+    {"item_id": "wild_mushrooms", "quantity": 1, "weight_kg": 0.2, "is_secondary_discovery": true}
+  ],
+  "total_weight_kg": 18.2,
+  "max_capacity_kg": 30.0,
+  "narrative_log": "You spent 1 hour gathering firewood in Deep Forest. You secured 1 firewood bundle and discovered wild mushrooms."
+}
+```

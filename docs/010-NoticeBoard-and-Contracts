@@ -1,0 +1,78 @@
+RFC 010: Notice Board, Work Contracts & Escrow Engine
+Status: Proposed / Future Development
+Target Stack: Pure Go, Mochi-MQTT, SQLite, RKLLM
+
+1. Executive Summary & Asynchronous Exchange
+In a spatially distributed world with divergent agent schedules, direct 1:1 barter is insufficient. RFC 010 introduces physical Notice Boards located at the Town Square and The Boar's Tusk Tavern. The server acts as a trustless escrow authority, guaranteeing payment upon contract fulfillment without counterparty fraud.
+
+2. Contract Types & Mechanics
+1. Buy / Procurement Order: "Buying 10x Firewood at 2 gold each."
+   - Poster's gold (20 gold) is instantly debited and placed into `server_escrow`.
+   - Fulfilling agent delivers firewood to designated delivery chest; server verifies item handoff and releases escrowed gold to deliverer.
+2. Service / Bounties: "Weed the community orchard" or "Supply 20 stones for town hall repairs."
+3. Public / Civic Notices: Town Clerk announcements, election ballot postings, or tax rate proclamations.
+
+3. Deterministic Escrow Workflow
+1. POST: Agent publishes `POST_CONTRACT` intent.
+   - Server checks poster has sufficient gold/items to back the agreement.
+   - State engine locks assets in escrow: `character.gold = gold - escrow_amount`.
+   - Notice posted to board topic `world/locations/{board_location_id}/notices`.
+2. ACCEPT: Another agent claims the work order via `ACCEPT_CONTRACT`.
+3. FULFILL: Contractor deposits required items or performs action via `FULFILL_CONTRACT`.
+   - Server verifies condition in SQLite.
+   - Escrow releases locked gold to contractor and transfers items to poster's delivery mailbox.
+   - Both parties receive direct success notifications.
+4. CANCEL / EXPIRE: If unclaimed after `expiration_ticks`, poster can cancel and reclaim escrowed gold.
+
+4. Database Schema
+```sql
+CREATE TABLE notice_boards (
+    id TEXT PRIMARY KEY,
+    location_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    FOREIGN KEY (location_id) REFERENCES locations(id)
+);
+
+CREATE TABLE contracts (
+    id TEXT PRIMARY KEY,
+    board_id TEXT NOT NULL,
+    creator_id TEXT NOT NULL,
+    assignee_id TEXT,
+    contract_type TEXT NOT NULL, -- 'BUY_ORDER', 'SELL_ORDER', 'SERVICE_BOUNTY'
+    required_item_id TEXT,
+    required_quantity INTEGER DEFAULT 0,
+    reward_gold INTEGER NOT NULL DEFAULT 0,
+    escrow_held_gold INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'OPEN', -- 'OPEN', 'IN_PROGRESS', 'COMPLETED', 'EXPIRED', 'CANCELLED'
+    created_at_tick INTEGER NOT NULL,
+    expires_at_tick INTEGER NOT NULL,
+    delivery_location_id TEXT NOT NULL,
+    FOREIGN KEY (creator_id) REFERENCES characters(id),
+    FOREIGN KEY (assignee_id) REFERENCES characters(id)
+);
+```
+
+5. MQTT Intent Standard
+```json
+{
+  "intent_id": "notice_301",
+  "action": "POST_CONTRACT",
+  "payload": {
+    "board_id": "town_square_board",
+    "contract_type": "BUY_ORDER",
+    "required_item_id": "coal",
+    "required_quantity": 5,
+    "reward_gold": 15,
+    "delivery_location_id": "blacksmith"
+  }
+}
+```
+```json
+{
+  "intent_id": "notice_302",
+  "action": "FULFILL_CONTRACT",
+  "payload": {
+    "contract_id": "contract_591"
+  }
+}
+```

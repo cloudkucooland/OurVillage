@@ -1,0 +1,67 @@
+RFC 014: Municipal Treasury, Taxation & Civic Works Spec
+Status: Proposed / Future Development
+Target Stack: Pure Go, Mochi-MQTT, SQLite
+
+1. Executive Summary & Civic Economics
+Democratic governance (RFC 005) requires economic tools to influence village life. RFC 014 formalizes the village communal vault (`civic_treasury`), sales and land taxation, and public work allocations authorized by elected officials (Mayor and Town Clerk).
+
+2. Municipal Revenue Engine
+The civic treasury is funded through deterministic server-enforced revenue streams:
+1. Market Stall Sales Tax:
+   - Configurable by the Mayor (0% to 15%, default 5%).
+   - Deducted automatically during market transfers: Seller receives `(1 - Tax_Rate) * Gold`, treasury receives `Tax_Rate * Gold`.
+2. Housing & Shop Deeds:
+   - Registration fee (10 to 50 gold) paid to the Clerk upon property purchase.
+3. Curfew & Trespassing Fines:
+   - Fines levied by the bailiff flow directly into the treasury.
+
+3. Mayoral Budget Allocations & Public Works
+The elected Mayor can allocate municipal funds using deterministic intents:
+- Public Grain Subsidy: Purchasing flour or bread from the bakery to distribute to impoverished or starving citizens during winter.
+- Infrastructure Bounties: Posting notice board contracts (RFC 010) paid by the civic treasury (e.g. paying 20 gold to the lumberjack to deliver bridge repair timber).
+- Public Festivities: Funding a town-wide feast at the tavern to raise communal morale and sentiment.
+
+4. Database Schema
+```sql
+CREATE TABLE civic_treasury (
+    id TEXT PRIMARY KEY DEFAULT 'village_vault',
+    gold_balance INTEGER NOT NULL DEFAULT 100,
+    market_tax_rate REAL NOT NULL DEFAULT 0.05, -- 5%
+    property_tax_rate REAL NOT NULL DEFAULT 0.02
+);
+
+CREATE TABLE treasury_ledger (
+    id TEXT PRIMARY KEY,
+    transaction_type TEXT NOT NULL, -- 'TAX_COLLECT', 'FINE', 'MAYOR_DISBURSEMENT', 'BOUNTY_PAYOUT'
+    amount INTEGER NOT NULL,
+    authorized_by TEXT,
+    purpose TEXT NOT NULL,
+    tick INTEGER NOT NULL,
+    FOREIGN KEY (authorized_by) REFERENCES characters(id)
+);
+```
+
+5. MQTT Intent Standard
+```json
+{
+  "intent_id": "gov_501",
+  "action": "SET_TAX_RATE",
+  "payload": {
+    "market_tax_rate": 0.07
+  }
+}
+```
+```json
+{
+  "intent_id": "gov_502",
+  "action": "DISBURSE_TREASURY_FUNDS",
+  "payload": {
+    "amount": 25,
+    "recipient_id": "bakery",
+    "purpose": "Emergency winter bread ration order"
+  }
+}
+```
+Validation rules:
+- Intent sender must be the currently elected Mayor verified against `town_hall` elections.
+- Disbursed amount cannot exceed `civic_treasury.gold_balance`.

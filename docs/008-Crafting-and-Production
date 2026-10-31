@@ -1,0 +1,68 @@
+RFC 008: Multi-Stage Crafting & Supply Chain Engine
+Status: Proposed / Future Development
+Target Stack: Pure Go, Mochi-MQTT, SQLite, RKLLM
+
+1. Executive Summary & Design Invariants
+RFC 008 defines the deterministic multi-stage crafting engine for Agentville. Raw materials obtained from foraging or farming cannot be consumed or traded as finished goods without processing at designated spatial workstations. This enforces economic interdependence between primary producers, crafters, and consumers.
+
+2. Crafting Workstations & Location Requisites
+Crafting is strictly bound to physical locations that feature the necessary tools and machinery:
+| Workstation ID | Location | Equipment Present | Crafting Domain |
+|:---------------|:---------|:------------------|:----------------|
+| millstones     | town_mill | Water-driven mill wheels | Grain processing (Wheat -> Flour) |
+| stone_hearth   | bakery   | Large stone baking oven | Bread, pies, rations |
+| forge_anvil    | blacksmith | Coal forge, anvils, quench tanks | Tools, metal hardware, nails, horseshoes |
+| brew_cask      | tavern   | Fermentation casks & presses | Ale, cider, fruit wine |
+| apothecary_kit | herbalist | Mortar & pestle, alembic | Remedies, tinctures, dried herbs |
+| timber_saw     | lumberjack_lodge | Pit saws, shaping benches | Planks, beams, firewood bundles |
+
+3. Deterministic Recipe Table
+Recipes require exact inputs, produce predetermined outputs, consume character energy, and take a specified duration in ticks:
+- Milling: 2x Wheat + 10 Ticks -> 2x Bag of Flour (Station: millstones)
+- Baking: 2x Bag of Flour + 1x Fresh Water + 20 Ticks -> 3x Loaf of Bread (Station: stone_hearth)
+- Smelting: 2x Iron Ore + 1x Lump of Coal + 30 Ticks -> 1x Iron Ingot (Station: forge_anvil)
+- Smithing: 1x Iron Ingot + 1x Firewood + 40 Ticks -> 1x Smithing Hammer (Station: forge_anvil)
+- Brewing: 3x Wild Berries + 1x Fresh Water + 60 Ticks -> 2x Jug of Berry Wine (Station: brew_cask)
+- Basket Weaving: 4x River Reeds + 30 Ticks -> 1x Woven Basket (Requires no fixed station)
+
+4. Database Schema
+```sql
+CREATE TABLE recipes (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    required_station TEXT, -- NULL if craftable anywhere
+    output_item_id TEXT NOT NULL,
+    output_quantity INTEGER NOT NULL DEFAULT 1,
+    duration_ticks INTEGER NOT NULL DEFAULT 20,
+    energy_cost INTEGER NOT NULL DEFAULT 5,
+    required_skill_id TEXT,
+    min_skill_level INTEGER DEFAULT 1,
+    FOREIGN KEY (output_item_id) REFERENCES items(id)
+);
+
+CREATE TABLE recipe_ingredients (
+    recipe_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (recipe_id, item_id),
+    FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+    FOREIGN KEY (item_id) REFERENCES items(id)
+);
+```
+
+5. MQTT Intent Standard
+Topic: `world/agents/{agent_id}/intent`
+```json
+{
+  "intent_id": "craft_1001",
+  "action": "CRAFT",
+  "payload": {
+    "recipe_id": "bake_bread_batch"
+  }
+}
+```
+Validation rules:
+- Character must be located in the room containing the recipe's `required_station`.
+- Character inventory must contain all required ingredient quantities.
+- Character status must be `IDLE`.
+- Sets character `status = 'CRAFTING'` until duration ticks elapse.

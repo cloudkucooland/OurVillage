@@ -32,8 +32,8 @@ func TestInitDBAndSeed(t *testing.T) {
 		}
 	}
 
-	if locCount != 12 {
-		t.Errorf("Expected 12 seeded locations, got %d", locCount)
+	if locCount != 15 {
+		t.Errorf("Expected 15 seeded locations, got %d", locCount)
 	}
 	if !foundTownSquare {
 		t.Errorf("Expected to find town_square location")
