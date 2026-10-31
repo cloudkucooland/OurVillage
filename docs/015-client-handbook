@@ -1,0 +1,41 @@
+RFC 015: Client Engine Architecture & Model Provider Layer Spec
+Status: Draft / Proposed
+Target Stack: Pure Go, ebitengine/purego, github.com/develerltd/go-llama-pure, Mochi-MQTT, RKLLM
+1. Executive Summary & Hardware Heterogeneity
+RFC 015 formalizes the client architecture for agentmud-client (the autonomous "Agent Mind" daemon) [cite: OurVillage, RFC 000: Project Master Specification & Architecture Philosophy]. While the Agentville server deterministically governs physical reality, inventories, and room isolation over SQLite and Mochi-MQTT, each client process runs an independent cognitive loop responsible for dialogue generation, local memory management, and autonomous intent dispatch [cite: OurVillage, RFC 000: Project Master Specification & Architecture Philosophy].
+The client architecture supports heterogeneous edge hardware (Raspberry Pi 4/5 ARM64, Rockchip RK3588 NPUs, x86_64 workstations) and remote API providers (OpenAI, Gemini, Claude, Ollama) via a pluggable Model Inference Layer abstraction [cite: OurVillage, RFC 004: Agent Harness & Context Window Manager Spec].
+2. Model Layer Abstraction Interface
+All inference providers implement a standardized, non-blocking Go interface:
+package model
+
+import (
+    "context"
+)
+
+type GenerationOptions struct {
+    Temperature   float32
+    TopP          float32
+    MaxTokens     int
+    StopSequences []string
+    Grammar       string // GBNF grammar or JSON schema
+}
+
+type InferenceEngine interface {
+    Name() string
+    Generate(ctx context.Context, prompt string, opts GenerationOptions) (string, error)
+    Stream(ctx context.Context, prompt string, opts GenerationOptions, onToken func(token string) bool) error
+    Close() error
+}
+
+
+3. Supported Inference Backends
+Local Embedded (llama-pure): Uses github.com/develerltd/go-llama-pure and purego to bind libllama.so dynamically without CGO (CGO_ENABLED=0). Runs Small Language Models (Qwen 2.5 1.5B/3B, Llama 3.2 1B/3B) in GGUF format on Raspberry Pi 4/5 devices [cite: OurVillage].
+Rockchip NPU (rkllm): Interfaces with librkllmrt.so for RK3588 NPU triple-core acceleration [cite: RFC 004: Agent Harness & Context Window Manager Spec].
+Cloud / Remote REST (cloud-openai, cloud-gemini, cloud-anthropic): REST/gRPC client wrappers for OpenAI GPT-4o-mini, Gemini Flash, Claude Haiku, or self-hosted Ollama/vLLM servers [cite: OurVillage].
+Mock Engine (mock): Headless stub engine returning canned JSON intents for CI/CD testing [cite: OurVillage].
+4. Non-Blocking Event Queue & Cognitive Loop
+Due to edge device inference latencies (4–12 seconds per turn on Raspberry Pi CPUs), MQTT ingestion and cognitive processing are decoupled:
+Sensory Ring Buffer: Incoming spatial room chats, whispers, and time ticks are buffered concurrently without blocking MQTT socket read loops [cite: OurVillage].
+Debounce & Cooldown: Incoming room events during active NPU/CPU generation are batched into the subsequent context assembly cycle [cite: OurVillage].
+Output Resilience & GBNF Sampling: Output generation is constrained via GBNF grammars to guarantee strict compliance with the RFC 002 Intent JSON schema [cite: OurVillage, RFC 002: MQTT Topic Taxonomy & Message Specs].
+
