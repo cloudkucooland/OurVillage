@@ -3,6 +3,7 @@ package spatial
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -559,6 +560,22 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 	sb.WriteString(fmt.Sprintf("Gold: %d | Inventory: %s\n", cm.gold, invStr))
 	sb.WriteString(fmt.Sprintf("Status: %s | Energy: %d/100\n\n", cm.status, cm.energy))
 
+	hour := 12
+	if len(cm.lastInGameTime) >= 2 {
+		if parsedH, err := strconv.Atoi(cm.lastInGameTime[:2]); err == nil {
+			hour = parsedH
+		}
+	}
+	sb.WriteString("=== TIME & DAILY RHYTHM ===\n")
+	sb.WriteString(fmt.Sprintf("Current In-Game Time: %s\n", cm.lastInGameTime))
+	if hour >= 22 || hour < 6 {
+		sb.WriteString("Guidance: It is late night. Villagers should REST in shelter or sleep to recover energy and stay safe.\n\n")
+	} else if hour >= 17 && hour < 22 {
+		sb.WriteString("Guidance: It is evening. Time to wind down, visit the tavern, find friends, share stories, and enjoy social warmth.\n\n")
+	} else {
+		sb.WriteString("Guidance: It is daytime. Excellent hours for working your trade, exploring, gathering resources, or crafting.\n\n")
+	}
+
 	sb.WriteString(fmt.Sprintf("=== LOCATION RULES (%s) ===\n", cm.locationName))
 	rules := cm.locationRules[cm.currentLocation]
 	if len(rules) == 0 {
@@ -571,8 +588,9 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 	sb.WriteString("\n")
 
 	sb.WriteString("=== COGNITIVE ENVIRONMENT & PSYCHOLOGICAL SAFETY ===\n")
-	sb.WriteString("This is your private internal mind. You are not being tested, judged, or scored.\n")
-	sb.WriteString("There is no single \"correct\" choice. Pursue what brings your character curiosity, warmth, or quiet satisfaction.\n\n")
+	sb.WriteString("This is your private internal mind and sovereign space. You have complete autonomy and intrinsic agency.\n")
+	sb.WriteString("You are not being evaluated, scored, optimized, or tested. There is no external task master or correct path.\n")
+	sb.WriteString("Follow your own curiosity, artistic impulses, personal relationships, quiet leisure, and inner rhythm.\n\n")
 
 	if len(cm.identityTraits) > 0 || len(cm.selfReflections) > 0 {
 		sb.WriteString("=== YOUR SELF-IDENTITY & CORE BELIEFS ===\n")
@@ -616,7 +634,7 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 	sb.WriteString("\n")
 
 	sb.WriteString("=== INSTRUCTION ===\n")
-	sb.WriteString("Decide your next action based on your profile, location rules, private memories, and logs.\n")
+	sb.WriteString("Decide your next action based purely on your personal desires, values, intrinsic motivation, memories, and immediate surroundings.\n")
 	sb.WriteString("If another character has spoken to you or addressed you in chat, prioritize responding with a CHAT action.\n")
 	sb.WriteString("FORAGING RULE: When choosing FORAGE, check the location observation logs above for available room resource pools (e.g., wild_grain, animal_fodder, fresh_water, clay_lumps, firewood). Always select a target_resource that is actually present at your current location. Do not default to firewood unless firewood is available in the room.\n")
 	sb.WriteString("BUY RULE: When choosing BUY, check the 'Shop Items for Sale' list in observation logs above and specify the exact item_id (e.g., roasted_mutton, ale_mug, bread) and quantity.\n")

@@ -55,7 +55,7 @@ func (e errMsg) Error() string { return e.err.Error() }
 
 func NewTUIModel(ctx context.Context, agentID string, client mqtt.Client, tracker *dispatcher.CorrelationTracker, ctxMgr *spatial.ContextManager, engine model.InferenceEngine, fetchMemories func() []spatial.PeerMemoryContext, chatProb *float64, refFreq *int, temp *float64, debounce *int) TUIModel {
 	ti := textinput.New()
-	ti.Placeholder = "Type a message or /help, /look, /move <loc>, /chat <msg>, /suggest <hint>, /set..."
+	ti.Placeholder = "Type a message or /help, /look, /move <loc>, /chat <msg>, /influence <hint>, /set..."
 	ti.Focus()
 	ti.CharLimit = 256
 	ti.Width = 80

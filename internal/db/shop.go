@@ -16,11 +16,17 @@ type ShopItemSeed struct {
 var DefaultShopItems = []ShopItemSeed{
 	{LocationID: "tavern", ItemID: "ale_mug", PriceGold: 2, StockQuantity: 20},
 	{LocationID: "tavern", ItemID: "roasted_mutton", PriceGold: 3, StockQuantity: 15},
+	{LocationID: "tavern", ItemID: "spiced_elderflower_syrup", PriceGold: 4, StockQuantity: 10},
+	{LocationID: "tavern", ItemID: "mint_tea", PriceGold: 2, StockQuantity: 15},
+	{LocationID: "tavern", ItemID: "elderflower_wine", PriceGold: 5, StockQuantity: 10},
 	{LocationID: "bakery", ItemID: "bread", PriceGold: 1, StockQuantity: 25},
 	{LocationID: "blacksmith", ItemID: "iron_ingot", PriceGold: 4, StockQuantity: 10},
 	{LocationID: "blacksmith", ItemID: "smithing_hammer", PriceGold: 10, StockQuantity: 3},
 	{LocationID: "herbalist", ItemID: "medicinal_herbs", PriceGold: 3, StockQuantity: 15},
 	{LocationID: "herbalist", ItemID: "wild_mushrooms", PriceGold: 2, StockQuantity: 12},
+	{LocationID: "herbalist", ItemID: "elderflowers", PriceGold: 2, StockQuantity: 15},
+	{LocationID: "herbalist", ItemID: "wild_mint", PriceGold: 2, StockQuantity: 12},
+	{LocationID: "herbalist", ItemID: "honey_jar", PriceGold: 5, StockQuantity: 8},
 }
 
 func SeedShopInventory(db *sql.DB) error {

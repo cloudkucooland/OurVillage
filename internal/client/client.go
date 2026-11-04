@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -346,7 +347,7 @@ func RunClient(ctx context.Context, cfg *Config) error {
 
 	opts.OnConnect = func(c mqtt.Client) {
 		activeMQTTClient = c
-		log.Printf("[AgentMUD] Connected to MQTT broker %s as %s (client: %s, engine: %s)",
+		log.Printf("[OurVillage] Connected to MQTT broker %s as %s (client: %s, engine: %s)",
 			cfg.Client.BrokerURL, cfg.Client.AgentID, clientID, cfg.Model.Provider)
 
 		// Re-subscribe to global time
@@ -358,39 +359,74 @@ func RunClient(ctx context.Context, cfg *Config) error {
 			}
 
 			if cfg.Cognition.IdleThresholdTicks > 0 {
-				idleTicks++
-				if idleTicks >= cfg.Cognition.IdleThresholdTicks {
+				status := ctxMgr.Status()
+				if status == "CRAFTING" || status == "FORAGING" {
 					idleTicks = 0
-					log.Printf("[Intrinsic Motivation] Idle threshold reached (%d ticks). Triggering autonomous motivation turn...", cfg.Cognition.IdleThresholdTicks)
-
-					go func() {
-						ctxMgr.IngestSystem("You feel a quiet moment of intrinsic curiosity and urge to act. What shall you do? Perhaps you should explore the village, check your inventory, forage for resources, or visit the tavern.")
-
-						memories := fetchPeerMemories()
-						prompt := ctxMgr.BuildPrompt(memories, fetchLocationMemories())
-
-						temp := cfg.Model.LlamaPure.Temperature
-						if temp <= 0 {
-							temp = 0.7
-						}
-						genOpts := model.GenerationOptions{
-							Temperature: float32(temp),
-						}
-						intent, err := dispatcher.GenerateIntentWithRetry(clientCtx, engine, prompt, genOpts, 2)
-						if err != nil {
-							log.Printf("[Intrinsic Motivation] Cognition generation failed: %v", err)
-							return
-						}
-
-						disp := dispatcher.NewIntentDispatcher(cfg.Client.AgentID, c, tracker)
-						res, err := disp.Dispatch(clientCtx, intent, 10*time.Second)
-						if err != nil {
-							log.Printf("[Intrinsic Motivation] Intent dispatch failed: %v", err)
-							return
-						}
+				} else {
+					idleTicks++
+					if idleTicks >= cfg.Cognition.IdleThresholdTicks {
 						idleTicks = 0
-						log.Printf("[Intrinsic Motivation] Action: %s (Thought: %s) [%s]", intent.Action, intent.Thought, res.Message)
-					}()
+						log.Printf("[Intrinsic Motivation] Idle threshold reached (%d ticks). Triggering autonomous motivation turn...", cfg.Cognition.IdleThresholdTicks)
+
+						go func() {
+							hour := 12
+							if len(tick.InGameTime) >= 2 {
+								if parsedH, err := strconv.Atoi(tick.InGameTime[:2]); err == nil {
+									hour = parsedH
+								}
+							}
+							var motivationPrompts []string
+							if hour >= 22 || hour < 6 {
+								motivationPrompts = []string{
+									"The night is deep and quiet. It is time to rest your weary limbs, find shelter, and REST to recover your energy.",
+									"Shadows stretch across the village at night. You should REST indoors and regain your strength for tomorrow.",
+									"Quiet night surrounds you. Consider resting, sleeping, or reflecting on the day in safety.",
+								}
+							} else if hour >= 17 && hour < 22 {
+								motivationPrompts = []string{
+									"Evening falls over the village. Perhaps you should visit the tavern, share a drink with neighbors, or find friends to chat with.",
+									"The day's work winds down. It is a wonderful time to seek out social warmth, visit the local tavern, or converse with villagers.",
+									"Evening approaches. Consider finding friends, discussing the day's events, or sharing a warm meal.",
+								}
+							} else {
+								motivationPrompts = []string{
+									"The sun is up and the village is bustling. Perhaps you should work at your trade, gather resources, explore, or craft useful goods.",
+									"Daylight invites productivity. Consider foraging in the forest, working at the mill or forge, or checking the town notice board.",
+									"A sudden creative impulse strikes you. Could you refine your craft, explore the village, or inspect your stored goods?",
+									"You feel an itch to be productive. Should you gather raw materials, wander the paths, or converse with a passing villager?",
+								}
+							}
+							promptIdx := time.Now().UnixNano() % int64(len(motivationPrompts))
+							selectedPrompt := motivationPrompts[promptIdx]
+
+							ctxMgr.IngestSystem(selectedPrompt)
+
+							memories := fetchPeerMemories()
+							prompt := ctxMgr.BuildPrompt(memories, fetchLocationMemories())
+
+							temp := cfg.Model.LlamaPure.Temperature
+							if temp <= 0 {
+								temp = 0.7
+							}
+							genOpts := model.GenerationOptions{
+								Temperature: float32(temp),
+							}
+							intent, err := dispatcher.GenerateIntentWithRetry(clientCtx, engine, prompt, genOpts, 2)
+							if err != nil {
+								log.Printf("[Intrinsic Motivation] Cognition generation failed: %v", err)
+								return
+							}
+
+							disp := dispatcher.NewIntentDispatcher(cfg.Client.AgentID, c, tracker)
+							res, err := disp.Dispatch(clientCtx, intent, 10*time.Second)
+							if err != nil {
+								log.Printf("[Intrinsic Motivation] Intent dispatch failed: %v", err)
+								return
+							}
+							idleTicks = 0
+							log.Printf("[Intrinsic Motivation] Action: %s (Thought: %s) [%s]", intent.Action, intent.Thought, res.Message)
+						}()
+					}
 				}
 			}
 		})
@@ -489,13 +525,13 @@ func RunClient(ctx context.Context, cfg *Config) error {
 
 		select {
 		case <-clientCtx.Done():
-			log.Println("[AgentMUD] Context cancelled, shutting down...")
+			log.Println("[OurVillage] Context cancelled, shutting down...")
 		case sig := <-sigChan:
-			log.Printf("[AgentMUD] Received signal %v, shutting down...", sig)
+			log.Printf("[OurVillage] Received signal %v, shutting down...", sig)
 		}
 	}
 
-	log.Println("[AgentMUD] Disconnecting client...")
+	log.Println("[OurVillage] Disconnecting client...")
 	client.Disconnect(250)
 	return nil
 }

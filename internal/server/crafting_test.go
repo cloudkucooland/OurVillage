@@ -30,8 +30,8 @@ func TestCraftIntentAndConcurrencyLock(t *testing.T) {
 	if err != nil || status != "CRAFTING" {
 		t.Fatalf("Expected status CRAFTING, got %s (err: %v)", status, err)
 	}
-	if endTick != startTick+10 {
-		t.Errorf("Expected endTick to be startTick+10, got %d vs %d", endTick, startTick+10)
+	if endTick != startTick+4 {
+		t.Errorf("Expected endTick to be startTick+4, got %d vs %d", endTick, startTick+4)
 	}
 
 	// Concurrency Lock: Check that MOVE is rejected with CHARACTER_BUSY

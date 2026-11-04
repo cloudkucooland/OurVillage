@@ -158,7 +158,14 @@ func (s *Server) SetWeather(w string) {
 }
 
 func (s *Server) runClock() {
-	ticker := time.NewTicker(50 * time.Second) // 1 tick every 50 seconds for simulation (10x slower)
+	interval := 90 * time.Second // default: 90 seconds per tick to give LLM agents time to process
+	if envInterval := os.Getenv("AGENTMUD_TICK_INTERVAL"); envInterval != "" {
+		if parsed, err := time.ParseDuration(envInterval); err == nil && parsed > 0 {
+			interval = parsed
+		}
+	}
+	log.Printf("[Clock] Starting server master clock with tick interval: %v", interval)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -310,6 +317,33 @@ func (s *Server) resolveCompletedActions(currentTick uint64, weather string) {
 				"total_weight_kg": res.TotalWeightKg,
 				"max_capacity_kg": res.MaxCapacityKg,
 				"narrative_log":   res.NarrativeLog,
+			}
+
+			if respBytes, err := json.Marshal(respMap); err == nil {
+				directTopic := fmt.Sprintf("world/agents/%s/direct", a.charID)
+				_ = s.mqttServer.Publish(directTopic, respBytes, false, 0)
+			}
+
+		case "RESTING":
+			_, err = s.db.Exec("UPDATE characters SET energy = MIN(100, energy + 50) WHERE id = ?", a.charID)
+			if err != nil {
+				log.Printf("Failed to resolve resting energy for %s: %v", a.charID, err)
+				continue
+			}
+
+			var newEnergy int
+			_ = s.db.QueryRow("SELECT energy FROM characters WHERE id = ?", a.charID).Scan(&newEnergy)
+
+			sysTopic := fmt.Sprintf("world/locations/%s/system", a.locID)
+			sysMsg := fmt.Sprintf("%s has finished resting and feels refreshed.", a.charID)
+			_ = s.mqttServer.Publish(sysTopic, []byte(sysMsg), false, 0)
+
+			respMap := map[string]interface{}{
+				"intent_id":     a.intentID,
+				"status":        "SUCCESS",
+				"action":        "REST",
+				"energy":        newEnergy,
+				"narrative_log": fmt.Sprintf("You finished resting and recovered energy (Energy: %d/100).", newEnergy),
 			}
 
 			if respBytes, err := json.Marshal(respMap); err == nil {

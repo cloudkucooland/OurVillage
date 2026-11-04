@@ -25,8 +25,8 @@ func TestSeedCrafting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to count recipes: %v", err)
 	}
-	if recCount != 7 {
-		t.Errorf("Expected 7 seeded recipes, got %d", recCount)
+	if recCount != 10 {
+		t.Errorf("Expected 10 seeded recipes, got %d", recCount)
 	}
 }
 
@@ -105,8 +105,8 @@ func TestStartAndResolveCrafting(t *testing.T) {
 	if status != "CRAFTING" {
 		t.Errorf("Expected character status CRAFTING, got %s", status)
 	}
-	if endTick != 110 { // 100 + 10 duration
-		t.Errorf("Expected endTick 110, got %d", endTick)
+	if endTick != 104 { // 100 + 4 duration
+		t.Errorf("Expected endTick 104, got %d", endTick)
 	}
 
 	// Resolve Crafting

@@ -92,7 +92,7 @@ func (s *Server) SetupIntentHandlers() error {
 		switch strings.ToUpper(intent.Action) {
 		case "MOVE":
 			s.handleMove(agentID, intent.IntentID, intent.Payload)
-		case "TRANSFER":
+		case "TRANSFER", "GIVE":
 			s.handleTransfer(agentID, intent.IntentID, intent.Payload)
 		case "CHAT":
 			s.handleChat(agentID, intent.IntentID, intent.Payload)
@@ -114,6 +114,10 @@ func (s *Server) SetupIntentHandlers() error {
 			s.handleBuy(agentID, intent.IntentID, intent.Payload)
 		case "RESTOCK":
 			s.handleRestock(agentID, intent.IntentID, intent.Payload)
+		case "EAT":
+			s.handleEat(agentID, intent.IntentID, intent.Payload)
+		case "REST":
+			s.handleRest(agentID, intent.IntentID, intent.Payload)
 		case "LOOK", "STATUS":
 			s.handleLook(agentID, intent.IntentID)
 		default:
@@ -344,7 +348,57 @@ func (s *Server) handleTransfer(agentID string, intentID string, rawPayload json
 		log.Printf("[Server Warning] Failed to record event log: %v", err)
 	}
 
+	s.notifyTransferRecipient(agentID, payload.RecipientID, currentLocation, payload.Amount, payload.ItemID, payload.Quantity)
+
 	s.handleLook(agentID, intentID, "Transfer completed successfully")
+}
+
+func (s *Server) notifyTransferRecipient(senderID string, recipientID string, currentLocation string, amount int, itemID string, quantity int) {
+	var isOnline int
+	_ = s.db.QueryRow("SELECT is_online FROM characters WHERE id = ?", recipientID).Scan(&isOnline)
+	if isOnline == 0 {
+		return
+	}
+
+	var senderName string
+	_ = s.db.QueryRow("SELECT name FROM characters WHERE id = ?", senderID).Scan(&senderName)
+	if senderName == "" {
+		senderName = senderID
+	}
+
+	var parts []string
+	if amount > 0 {
+		parts = append(parts, fmt.Sprintf("%d gold", amount))
+	}
+	if itemID != "" && quantity > 0 {
+		var itemName string
+		_ = s.db.QueryRow("SELECT name FROM items WHERE id = ?", itemID).Scan(&itemName)
+		if itemName == "" {
+			itemName = itemID
+		}
+		parts = append(parts, fmt.Sprintf("%d x %s", quantity, itemName))
+	}
+	if len(parts) == 0 {
+		return
+	}
+
+	transferDesc := strings.Join(parts, " and ")
+	noticeMsg := fmt.Sprintf("%s transferred %s to you.", senderName, transferDesc)
+
+	s.handleLook(recipientID, fmt.Sprintf("req_transfer_notice_%d", s.GetTickCount()), noticeMsg)
+
+	var recipLocation string
+	_ = s.db.QueryRow("SELECT current_location FROM characters WHERE id = ?", recipientID).Scan(&recipLocation)
+	if recipLocation == currentLocation && currentLocation != "" {
+		sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
+		var recipName string
+		_ = s.db.QueryRow("SELECT name FROM characters WHERE id = ?", recipientID).Scan(&recipName)
+		if recipName == "" {
+			recipName = recipientID
+		}
+		sysMsg := fmt.Sprintf("%s hands %s to %s.", senderName, transferDesc, recipName)
+		_ = s.mqttServer.Publish(sysTopic, []byte(sysMsg), false, 0)
+	}
 }
 
 func (s *Server) handleChat(agentID string, intentID string, rawPayload json.RawMessage) {
@@ -387,7 +441,7 @@ func (s *Server) handleForage(agentID string, intentID string, rawPayload json.R
 		return
 	}
 	if payload.DurationTicks <= 0 {
-		payload.DurationTicks = 60
+		payload.DurationTicks = 15
 	}
 
 	var status, currentLocation string
@@ -501,6 +555,11 @@ func (s *Server) handleCancelAction(agentID string, intentID string, rawPayload 
 		_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s stopped crafting.", agentID)), false, 0)
 
 		s.handleLook(agentID, intentID, "Crafting action cancelled; ingredients refunded.")
+	} else if status == "RESTING" {
+		_, _ = s.db.Exec("UPDATE characters SET status = 'IDLE', action_end_tick = 0, action_start_tick = 0, action_target = '', action_intent_id = '' WHERE id = ?", agentID)
+		sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
+		_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s stopped resting.", agentID)), false, 0)
+		s.handleLook(agentID, intentID, "Resting action cancelled.")
 	} else {
 		_, _ = s.db.Exec("UPDATE characters SET status = 'IDLE', action_end_tick = 0, action_start_tick = 0 WHERE id = ?", agentID)
 		s.handleLook(agentID, intentID, "Action cancelled")
@@ -877,4 +936,151 @@ func (s *Server) notifyLocationOwnerOfPurchase(locationID string, buyerID string
 	// Send an instant state sync + notice message to the owner so their TUI shop revenue/gold updates
 	s.handleLook(ownerID, fmt.Sprintf("req_owner_notice_%d", s.GetTickCount()),
 		fmt.Sprintf("%s just purchased %d x %s from your shop!", buyerName, quantity, itemName))
+}
+
+func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawMessage) {
+	var payload ItemActionPayload
+	if err := json.Unmarshal(rawPayload, &payload); err != nil {
+		s.sendDirectError(agentID, intentID, "INVALID_PAYLOAD", "Invalid EAT payload")
+		return
+	}
+	if payload.Quantity <= 0 {
+		payload.Quantity = 1
+	}
+
+	var status, currentLocation string
+	var currentHunger int
+	err := s.db.QueryRow("SELECT status, current_location, hunger FROM characters WHERE id = ?", agentID).Scan(&status, &currentLocation, &currentHunger)
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "CHARACTER_NOT_FOUND", "Character not found")
+		return
+	}
+
+	if status != "IDLE" {
+		s.sendDirectError(agentID, intentID, "CHARACTER_BUSY", fmt.Sprintf("Cannot eat: character is currently %s", status))
+		return
+	}
+
+	var isConsumable bool
+	var hungerRestore int
+	var itemName string
+	err = s.db.QueryRow("SELECT is_consumable, hunger_restore, name FROM items WHERE id = ?", payload.ItemID).Scan(&isConsumable, &hungerRestore, &itemName)
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "ITEM_NOT_FOUND", fmt.Sprintf("Item %s does not exist", payload.ItemID))
+		return
+	}
+
+	if !isConsumable || hungerRestore <= 0 {
+		s.sendDirectError(agentID, intentID, "NOT_CONSUMABLE", fmt.Sprintf("%s is not edible", itemName))
+		return
+	}
+
+	var invQty int
+	err = s.db.QueryRow("SELECT quantity FROM inventories WHERE character_id = ? AND item_id = ?", agentID, payload.ItemID).Scan(&invQty)
+	if err != nil || invQty < payload.Quantity {
+		s.sendDirectError(agentID, intentID, "INSUFFICIENT_ITEMS", fmt.Sprintf("Not enough %s in inventory (have %d, need %d)", payload.ItemID, invQty, payload.Quantity))
+		return
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	if invQty == payload.Quantity {
+		_, err = tx.Exec("DELETE FROM inventories WHERE character_id = ? AND item_id = ?", agentID, payload.ItemID)
+	} else {
+		_, err = tx.Exec("UPDATE inventories SET quantity = quantity - ? WHERE character_id = ? AND item_id = ?", payload.Quantity, agentID, payload.ItemID)
+	}
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
+		return
+	}
+
+	newHunger := currentHunger + (hungerRestore * payload.Quantity)
+	if newHunger > 100 {
+		newHunger = 100
+	}
+
+	_, err = tx.Exec("UPDATE characters SET hunger = ? WHERE id = ?", newHunger, agentID)
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
+		return
+	}
+
+	currentTick := s.GetTickCount()
+	eventPayload, _ := json.Marshal(map[string]interface{}{
+		"item_id":         payload.ItemID,
+		"quantity":        payload.Quantity,
+		"hunger_restored": hungerRestore * payload.Quantity,
+		"new_hunger":      newHunger,
+	})
+	if _, err := db.RecordEventLog(tx, currentTick, "EAT", agentID, "", currentLocation, string(eventPayload)); err != nil {
+		log.Printf("Failed to record eat event log: %v", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
+		return
+	}
+
+	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
+	sysMsg := fmt.Sprintf("%s consumed %s and restored hunger.", agentID, itemName)
+	_ = s.mqttServer.Publish(sysTopic, []byte(sysMsg), false, 0)
+
+	respMap := map[string]interface{}{
+		"intent_id":     intentID,
+		"status":        "SUCCESS",
+		"action":        "EAT",
+		"item_id":       payload.ItemID,
+		"quantity":      payload.Quantity,
+		"hunger":        newHunger,
+		"narrative_log": fmt.Sprintf("You ate %s and satisfied your hunger (Hunger: %d/100).", itemName, newHunger),
+	}
+	if respBytes, err := json.Marshal(respMap); err == nil {
+		directTopic := fmt.Sprintf("world/agents/%s/direct", agentID)
+		_ = s.mqttServer.Publish(directTopic, respBytes, false, 0)
+	}
+}
+
+func (s *Server) handleRest(agentID string, intentID string, rawPayload json.RawMessage) {
+	var payload struct {
+		DurationTicks int `json:"duration_ticks"`
+	}
+	if err := json.Unmarshal(rawPayload, &payload); err != nil || payload.DurationTicks <= 0 {
+		payload.DurationTicks = 10
+	}
+
+	var status, currentLocation string
+	var energy int
+	err := s.db.QueryRow("SELECT status, current_location, energy FROM characters WHERE id = ?", agentID).Scan(&status, &currentLocation, &energy)
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "CHARACTER_NOT_FOUND", "Character not found")
+		return
+	}
+
+	if status != "IDLE" {
+		s.sendDirectError(agentID, intentID, "CHARACTER_BUSY", fmt.Sprintf("Cannot rest: character is currently %s", status))
+		return
+	}
+
+	currentTick := s.GetTickCount()
+	endTick := currentTick + uint64(payload.DurationTicks)
+
+	_, err = s.db.Exec(`
+		UPDATE characters 
+		SET status = 'RESTING', action_start_tick = ?, action_end_tick = ?, action_target = ?, action_intent_id = ?
+		WHERE id = ?
+	`, currentTick, endTick, currentLocation, intentID, agentID)
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
+		return
+	}
+
+	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
+	_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s has begun resting (%d ticks).", agentID, payload.DurationTicks)), false, 0)
+
+	s.sendDirectResponse(agentID, intentID, "SUCCESS", fmt.Sprintf("Started resting (%d ticks)", payload.DurationTicks))
 }

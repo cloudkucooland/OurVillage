@@ -1,12 +1,12 @@
-# AgentMUD Client (`agentmud-client`)
+# OurVillage Client (`agentmud-client`)
 
-`agentmud-client` is the autonomous agent daemon ("Agent Mind") for the **AgentMUD (VillageOS)** persistent economic simulation. While the server deterministically governs physical reality, spatial presence, inventories, and transactional validation over SQLite and Mochi-MQTT, each `agentmud-client` process powers an individual character's cognitive lifecycle, dialogue generation, and autonomous decision-making.
+`agentmud-client` is the autonomous agent daemon ("Agent Mind") for the **OurVillage (VillageOS)** persistent economic simulation. While the server deterministically governs physical reality, spatial presence, inventories, and transactional validation over SQLite and Mochi-MQTT, each `agentmud-client` process powers an individual character's cognitive lifecycle, dialogue generation, and autonomous decision-making.
 
 ---
 
 ## 1. Architectural Philosophy & Hardware Heterogeneity
 
-In AgentMUD, agents are not ephemeral scripts running in a centralized monolith; they are designed as independent, distributed processes that can run across diverse physical and virtual environments:
+In OurVillage, agents are not ephemeral scripts running in a centralized monolith; they are designed as independent, distributed processes that can run across diverse physical and virtual environments:
 
 *   **Low-Power Edge Hardware (Initial Focus: Raspberry Pi 4 & 5)**: Local ARM64 single-board computers hosting autonomous village residents on bare metal.
 *   **Neural Accelerator SBCs (Rockchip RK3588)**: Edge devices taking advantage of dedicated on-chip NPUs via RKLLM.

@@ -111,3 +111,60 @@ func TestLookIntentAndMoveStateSync(t *testing.T) {
 		t.Fatal("expected message on directChan for MOVE")
 	}
 }
+
+func TestTransferNotification(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("failed to init in-memory db: %v", err)
+	}
+	defer database.Close()
+
+	srv, err := NewServer(database, "")
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+
+	_, _ = database.Exec("UPDATE characters SET is_online = 1, current_location = 'town_mill' WHERE id IN ('eldon_millwright', 'martha_barkeep')")
+
+	marthaDirectChan := make(chan []byte, 10)
+	_ = srv.mqttServer.Subscribe("world/agents/martha_barkeep/direct", 0, func(_ *mqtt.Client, _ packets.Subscription, pk packets.Packet) {
+		marthaDirectChan <- pk.Payload
+	})
+
+	sysChan := make(chan []byte, 10)
+	_ = srv.mqttServer.Subscribe("world/locations/town_mill/system", 0, func(_ *mqtt.Client, _ packets.Subscription, pk packets.Packet) {
+		sysChan <- pk.Payload
+	})
+
+	transferPayload, _ := json.Marshal(TransferPayload{
+		RecipientID: "martha_barkeep",
+		Amount:      5,
+	})
+
+	srv.handleTransfer("eldon_millwright", "req_transfer_1", transferPayload)
+
+	select {
+	case payload := <-marthaDirectChan:
+		var resp struct {
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(payload, &resp); err != nil {
+			t.Fatalf("failed to decode martha direct response: %v", err)
+		}
+		if resp.Message == "" {
+			t.Errorf("expected non-empty notification message for martha")
+		}
+	default:
+		t.Fatal("expected message on marthaDirectChan for transfer")
+	}
+
+	select {
+	case payload := <-sysChan:
+		sysMsg := string(payload)
+		if sysMsg == "" {
+			t.Errorf("expected system message broadcast")
+		}
+	default:
+		t.Fatal("expected message on sysChan for room system broadcast")
+	}
+}

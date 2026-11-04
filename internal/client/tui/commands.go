@@ -30,7 +30,7 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 			"  /move <loc> (/m)      - Move to location ID (e.g. /move tavern)\n" +
 			"  /locations (/locs)    - List all village locations\n" +
 			"  /chat <msg> (/c)      - Send public chat message\n" +
-			"  /suggest <hint> (/s)  - Inject guidance and trigger LLM agent cognition\n" +
+			"  /influence <hint> (/inf, /suggest, /s) - Inject subconscious influence and trigger agent cognition\n" +
 			"  /set <param> <val>    - Tune parameters (probability, freq, temp, debounce)\n" +
 			"  /help                 - Show this help message\n" +
 			"  Tab                   - Switch tabs (Sensory Log -> Inventory -> Relationships)\n" +
@@ -137,16 +137,16 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 			return infoMsg(fmt.Sprintf("Chat sent: %s", res.Message))
 		}
 
-	case "/suggest", "/s":
+	case "/influence", "/inf", "/suggest", "/s":
 		if len(args) == 0 {
-			m.errMessage = "Usage: /suggest <guidance hint>"
+			m.errMessage = "Usage: /influence <influence hint>"
 			return nil
 		}
 		hint := strings.Join(args, " ")
-		m.ctxMgr.IngestSystem(fmt.Sprintf("[Human Suggestion] %s", hint))
+		m.ctxMgr.IngestSystem(fmt.Sprintf("[SUBCONSCIOUS INFLUENCE] %s", hint))
 
 		if m.engine == nil {
-			msg := fmt.Sprintf("Suggestion recorded (no engine active): %s", hint)
+			msg := fmt.Sprintf("Subconscious influence recorded (no engine active): %s", hint)
 			m.ctxMgr.IngestSystem(msg)
 			m.infoMessage = msg
 			return nil
@@ -169,7 +169,7 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 		return func() (retMsg tea.Msg) {
 			defer func() {
 				if r := recover(); r != nil {
-					retMsg = errMsg{err: fmt.Errorf("panic recovered in /suggest: %v", r)}
+					retMsg = errMsg{err: fmt.Errorf("panic recovered in /influence: %v", r)}
 				}
 			}()
 
@@ -193,7 +193,7 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 				return errMsg{err: fmt.Errorf("intent dispatch failed: %v", err)}
 			}
 
-			msg := fmt.Sprintf("Suggestion processed -> Action: %s (Thought: %s) [%s]", intent.Action, intent.Thought, res.Message)
+			msg := fmt.Sprintf("Subconscious influence processed -> Action: %s (Thought: %s) [%s]", intent.Action, intent.Thought, res.Message)
 			ctxMgr.IngestSystem(msg)
 			return infoMsg(msg)
 		}

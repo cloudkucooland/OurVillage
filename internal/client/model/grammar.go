@@ -11,7 +11,7 @@ import (
 // DefaultAgentIntentGrammar returns the built-in canonical GBNF grammar for RFC 002 agent intents.
 func DefaultAgentIntentGrammar() string {
 	return `root ::= "{" ws "\"thought\"" ws ":" ws string ws "," ws "\"action\"" ws ":" ws action-type ws "," ws "\"payload\"" ws ":" ws payload ws "}"
-action-type ::= "\"MOVE\"" | "\"CHAT\"" | "\"TRANSFER\"" | "\"FORAGE\"" | "\"COLLECT\"" | "\"CANCEL_ACTION\"" | "\"DROP\"" | "\"PICKUP\"" | "\"EQUIP\"" | "\"UNEQUIP\"" | "\"CRAFT\"" | "\"LOOK\"" | "\"STATUS\"" | "\"BUY\"" | "\"RESTOCK\""
+action-type ::= "\"MOVE\"" | "\"CHAT\"" | "\"TRANSFER\"" | "\"GIVE\"" | "\"FORAGE\"" | "\"COLLECT\"" | "\"CANCEL_ACTION\"" | "\"DROP\"" | "\"PICKUP\"" | "\"EQUIP\"" | "\"UNEQUIP\"" | "\"CRAFT\"" | "\"LOOK\"" | "\"STATUS\"" | "\"BUY\"" | "\"RESTOCK\"" | "\"EAT\"" | "\"REST\""
 payload ::= move-payload | chat-payload | transfer-payload | forage-payload | empty-payload | item-payload | craft-payload | buy-payload | restock-payload
 move-payload ::= "{" ws "\"target_location\"" ws ":" ws string ws "}"
 chat-payload ::= string | "{" ws "\"message\"" ws ":" ws string ws "}"
@@ -98,6 +98,7 @@ var validActions = map[string]struct{}{
 	"MOVE":          {},
 	"CHAT":          {},
 	"TRANSFER":      {},
+	"GIVE":          {},
 	"FORAGE":        {},
 	"COLLECT":       {},
 	"CANCEL_ACTION": {},
@@ -110,6 +111,8 @@ var validActions = map[string]struct{}{
 	"STATUS":        {},
 	"BUY":           {},
 	"RESTOCK":       {},
+	"EAT":           {},
+	"REST":          {},
 }
 
 // SanitizeAndExtractJSON extracts and cleans valid JSON blocks from model responses,
@@ -157,11 +160,14 @@ func SanitizeAndExtractJSON(raw string) (string, error) {
 
 	actionUpper := strings.ToUpper(strings.TrimSpace(actionStr))
 	if _, valid := validActions[actionUpper]; !valid {
-		return "", fmt.Errorf("invalid action %q in model output (expected one of MOVE, CHAT, TRANSFER, FORAGE, COLLECT, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, RESTOCK)", actionStr)
+		return "", fmt.Errorf("invalid action %q in model output (expected one of MOVE, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, RESTOCK, EAT, REST)", actionStr)
 	}
 
 	if actionUpper == "COLLECT" {
 		actionUpper = "FORAGE"
+	}
+	if actionUpper == "GIVE" {
+		actionUpper = "TRANSFER"
 	}
 
 	// Update action to uppercase

@@ -1,6 +1,6 @@
 RFC 005: Character Roles, Housing & Democratic Governance
 1. Executive Summary
-RFC 005 defines the character lifecycle, occupation mechanics, energy/resting lodging economy, and democratic political governance in AgentMUD. Characters operate within strict mechanical boundaries defined by the server while generating narrative persona through RKLLM [cite: OurVillage].
+RFC 005 defines the character lifecycle, occupation mechanics, energy/resting lodging economy, and democratic political governance in OurVillage. Characters operate within strict mechanical boundaries defined by the server while generating narrative persona through RKLLM [cite: OurVillage].
 2. The Lodging & Rest Economy
 Energy decays with character actions and time ticks [cite: OurVillage]. Characters must sleep in designated resting locations to recover energy [cite: OurVillage].
 Lodging Tier

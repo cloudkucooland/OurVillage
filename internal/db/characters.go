@@ -73,6 +73,12 @@ var DefaultItems = []ItemSeed{
 	// RFC 008 Crafting Items
 	{ID: "iron_ore", Name: "Iron Ore", Description: "Raw unrefined iron rock dug from hillside quarries.", WeightKg: 2.0},
 	{ID: "berry_wine", Name: "Jug of Berry Wine", Description: "Sweet fermented wine made from wild prairie berries.", WeightKg: 1.0, IsConsumable: true, HungerRestore: 10},
+	{ID: "elderflowers", Name: "Elderflower Blossoms", Description: "Delicate white elderflower blossoms picked from river hedgerows.", WeightKg: 0.1, IsConsumable: false, HungerRestore: 0},
+	{ID: "wild_mint", Name: "Wild Mint Leaves", Description: "Fragrant fresh green mint leaves with a cooling aroma.", WeightKg: 0.05, IsConsumable: false, HungerRestore: 0},
+	{ID: "honey_jar", Name: "Jar of Wildflower Honey", Description: "Golden, sweet honey harvested from forest beehives.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 20},
+	{ID: "spiced_elderflower_syrup", Name: "Spiced Elderflower Syrup", Description: "Sweet, aromatic cordial brewed from elderflowers, honey, and river spices.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 15},
+	{ID: "mint_tea", Name: "Mug of Mint Tea", Description: "A warm, soothing herbal infusion of wild mint and fresh water.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 10},
+	{ID: "elderflower_wine", Name: "Jug of Elderflower Wine", Description: "Delicate floral fruit wine with hints of honey and elder blossoms.", WeightKg: 1.0, IsConsumable: true, HungerRestore: 15},
 }
 
 var DefaultCharacters = []CharacterSeed{

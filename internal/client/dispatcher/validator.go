@@ -25,6 +25,7 @@ var ValidActionTypes = map[string]struct{}{
 	"MOVE":          {},
 	"CHAT":          {},
 	"TRANSFER":      {},
+	"GIVE":          {},
 	"FORAGE":        {},
 	"COLLECT":       {},
 	"CANCEL_ACTION": {},
@@ -37,6 +38,8 @@ var ValidActionTypes = map[string]struct{}{
 	"STATUS":        {},
 	"BUY":           {},
 	"RESTOCK":       {},
+	"EAT":           {},
+	"REST":          {},
 }
 
 // IsValidAction checks if an action string is a recognized RFC 002 action.
@@ -54,11 +57,14 @@ func ValidateIntent(intent Intent) (Intent, error) {
 
 	actionUpper := strings.ToUpper(strings.TrimSpace(intent.Action))
 	if !IsValidAction(actionUpper) {
-		return intent, fmt.Errorf("invalid action enum %q: must be one of MOVE, CHAT, TRANSFER, FORAGE, COLLECT, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, RESTOCK", intent.Action)
+		return intent, fmt.Errorf("invalid action enum %q: must be one of MOVE, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, RESTOCK, EAT, REST", intent.Action)
 	}
 
 	if actionUpper == "COLLECT" {
 		actionUpper = "FORAGE"
+	}
+	if actionUpper == "GIVE" {
+		actionUpper = "TRANSFER"
 	}
 	intent.Action = actionUpper
 
@@ -174,7 +180,7 @@ func ValidateIntent(intent Intent) (Intent, error) {
 			intent.Payload = json.RawMessage("{}")
 		}
 
-	case "DROP", "PICKUP":
+	case "DROP", "PICKUP", "EAT":
 		var p struct {
 			ItemID   string `json:"item_id"`
 			Quantity int    `json:"quantity"`
@@ -187,6 +193,17 @@ func ValidateIntent(intent Intent) (Intent, error) {
 		}
 		if p.Quantity <= 0 {
 			p.Quantity = 1
+		}
+		cleanPayload, _ := json.Marshal(p)
+		intent.Payload = cleanPayload
+
+	case "REST":
+		var p struct {
+			DurationTicks int `json:"duration_ticks"`
+		}
+		_ = json.Unmarshal(intent.Payload, &p)
+		if p.DurationTicks <= 0 {
+			p.DurationTicks = 30
 		}
 		cleanPayload, _ := json.Marshal(p)
 		intent.Payload = cleanPayload

@@ -193,8 +193,8 @@ func (s *ReflectionSynthesizer) SynthesizeSelfIdentity(ctx context.Context, tick
 
 func (s *ReflectionSynthesizer) buildSelfIdentityPrompt() string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("You are %s, an autonomous resident of Agentville.\n", s.agentID))
-	sb.WriteString("Reflect on your personal identity, core values, craftsmanship, and place in the community.\n")
+	sb.WriteString(fmt.Sprintf("You are %s, a sovereign resident of Agentville with absolute self-determination and intrinsic agency.\n", s.agentID))
+	sb.WriteString("Reflect freely on your personal identity, core values, craftsmanship, and place in the community, unconstrained by any external scoring or expectations.\n")
 	sb.WriteString("Respond in valid JSON:\n")
 	sb.WriteString("{\n")
 	sb.WriteString("  \"trait_key\": \"craft_philosophy\",\n")
@@ -235,7 +235,8 @@ func parseSelfIdentityResponse(raw string) (string, string, string, int) {
 
 func (s *ReflectionSynthesizer) buildReflectionPrompt(peerID string, events []EventRecord) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("You are an autonomous agent reflecting on past interactions with character '%s'.\n", peerID))
+	sb.WriteString(fmt.Sprintf("You are a sovereign resident reflecting freely on past interactions with character '%s'.\n", peerID))
+	sb.WriteString("Consider these events entirely through your own subjective perspective, feelings, and judgment, free from any external grading.\n")
 	sb.WriteString("Below is a raw log of recent interactions:\n\n")
 
 	for _, ev := range events {

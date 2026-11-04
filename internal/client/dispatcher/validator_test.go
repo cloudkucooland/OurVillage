@@ -74,6 +74,15 @@ func TestValidateIntent_AllActions(t *testing.T) {
 			wantAction: "TRANSFER",
 		},
 		{
+			name: "Valid GIVE alias normalizing to TRANSFER",
+			intent: Intent{
+				Action:  "GIVE",
+				Payload: json.RawMessage(`{"recipient_id": "martha_barkeep", "item_id": "bread", "quantity": 1}`),
+			},
+			wantErr:    false,
+			wantAction: "TRANSFER",
+		},
+		{
 			name: "Invalid TRANSFER without gold or item",
 			intent: Intent{
 				Action:  "TRANSFER",

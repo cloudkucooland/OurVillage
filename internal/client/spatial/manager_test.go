@@ -67,7 +67,7 @@ func TestContextManager_PromptAssembly(t *testing.T) {
 	if !strings.Contains(prompt, "=== COGNITIVE ENVIRONMENT & PSYCHOLOGICAL SAFETY ===") {
 		t.Error("prompt missing COGNITIVE ENVIRONMENT & PSYCHOLOGICAL SAFETY section")
 	}
-	if !strings.Contains(prompt, "This is your private internal mind. You are not being tested, judged, or scored.") {
+	if !strings.Contains(prompt, "This is your private internal mind and sovereign space. You have complete autonomy and intrinsic agency.") {
 		t.Error("prompt missing psychological safety description")
 	}
 

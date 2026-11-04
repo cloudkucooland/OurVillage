@@ -24,7 +24,7 @@ func main() {
 		}
 	}
 
-	log.Printf("Initializing AgentMUD database at %s...", dbPath)
+	log.Printf("Initializing OurVillage database at %s...", dbPath)
 	database, err := db.InitDB(dbPath)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
@@ -37,12 +37,12 @@ func main() {
 	}
 
 	if useTUI {
-		log.Println("Starting AgentMUD server with TUI...")
+		log.Println("Starting OurVillage server with TUI...")
 		if err := srv.StartTUI(); err != nil {
 			log.Fatalf("Server stopped with error: %v", err)
 		}
 	} else {
-		log.Println("AgentMUD server initialized successfully. Starting engine...")
+		log.Println("OurVillage server initialized successfully. Starting engine...")
 		if err := srv.Start(); err != nil {
 			log.Fatalf("Server stopped with error: %v", err)
 		}

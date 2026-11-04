@@ -234,9 +234,9 @@ func NewApp() *cli.Command {
 
 	return &cli.Command{
 		Name:        "agentmud-client",
-		Usage:       "Autonomous agent daemon and client harness for AgentMUD",
+		Usage:       "Autonomous agent daemon and client harness for OurVillage",
 		Version:     "0.2.0",
-		Description: "Powers cognitive lifecycles, sensory processing, and intent dispatch for AgentMUD residents.",
+		Description: "Powers cognitive lifecycles, sensory processing, and intent dispatch for OurVillage residents.",
 		Flags:       flags,
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			cfg, err := ResolveConfig(cmd)
