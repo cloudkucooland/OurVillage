@@ -2,10 +2,24 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
+
+// EventLogEntry represents an objective physical occurrence recorded by the server.
+type EventLogEntry struct {
+	ID          int64           `json:"id"`
+	Tick        uint64          `json:"tick"`
+	Timestamp   time.Time       `json:"timestamp"`
+	EventType   string          `json:"event_type"` // e.g. 'TRADE', 'CONTRACT_FULFILL', 'TRESPASS', 'CHAT'
+	ActorID     string          `json:"actor_id"`
+	TargetID    string          `json:"target_id,omitempty"`
+	LocationID  string          `json:"location_id"`
+	DetailsJSON json.RawMessage `json:"details_json"`
+}
 
 // InitDB initializes the SQLite database, migrates any missing columns, and seeds default records.
 func InitDB(dataSourceName string) (*sql.DB, error) {
@@ -31,6 +45,16 @@ CREATE TABLE IF NOT EXISTS locations (
     open_time TEXT,
     close_time TEXT,
     rules_prompt TEXT
+);
+
+-- Location Connections Graph Table (Spatial Graph)
+CREATE TABLE IF NOT EXISTS location_connections (
+    from_location_id TEXT NOT NULL,
+    to_location_id TEXT NOT NULL,
+    travel_ticks INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (from_location_id, to_location_id),
+    FOREIGN KEY (from_location_id) REFERENCES locations(id) ON DELETE CASCADE,
+    FOREIGN KEY (to_location_id) REFERENCES locations(id) ON DELETE CASCADE
 );
 
 -- Location Operators
@@ -59,6 +83,17 @@ CREATE TABLE IF NOT EXISTS location_resources (
     max_stock INTEGER NOT NULL DEFAULT 100,
     replenish_rate_per_day INTEGER NOT NULL DEFAULT 20,
     PRIMARY KEY (location_id, resource_id)
+);
+
+-- Location Shop Inventory Table (Storefront Sales)
+CREATE TABLE IF NOT EXISTS location_shop_items (
+    location_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    price_gold INTEGER NOT NULL,
+    stock_quantity INTEGER NOT NULL DEFAULT 10,
+    PRIMARY KEY (location_id, item_id),
+    FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE,
+    FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
 );
 
 -- Workstations Table (RFC 008)
@@ -104,6 +139,7 @@ CREATE TABLE IF NOT EXISTS characters (
     gold INTEGER NOT NULL DEFAULT 10,
     hunger INTEGER NOT NULL DEFAULT 100,
     energy INTEGER NOT NULL DEFAULT 100,
+    health INTEGER NOT NULL DEFAULT 100,
     current_location TEXT NOT NULL DEFAULT 'town_square',
     equipped_container_id TEXT,
     status TEXT NOT NULL DEFAULT 'IDLE', -- 'IDLE', 'FORAGING', 'RESTING', 'CRAFTING'
@@ -146,6 +182,25 @@ CREATE TABLE IF NOT EXISTS inventories (
     quantity INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (character_id, item_id)
 );
+
+-- Objective Event Ledger (RFC 013: Server Audit Trail)
+CREATE TABLE IF NOT EXISTS event_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tick INTEGER NOT NULL,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    event_type TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    target_id TEXT,
+    location_id TEXT NOT NULL,
+    details_json TEXT NOT NULL,
+    FOREIGN KEY (actor_id) REFERENCES characters(id),
+    FOREIGN KEY (target_id) REFERENCES characters(id),
+    FOREIGN KEY (location_id) REFERENCES locations(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_logs_actor ON event_logs(actor_id);
+CREATE INDEX IF NOT EXISTS idx_event_logs_target ON event_logs(target_id);
+CREATE INDEX IF NOT EXISTS idx_event_logs_location ON event_logs(location_id);
 `
 
 	_, err = db.Exec(schema)
@@ -166,12 +221,20 @@ CREATE TABLE IF NOT EXISTS inventories (
 		return nil, fmt.Errorf("failed to seed location resources: %w", err)
 	}
 
+	if err := SeedLocationConnections(db); err != nil {
+		return nil, fmt.Errorf("failed to seed location connections: %w", err)
+	}
+
 	if err := SeedItemsAndCharacters(db); err != nil {
 		return nil, fmt.Errorf("failed to seed items and characters: %w", err)
 	}
 
 	if err := SeedCrafting(db); err != nil {
 		return nil, fmt.Errorf("failed to seed crafting recipes and workstations: %w", err)
+	}
+
+	if err := SeedShopInventory(db); err != nil {
+		return nil, fmt.Errorf("failed to seed shop inventory: %w", err)
 	}
 
 	return db, nil
@@ -186,6 +249,7 @@ func migrateSchema(db *sql.DB) error {
 		{"locations", "is_indoor", "BOOLEAN DEFAULT 0"},
 		{"locations", "vehicle_access_tier", "TEXT DEFAULT 'ALL'"},
 		{"characters", "energy", "INTEGER NOT NULL DEFAULT 100"},
+		{"characters", "health", "INTEGER NOT NULL DEFAULT 100"},
 		{"characters", "equipped_container_id", "TEXT"},
 		{"characters", "status", "TEXT NOT NULL DEFAULT 'IDLE'"},
 		{"characters", "action_end_tick", "INTEGER DEFAULT 0"},
@@ -204,4 +268,83 @@ func migrateSchema(db *sql.DB) error {
 	}
 
 	return nil
+}
+
+// RecordEventLog records a verifiable physical occurrence in the objective server event ledger.
+func RecordEventLog(q Queryable, tick uint64, eventType, actorID, targetID, locationID string, details any) (*EventLogEntry, error) {
+	detailsBytes, err := json.Marshal(details)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal event log details: %w", err)
+	}
+
+	res, err := execQueryable(q, `
+		INSERT INTO event_logs (tick, event_type, actor_id, target_id, location_id, details_json)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, tick, eventType, actorID, nullableString(targetID), locationID, string(detailsBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to insert event log: %w", err)
+	}
+
+	id, _ := res.LastInsertId()
+	return &EventLogEntry{
+		ID:          id,
+		Tick:        tick,
+		Timestamp:   time.Now(),
+		EventType:   eventType,
+		ActorID:     actorID,
+		TargetID:    targetID,
+		LocationID:  locationID,
+		DetailsJSON: detailsBytes,
+	}, nil
+}
+
+// GetRecentEventLogsForCharacter retrieves objective event logs involving a specific character.
+func GetRecentEventLogsForCharacter(db *sql.DB, characterID string, limit int) ([]EventLogEntry, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	rows, err := db.Query(`
+		SELECT id, tick, timestamp, event_type, actor_id, COALESCE(target_id, ''), location_id, details_json
+		FROM event_logs
+		WHERE actor_id = ? OR target_id = ?
+		ORDER BY id DESC
+		LIMIT ?
+	`, characterID, characterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query event logs: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []EventLogEntry
+	for rows.Next() {
+		var entry EventLogEntry
+		var detailsStr string
+		if err := rows.Scan(&entry.ID, &entry.Tick, &entry.Timestamp, &entry.EventType, &entry.ActorID, &entry.TargetID, &entry.LocationID, &detailsStr); err != nil {
+			return nil, fmt.Errorf("failed to scan event log: %w", err)
+		}
+		entry.DetailsJSON = json.RawMessage(detailsStr)
+		logs = append(logs, entry)
+	}
+
+	return logs, nil
+}
+
+// Helper to handle optional target_id string
+func nullableString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// Helper to execute query on Queryable interface (sql.DB or sql.Tx)
+func execQueryable(q Queryable, query string, args ...any) (sql.Result, error) {
+	if db, ok := q.(*sql.DB); ok {
+		return db.Exec(query, args...)
+	}
+	if tx, ok := q.(*sql.Tx); ok {
+		return tx.Exec(query, args...)
+	}
+	return nil, fmt.Errorf("unsupported Queryable type")
 }

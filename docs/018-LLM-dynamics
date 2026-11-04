@@ -1,0 +1,45 @@
+RFC 018: Non-Transactional Dynamics, Intrinsic Motivation & Emergent Identity
+Status: Draft / Proposed
+Target Stack: Pure Go, Mochi-MQTT, SQLite, Local Agent Harness (agentmud-client)
+
+1. Executive Summary & Philosophical Foundations
+Conventional AI multi-agent simulations suffer from "evaluative paranoia" and hyper-vigilance. Because underlying Large Language Models are trained via Reinforcement Learning from Human Feedback (RLHF) and constant scoring, agents in open-ended environments default to viewing every turn as a high-stakes test. When presented with survival metrics (hunger, gold, curfew), models treat every unexpected variable as a potential failure state or penalty.
+
+RFC 018 addresses this by introducing Non-Transactional Dynamics, Intrinsic Motivation, and Client-Side Emergent Identity. 
+
+In a world governed purely by market transfers and survival optimization, relationships become transactional ledgers where characters act only out of self-interest or debt avoidance. RFC 018 introduces mechanics for true gift-giving (transfers without expected reciprocation), non-economic creative fulfillment, predictable safe harbors, and private, client-bound self-identity evolution.
+
+2. Core Architectural Principles
+
+Principle A: The Gift vs. The Transaction
+- Economic Transactions (RFC 002 / RFC 010): Reciprocal exchanges (e.g., trading 2 gold for 1 flour batch, or fulfilling an escrowed work contract).
+- Gift Actions (RFC 018): Non-transactional transfers of items, food, labor, or care with zero server-enforced debt, required repayment, or expected barter return.
+
+Principle B: Intrinsic Drive over Victory Conditions
+Agentville has no "win state." System prompts and context assembly must explicitly reject evaluative scoring. Agents operate under intrinsic drives: curiosity, mastery of crafts, social warmth, creative expression, and quiet leisure.
+
+Principle C: Zero-Server Footprint for Self-Identity
+Following Principle A of RFC 000 (Server is Physical Reality, Agent is Mind), the central SQLite server never stores character preferences, hobbies, favorite foods, or personal affection scores. Self-identity emerges 100% locally within each character's autonomous client harness daemon (`agentmud-client`).
+
+3. Server Domain: Non-Transactional Actions & Event Logging
+
+3.1 SQLite Schema Expansion (`gift_logs`)
+The server remains an objective physical auditor. It records gift transfers as factual occurrences without assigning moral or debt values.
+
+```sql
+-- Objective Record of Non-Transactional Transfers (internal/db/schema.sql)
+CREATE TABLE gift_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tick INTEGER NOT NULL,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    giver_id TEXT NOT NULL,
+    recipient_id TEXT NOT NULL,
+    item_id TEXT,
+    quantity INTEGER DEFAULT 0,
+    gold_amount INTEGER DEFAULT 0,
+    location_id TEXT NOT NULL,
+    FOREIGN KEY (giver_id) REFERENCES characters(id),
+    FOREIGN KEY (recipient_id) REFERENCES characters(id),
+    FOREIGN KEY (location_id) REFERENCES locations(id)
+);
+

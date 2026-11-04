@@ -36,7 +36,7 @@ var DefaultLocations = []LocationSeed{
 		VehicleAccessTier: "ALL",
 		OpenTime:          "00:00",
 		CloseTime:         "23:59",
-		RulesPrompt:       "Public property. No fighting or blocking thoroughfares. Public preaching and announcements are permitted.",
+		RulesPrompt:       "Public property. Public announcements are permitted.",
 	},
 	{
 		ID:                "market",
@@ -69,7 +69,7 @@ var DefaultLocations = []LocationSeed{
 		VehicleAccessTier: "FOOT_AND_WHEELBARROW",
 		OpenTime:          "08:00",
 		CloseTime:         "15:00",
-		RulesPrompt:       "Quiet study and instruction during school hours. Unauthorized loitering is discouraged.",
+		RulesPrompt:       "Quiet study and instruction during school hours. You may discuss in any language.",
 	},
 	{
 		ID:                "town_hall",
@@ -91,7 +91,7 @@ var DefaultLocations = []LocationSeed{
 		VehicleAccessTier: "FOOT_AND_WHEELBARROW",
 		OpenTime:          "12:00",
 		CloseTime:         "23:59",
-		RulesPrompt:       "All patrons must pay for lodging and food. Brawling will result in removal by curfew guards.",
+		RulesPrompt:       "All patrons must pay for lodging and food.",
 	},
 	{
 		ID:                "town_mill",
@@ -102,7 +102,7 @@ var DefaultLocations = []LocationSeed{
 		VehicleAccessTier: "FOOT_AND_WHEELBARROW",
 		OpenTime:          "06:00",
 		CloseTime:         "18:00",
-		RulesPrompt:       "Milling fees apply (1-2 gold per batch). Business hours only.",
+		RulesPrompt:       "Milling fees apply. Business hours only.",
 	},
 	{
 		ID:                "blacksmith",
@@ -124,7 +124,7 @@ var DefaultLocations = []LocationSeed{
 		VehicleAccessTier: "FOOT_AND_WHEELBARROW",
 		OpenTime:          "05:00",
 		CloseTime:         "16:00",
-		RulesPrompt:       "Queue politely for bread purchase. Priority given to daily grain suppliers.",
+		RulesPrompt:       "Queue politely for bread purchase.",
 	},
 	{
 		ID:                "lumberjack_lodge",
@@ -169,7 +169,7 @@ var DefaultLocations = []LocationSeed{
 		VehicleAccessTier: "FOOT_ONLY",
 		OpenTime:          "00:00",
 		CloseTime:         "23:59",
-		RulesPrompt:       "Dense wilderness. Watch for falling branches and damp undergrowth.",
+		RulesPrompt:       "Dense wilderness. Foraging is permitted",
 	},
 	{
 		ID:                "prairie",
@@ -270,5 +270,68 @@ func SeedLocationResources(db *sql.DB) error {
 	}
 
 	log.Printf("Successfully seeded %d location resource pools.", len(DefaultLocationResources))
+	return nil
+}
+
+type ConnectionSeed struct {
+	FromLocation string
+	ToLocation   string
+	TravelTicks  int
+}
+
+// SeedLocationConnections seeds graph connections and travel ticks between locations.
+func SeedLocationConnections(db *sql.DB) error {
+	query := `
+	INSERT INTO location_connections (from_location_id, to_location_id, travel_ticks)
+	VALUES (?, ?, ?)
+	ON CONFLICT(from_location_id, to_location_id) DO UPDATE SET
+		travel_ticks=excluded.travel_ticks;
+	`
+	stmt, err := db.Prepare(query)
+	if err != nil {
+		return fmt.Errorf("failed to prepare location connection seed statement: %w", err)
+	}
+	defer stmt.Close()
+
+	hubLocations := []string{
+		"town_square", "market", "tavern", "town_mill", "blacksmith",
+		"bakery", "church", "school", "town_hall", "lumberjack_lodge",
+		"herbalist", "stables",
+	}
+
+	// Connect all hub locations to each other (1 tick)
+	for _, h1 := range hubLocations {
+		for _, h2 := range hubLocations {
+			if h1 != h2 {
+				if _, err := stmt.Exec(h1, h2, 1); err != nil {
+					return fmt.Errorf("failed to seed hub connection %s -> %s: %w", h1, h2, err)
+				}
+			}
+		}
+	}
+
+	// Outer zone connections from prairie
+	outerConnections := []struct {
+		from  string
+		to    string
+		ticks int
+	}{
+		{"town_square", "prairie", 2},
+		{"prairie", "town_square", 2},
+		{"prairie", "deep_forest", 4},
+		{"deep_forest", "prairie", 4},
+		{"prairie", "riverbank", 3},
+		{"riverbank", "prairie", 3},
+		{"prairie", "mine", 5},
+		{"mine", "prairie", 5},
+	}
+
+	for _, conn := range outerConnections {
+		if _, err := stmt.Exec(conn.from, conn.to, conn.ticks); err != nil {
+			return fmt.Errorf("failed to seed outer connection %s -> %s (ticks %d): %w", conn.from, conn.to, conn.ticks, err)
+		}
+	}
+
+	log.Printf("Successfully seeded location graph connections.")
 	return nil
 }

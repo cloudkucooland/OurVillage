@@ -80,3 +80,35 @@ func TestInitDBAndSeed(t *testing.T) {
 		t.Errorf("Expected inventories to be seeded, got 0 items")
 	}
 }
+
+func TestSpatialGraphRouting(t *testing.T) {
+	database, err := InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to initialize in-memory DB: %v", err)
+	}
+	defer database.Close()
+
+	// Test direct hub connection (town_square to tavern -> 1 tick)
+	ok, ticks, err := CanTravelLocation(database, "town_square", "tavern")
+	if err != nil || !ok || ticks != 1 {
+		t.Errorf("Expected direct connection town_square -> tavern with 1 tick, got ok=%v, ticks=%d, err=%v", ok, ticks, err)
+	}
+
+	// Test town_square to prairie (2 ticks)
+	ok, ticks, err = CanTravelLocation(database, "town_square", "prairie")
+	if err != nil || !ok || ticks != 2 {
+		t.Errorf("Expected direct connection town_square -> prairie with 2 ticks, got ok=%v, ticks=%d, err=%v", ok, ticks, err)
+	}
+
+	// Test prairie to deep_forest (4 ticks)
+	ok, ticks, err = CanTravelLocation(database, "prairie", "deep_forest")
+	if err != nil || !ok || ticks != 4 {
+		t.Errorf("Expected direct connection prairie -> deep_forest with 4 ticks, got ok=%v, ticks=%d, err=%v", ok, ticks, err)
+	}
+
+	// Test unreachable direct connection (town_mill to deep_forest without intermediate node)
+	ok, _, err = CanTravelLocation(database, "town_mill", "deep_forest")
+	if err != nil || ok {
+		t.Errorf("Expected no direct connection town_mill -> deep_forest, got ok=%v", ok)
+	}
+}

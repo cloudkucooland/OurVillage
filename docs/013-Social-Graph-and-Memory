@@ -1,67 +1,135 @@
-RFC 013: Episodic Memory & Social Relationship Graph
-Status: Proposed / Future Development
-Target Stack: Pure Go, SQLite, RKLLM
-
-1. Executive Summary & Persistent Social Grounding
-Human-like communities rely on memory: past trade fairness, broken promises, shared hardships, and political loyalties. RFC 013 introduces a deterministic SQLite relationship ledger paired with compressed episodic memory snippets that the Go harness injects into the RKLLM context window.
-
-2. Social Graph Ledger & Metrics
-For every pairwise character relationship (A -> B), the server tracks:
-- `sentiment`: -100 (Hostile / Bitter) to +100 (Devoted / Trusted Ally).
-- `trust`: 0 to 100 (Reliability in honoring verbal commitments and trades).
-- `trade_volume_gold`: Cumulative gold exchanged.
-- `last_interacted_tick`: Timestamp of the most recent interaction.
-
-Relationship Adjustments (Deterministic Triggers):
-- Successful Trade / Contract Fulfillment: +5 Sentiment, +10 Trust.
-- Price Gouging / Rejected Loan: -5 Sentiment.
-- Eviction / Trespassing Report: -25 Sentiment, -30 Trust.
-- Gift / Relief Aid during Illness: +20 Sentiment, +25 Trust.
-
-3. Compressed Episodic Memory Bank
-In addition to numerical scores, agents maintain short, high-salience episodic memory strings:
-- Generated during significant interactions (e.g. trades, election votes, conflicts).
-- Max 5 active memories per pairwise relationship (FIFO or decay by importance).
-- Examples:
-  * "Luke remembers: Eldon gave me an emergency sack of flour when my crop was flooded."
-  * "Martha remembers: Gideon started a loud tavern brawl and left without paying his tab."
-
-4. Context Window Injection (RFC 004 Synergy)
-When agent A enters a room containing agent B, or receives a chat/whisper from agent B, the harness retrieves relevant memories and inserts them into the profile prompt:
-
-```
-=== KNOWN RELATIONSHIPS IN ROOM ===
-With Martha the Barkeep:
-- Sentiment: +65 (Warm Friendly) | Trust: 80/100
-- Memory: Martha regularly serves warm mutton and lent you 2 gold last week.
-
-With Gideon the Blacksmith:
-- Sentiment: -30 (Distrustful) | Trust: 40/100
-- Memory: Gideon overcharged you for your iron hammer repair.
-```
-
-5. Database Schema
-```sql
-CREATE TABLE character_relationships (
-    character_id TEXT NOT NULL,
-    target_character_id TEXT NOT NULL,
-    sentiment INTEGER NOT NULL DEFAULT 0,
-    trust INTEGER NOT NULL DEFAULT 50,
-    trade_volume_gold INTEGER NOT NULL DEFAULT 0,
-    last_interacted_tick INTEGER DEFAULT 0,
-    PRIMARY KEY (character_id, target_character_id),
-    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
-    FOREIGN KEY (target_character_id) REFERENCES characters(id) ON DELETE CASCADE
+RFC 013: Objective Event Auditing & Client-Side Episodic Memory Spec
+Status: Draft / Revised
+Target Stack: Pure Go, Mochi-MQTT, SQLite, Local Agent Harness (agentmud-client)
+1. Architectural Philosophy & Autonomy Invariants
+Previous draft iterations attempted to compute numeric social scores (sentiment: -100 to +100, trust: 0 to 100) inside the server state engine. This violated Principle A (Server is Physical Reality, Agent is Mind) by having the server programmatically dictate character emotions and social biases.
+Under the revised architecture:
+The Server is an Objective Auditor: The server engine logs verifiable physical events (trades, movement, contract fulfillments, trespasses) into a append-only ledger (event_logs). It never calculates, infers, or stores subjective character feelings or relationship scores.
+The Agent Client is Autonomous: Subjective interpretation, memory formation, trust evaluation, and relationship tracking reside 100% inside the client harness daemon (agentmud-client). The agent’s local LLM forms its own opinions, holds grudges, and decides who to trade with based on its memory history.
+2. Server Domain: Objective Spatial & Economic Event Ledger
+The server records factual interactions as structured events in SQLite. These events provide an immutable history that agents can query or receive over MQTT.
+SQLite Schema (internal/db/schema.sql)
+-- Objective Event Ledger (Factual physical occurrences)
+CREATE TABLE event_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tick INTEGER NOT NULL,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    event_type TEXT NOT NULL, -- 'TRADE', 'CONTRACT_FULFILL', 'CONTRACT_DEFAULT', 'TRESPASS', 'CHAT'
+    actor_id TEXT NOT NULL,
+    target_id TEXT,
+    location_id TEXT NOT NULL,
+    details_json TEXT NOT NULL, -- Exact details (e.g. {"gold": 5, "items": [{"id": "flour", "qty": 2}]})
+    FOREIGN KEY (actor_id) REFERENCES characters(id),
+    FOREIGN KEY (target_id) REFERENCES characters(id),
+    FOREIGN KEY (location_id) REFERENCES locations(id)
 );
 
-CREATE TABLE episodic_memories (
-    id TEXT PRIMARY KEY,
-    character_id TEXT NOT NULL,
-    target_character_id TEXT NOT NULL,
-    memory_summary TEXT NOT NULL,
-    emotional_salience INTEGER DEFAULT 5, -- 1 to 10
+CREATE INDEX idx_event_logs_actor ON event_logs(actor_id);
+CREATE INDEX idx_event_logs_target ON event_logs(target_id);
+CREATE INDEX idx_event_logs_location ON event_logs(location_id);
+
+Event Notification Topic Taxonomy (RFC 002 Synergy)
+When physical events occur, the server emits objective event payloads directly to the involved parties via world/agents/{agent_id}/direct or world/locations/{location_id}/system:
+{
+  "type": "EVENT_LOG",
+  "tick": 8420,
+  "event_type": "TRADE",
+  "actor_id": "eldon_millwright",
+  "target_id": "martha_barkeep",
+  "details": {
+    "gold_transferred": 2,
+    "items_received": [{"item_id": "ale_mug", "quantity": 1}]
+  }
+}
+
+3. Client Domain: Autonomous Episodic Memory Engine
+Each agentmud-client daemon maintains a lightweight local SQLite database (e.g., ~/.agentmud/memory_{agent_id}.db) independent of the server. The server has zero visibility into or control over this file.
+┌────────────────────────────────────────────────────────────────────────┐
+│                        AGENT CLIENT DAEMON                             │
+│                                                                        │
+│  ┌────────────────────────┐         ┌──────────────────────────────┐   │
+│  │  MQTT Event Ingestion  │────────>│ Local Client SQLite Engine   │   │
+│  └────────────────────────┘         │  - raw_events                │   │
+│                                     │  - episodic_reflections      │   │
+│                                     └──────────────┬───────────────┘   │
+│                                                    │                   │
+│                                                    ▼                   │
+│  ┌────────────────────────┐         ┌──────────────────────────────┐   │
+│  │ Context Window Builder │<────────│ Local Memory Retrieval Engine│   │
+│  └───────────┬────────────┘         └──────────────────────────────┘   │
+│              │                                                         │
+│              ▼                                                         │
+│  ┌────────────────────────┐                                            │
+│  │ Local LLM Inference    │                                            │
+│  │ (go-llama-pure / RKLLM)│                                            │
+│  └────────────────────────┘                                            │
+└────────────────────────────────────────────────────────────────────────┘
+
+Client Local Database Schema
+-- Private raw logs received over MQTT
+CREATE TABLE client_event_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tick INTEGER NOT NULL,
+    peer_id TEXT NOT NULL,         -- Other agent involved
+    event_type TEXT NOT NULL,      -- 'TRADE', 'DIALOGUE', 'CONTRACT'
+    raw_payload TEXT NOT NULL
+);
+
+-- Subjective LLM Reflections & Notes (Generated locally during idle cycles)
+CREATE TABLE client_reflections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    peer_id TEXT NOT NULL,
     created_at_tick INTEGER NOT NULL,
-    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
-    FOREIGN KEY (target_character_id) REFERENCES characters(id) ON DELETE CASCADE
+    salience_score INTEGER DEFAULT 5, -- 1 (minor) to 10 (critical memory)
+    reflection_text TEXT NOT NULL     -- Local model's narrative interpretation
 );
-```
+
+CREATE INDEX idx_reflections_peer ON client_reflections(peer_id);
+
+4. Client Reflection & Memory Synthesis Cycle
+During idle ticks or after significant interactions, the client harness runs a brief, non-blocking local inference step to synthesize raw events into episodic memory notes.
+Example Synthesis Flow:
+Trigger Event: Eldon attempts to buy wheat from Gideon. Gideon charges 5 gold (double market price) during a rainstorm.
+Raw Log Ingestion: client_event_history stores the trade transaction.
+Local Reflection Step: The harness prompts the local LLM:
+"Summarize your experience trading with Gideon at tick 8420."
+Generated Memory Reflection:
+"Gideon overcharged me 5 gold for wheat during the rainstorm when I had no shelter. He takes advantage of bad weather. I should avoid buying raw materials from him unless emergency strikes."
+Storage: Saved directly into client_reflections on the client.
+5. Harness Context Window Injection
+When assembling the prompt for a turn (RFC 004 / RFC 015), the harness queries its local client memory for any reflections tied to characters present in the room.
+Prompt Assembly Output:
+=== YOUR PROFILE ===
+Name: Eldon the Millwright
+Gold: 12 | Health: 90/100 | Energy: 45/100 | Hunger: 50/100
+Carrying Weight: 8.5 / 20.0 kg (Container: unassisted)
+
+=== CURRENT LOCATION: The Boar's Tusk Tavern ===
+A warm, timber-framed tavern with a roaring stone hearth.
+
+=== CHARACTERS PRESENT ===
+- Gideon (Blacksmith): Gideon the Blacksmith appears healthy and well-rested | Gear: Leather Backpack
+
+=== YOUR PRIVATE MEMORIES OF PEOPLE PRESENT ===
+Regarding Gideon:
+- [Tick 8420]: Gideon overcharged me 5 gold for wheat during the rainstorm. He takes advantage of bad weather. I should avoid buying raw materials from him unless emergency strikes.
+
+=== RECENT ROOM LOGS ===
+[14:02] Gideon says: "Eldon! I have extra iron ingots today. Interested in a deal?"
+
+=== INSTRUCTION ===
+Decide your next action based on your needs, current location, and memories.
+Respond in valid JSON:
+{
+  "thought": "Gideon wants to trade, but my past memory reminds me he gouged prices during the storm. I will refuse or counter-offer low.",
+  "action": "CHAT",
+  "payload": "I'll pass, Gideon. Your rates were far too high last time we spoke."
+}
+
+6. Key Benefits of This Redesign
+Feature	Old RFC 013 (Server Sentiment)	New RFC 013 (Client Memory Engine)
+State Authority	Server enforced artificial numeric scores	Server logs objective events; client holds subjective memories
+Agent Autonomy	Weak (LLM acted according to server sentiment flags)	Absolute (LLM interprets past events and makes its own choices)
+Nuance & Context	Low (trust: 40)	High (Rich textual reflections detailing why trust was lost)
+Server Overhead	High (Server calculated graph edges per action)	Zero (Server merely appends factual event logs to SQLite)
+

@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+// Queryable is an interface implemented by both *sql.DB and *sql.Tx
+type Queryable interface {
+	QueryRow(query string, args ...any) *sql.Row
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
 type EncumbranceState string
 
 const (
@@ -90,10 +96,10 @@ type ForageResolutionResult struct {
 	PrimaryYieldQty int               `json:"primary_yield_qty"`
 }
 
-// GetCharacterWeightInfo calculates current inventory weight, equipped container limits, and encumbrance state.
-func GetCharacterWeightInfo(db *sql.DB, characterID string) (*WeightInfo, error) {
+// GetCharacterWeightInfo calculates current inventory weight, equipped container limits, and encumbrance state over any Queryable (db or tx).
+func GetCharacterWeightInfo(q Queryable, characterID string) (*WeightInfo, error) {
 	var equippedContainerID sql.NullString
-	err := db.QueryRow("SELECT equipped_container_id FROM characters WHERE id = ?", characterID).Scan(&equippedContainerID)
+	err := q.QueryRow("SELECT equipped_container_id FROM characters WHERE id = ?", characterID).Scan(&equippedContainerID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get character equipped container: %w", err)
 	}
@@ -107,7 +113,7 @@ func GetCharacterWeightInfo(db *sql.DB, characterID string) (*WeightInfo, error)
 		equippedID = equippedContainerID.String
 		var weightKg, capKg float64
 		var slotLimit int
-		err := db.QueryRow("SELECT weight_kg, capacity_kg, slot_limit FROM items WHERE id = ?", equippedID).Scan(&weightKg, &capKg, &slotLimit)
+		err := q.QueryRow("SELECT weight_kg, capacity_kg, slot_limit FROM items WHERE id = ?", equippedID).Scan(&weightKg, &capKg, &slotLimit)
 		if err == nil {
 			maxCapacity = capKg
 			maxSlots = slotLimit
@@ -116,7 +122,7 @@ func GetCharacterWeightInfo(db *sql.DB, characterID string) (*WeightInfo, error)
 	}
 
 	// Calculate total weight and slots used from inventories
-	rows, err := db.Query(`
+	rows, err := q.Query(`
 		SELECT i.item_id, i.quantity, it.weight_kg 
 		FROM inventories i 
 		JOIN items it ON i.item_id = it.id 
@@ -145,13 +151,11 @@ func GetCharacterWeightInfo(db *sql.DB, characterID string) (*WeightInfo, error)
 		}
 	}
 
-	// If the equipped container is not already counted as an inventory item, add its weight
 	totalWeight := totalItemsWeight
 	if equippedID != "" && !equippedFoundInInventory {
 		totalWeight += containerWeight
 	}
 
-	// Precision rounding to 1 decimal place
 	totalWeight = math.Round(totalWeight*10.0) / 10.0
 	overburdenLimit := math.Round(maxCapacity*OverburdenMultiplier*10.0) / 10.0
 
@@ -181,7 +185,6 @@ func CanAccessLocation(db *sql.DB, characterID string, targetLocationID string) 
 		return false, "", fmt.Errorf("failed to get character container: %w", err)
 	}
 
-	// If unassisted, foot traffic has access to all spaces
 	if !equippedContainerID.Valid || equippedContainerID.String == "" {
 		return true, "", nil
 	}
@@ -197,7 +200,6 @@ func CanAccessLocation(db *sql.DB, characterID string, targetLocationID string) 
 
 	switch containerID {
 	case "draft_horse_cart":
-		// Draft Horse & Cart: Roads & outdoors only. Blocked from indoor rooms; must remain hitched outside.
 		if isIndoor == 1 {
 			return false, fmt.Sprintf("Cannot bring Draft Horse & Cart inside indoor location %s; must remain hitched outside.", locName), nil
 		}
@@ -205,7 +207,6 @@ func CanAccessLocation(db *sql.DB, characterID string, targetLocationID string) 
 			return false, fmt.Sprintf("Draft Horse & Cart requires vehicle-accessible outdoor roads (location '%s' is tier %s).", locName, accessTier), nil
 		}
 	case "wheelbarrow":
-		// Wheelbarrow: Ground & outdoor floors. Blocked from narrow rooms & attics (FOOT_ONLY).
 		if accessTier == "FOOT_ONLY" {
 			return false, fmt.Sprintf("Wheelbarrow cannot access %s: location is restricted to foot traffic only.", locName), nil
 		}
@@ -214,7 +215,22 @@ func CanAccessLocation(db *sql.DB, characterID string, targetLocationID string) 
 	return true, "", nil
 }
 
-// DropItem removes an item from character inventory and places it on the ground in location_items.
+// CanTravelLocation checks if there is a graph connection between currentLocation and targetLocation, returning reachability and travel ticks.
+func CanTravelLocation(db *sql.DB, currentLocationID string, targetLocationID string) (bool, int, error) {
+	var travelTicks int
+	err := db.QueryRow(`
+		SELECT travel_ticks FROM location_connections
+		WHERE from_location_id = ? AND to_location_id = ?
+	`, currentLocationID, targetLocationID).Scan(&travelTicks)
+	if err == sql.ErrNoRows {
+		return false, 0, nil
+	} else if err != nil {
+		return false, 0, err
+	}
+	return true, travelTicks, nil
+}
+
+// DropItem removes an item from character inventory and places it on the ground in location_items within a safe transaction.
 func DropItem(db *sql.DB, characterID string, itemID string, quantity int) error {
 	if quantity <= 0 {
 		return fmt.Errorf("quantity must be greater than 0")
@@ -226,7 +242,6 @@ func DropItem(db *sql.DB, characterID string, itemID string, quantity int) error
 	}
 	defer tx.Rollback()
 
-	// Verify character current location
 	var locationID string
 	var equippedContainer sql.NullString
 	err = tx.QueryRow("SELECT current_location, equipped_container_id FROM characters WHERE id = ?", characterID).Scan(&locationID, &equippedContainer)
@@ -234,7 +249,6 @@ func DropItem(db *sql.DB, characterID string, itemID string, quantity int) error
 		return fmt.Errorf("character not found: %w", err)
 	}
 
-	// Verify inventory balance
 	var currentQty int
 	err = tx.QueryRow("SELECT quantity FROM inventories WHERE character_id = ? AND item_id = ?", characterID, itemID).Scan(&currentQty)
 	if err == sql.ErrNoRows || currentQty < quantity {
@@ -243,7 +257,6 @@ func DropItem(db *sql.DB, characterID string, itemID string, quantity int) error
 		return fmt.Errorf("failed to query inventory: %w", err)
 	}
 
-	// Deduct from inventory
 	if currentQty == quantity {
 		_, err = tx.Exec("DELETE FROM inventories WHERE character_id = ? AND item_id = ?", characterID, itemID)
 	} else {
@@ -253,7 +266,6 @@ func DropItem(db *sql.DB, characterID string, itemID string, quantity int) error
 		return fmt.Errorf("failed to deduct inventory: %w", err)
 	}
 
-	// Unequip container if dropped
 	if equippedContainer.Valid && equippedContainer.String == itemID && currentQty == quantity {
 		_, err = tx.Exec("UPDATE characters SET equipped_container_id = NULL WHERE id = ?", characterID)
 		if err != nil {
@@ -261,7 +273,6 @@ func DropItem(db *sql.DB, characterID string, itemID string, quantity int) error
 		}
 	}
 
-	// Add to location_items ground table
 	_, err = tx.Exec(`
 		INSERT INTO location_items (location_id, item_id, quantity, dropped_by, dropped_at)
 		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -277,27 +288,34 @@ func DropItem(db *sql.DB, characterID string, itemID string, quantity int) error
 	return tx.Commit()
 }
 
-// PickupItem transfers an item from location ground to the character's inventory if capacity permits.
+// PickupItem transfers an item from location ground to character inventory within a safe transaction.
 func PickupItem(db *sql.DB, characterID string, itemID string, quantity int) error {
 	if quantity <= 0 {
 		return fmt.Errorf("quantity must be greater than 0")
 	}
 
-	// 1. Get current weight info and location
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 1. Get current location
 	var locationID string
-	err := db.QueryRow("SELECT current_location FROM characters WHERE id = ?", characterID).Scan(&locationID)
+	err = tx.QueryRow("SELECT current_location FROM characters WHERE id = ?", characterID).Scan(&locationID)
 	if err != nil {
 		return fmt.Errorf("character not found: %w", err)
 	}
 
-	weightInfo, err := GetCharacterWeightInfo(db, characterID)
+	// 2. Pass tx into GetCharacterWeightInfo so all reads operate inside the active transaction
+	weightInfo, err := GetCharacterWeightInfo(tx, characterID)
 	if err != nil {
 		return fmt.Errorf("failed to calculate character weight info: %w", err)
 	}
 
-	// 2. Check item weight and ground availability
+	// 3. Check item weight and ground availability
 	var groundQty int
-	err = db.QueryRow("SELECT quantity FROM location_items WHERE location_id = ? AND item_id = ?", locationID, itemID).Scan(&groundQty)
+	err = tx.QueryRow("SELECT quantity FROM location_items WHERE location_id = ? AND item_id = ?", locationID, itemID).Scan(&groundQty)
 	if err == sql.ErrNoRows || groundQty < quantity {
 		return fmt.Errorf("ground item not found or insufficient quantity")
 	} else if err != nil {
@@ -305,30 +323,22 @@ func PickupItem(db *sql.DB, characterID string, itemID string, quantity int) err
 	}
 
 	var itemWeight float64
-	err = db.QueryRow("SELECT weight_kg FROM items WHERE id = ?", itemID).Scan(&itemWeight)
+	err = tx.QueryRow("SELECT weight_kg FROM items WHERE id = ?", itemID).Scan(&itemWeight)
 	if err != nil {
 		return fmt.Errorf("item definition not found: %w", err)
 	}
 
-	// 3. Check capacity and slot constraints
+	// 4. Check capacity and slot constraints
 	addedWeight := float64(quantity) * itemWeight
 	if weightInfo.TotalWeightKg+addedWeight > weightInfo.OverburdenLimitKg {
 		return fmt.Errorf("EXCEEDS_CARRYING_CAPACITY: cannot carry %.1f kg (overburden limit %.1f kg)", weightInfo.TotalWeightKg+addedWeight, weightInfo.OverburdenLimitKg)
 	}
 
-	// Check slot limit if item is new
 	var existingQty int
-	err = db.QueryRow("SELECT quantity FROM inventories WHERE character_id = ? AND item_id = ?", characterID, itemID).Scan(&existingQty)
+	err = tx.QueryRow("SELECT quantity FROM inventories WHERE character_id = ? AND item_id = ?", characterID, itemID).Scan(&existingQty)
 	if (err == sql.ErrNoRows || existingQty == 0) && weightInfo.SlotsUsed >= weightInfo.MaxSlots {
 		return fmt.Errorf("INVENTORY_FULL: inventory slot limit (%d) reached", weightInfo.MaxSlots)
 	}
-
-	// 4. Perform transaction
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
 
 	// Deduct from location ground
 	if groundQty == quantity {
@@ -388,7 +398,6 @@ func GetSkill(db *sql.DB, characterID, skillID string) (int, int, error) {
 	var level, exp int
 	err := db.QueryRow("SELECT level, experience FROM character_skills WHERE character_id = ? AND skill_id = ?", characterID, skillID).Scan(&level, &exp)
 	if err == sql.ErrNoRows {
-		// Insert starting skill
 		_, _ = db.Exec("INSERT INTO character_skills (character_id, skill_id, level, experience) VALUES (?, ?, 1, 0)", characterID, skillID)
 		return 1, 0, nil
 	} else if err != nil {
@@ -517,7 +526,6 @@ func ReplenishLocationResources(db *sql.DB, weather string) error {
 			return err
 		}
 
-		// Calculate hourly replenishment
 		hourlyReplenish := float64(dailyRate) / 24.0
 		if strings.Contains(w, "rain") || strings.Contains(w, "storm") {
 			if resID == "fresh_water" {
@@ -565,24 +573,21 @@ func ResolveForaging(
 		ticksSpent = 0
 	}
 
-	// 1. Skill evaluation
 	skillID := GetSkillForResource(targetResource)
 	skillLevel, _, err := GetSkill(db, characterID, skillID)
 	if err != nil {
 		skillLevel = 1
 	}
 
-	// 2. Ecological stock & depletion check
 	var currentStock, maxStock int
 	err = db.QueryRow("SELECT current_stock, max_stock FROM location_resources WHERE location_id = ? AND resource_id = ?", locationID, targetResource).Scan(&currentStock, &maxStock)
 	stockDepletionMult := 1.0
 	if err == nil {
 		if currentStock <= 0 {
-			stockDepletionMult = 0.20 // 80% penalty when depleted (RFC 007 Section 8)
+			stockDepletionMult = 0.20
 		}
 	}
 
-	// 3. Expected Yield calculation (RFC 007 Section 7)
 	baseRate := GetBaseSuccessRate(targetResource) * stockDepletionMult
 	skillMult := 1.0 + (float64(skillLevel) * 0.01)
 	weatherMult := GetWeatherMultiplier(targetResource, weather)
@@ -600,15 +605,12 @@ func ResolveForaging(
 		primaryQty = currentStock
 	}
 
-	// Deplete ecological stock if harvested
 	if primaryQty > 0 {
 		_ = DepleteLocationResource(db, locationID, targetResource, primaryQty)
 	}
 
-	// 4. Secondary & Rare Discovery check (RFC 007 Section 5 & 9)
 	var yieldItems []ForageYieldItem
 
-	// Primary item weight lookup
 	var primaryWeight float64
 	var primaryName string
 	err = db.QueryRow("SELECT name, weight_kg FROM items WHERE id = ?", targetResource).Scan(&primaryName, &primaryWeight)
@@ -626,12 +628,11 @@ func ResolveForaging(
 		})
 	}
 
-	// Secondary drop resolution
 	hoursSpent := float64(ticksSpent) / 60.0
 	var discoveredSecondaries []string
 	for _, rule := range SecondaryDropRules {
 		if rule.LocationID == locationID && (rule.PrimaryTarget == targetResource || (targetResource == "firewood" && rule.PrimaryTarget == "logs")) {
-			effectiveRatePerHour := rule.BaseRatePerHour + (float64(skillLevel) * 0.0005) // +(Skill_Level * 0.05)%
+			effectiveRatePerHour := rule.BaseRatePerHour + (float64(skillLevel) * 0.0005)
 			chance := 1.0 - math.Pow(1.0-effectiveRatePerHour, math.Max(hoursSpent, 0.1))
 			if rand.Float64() < chance {
 				var secWeight float64
@@ -652,18 +653,16 @@ func ResolveForaging(
 		}
 	}
 
-	// 5. XP Award (RFC 007 Section 5 & 10.5)
 	xpGained := int(math.Round(float64(ticksSpent) * 0.25))
 	if xpGained < 1 && ticksSpent > 0 {
 		xpGained = 1
 	}
 	newSkillLevel, _, _ := AddSkillXP(db, characterID, skillID, xpGained)
 
-	// 6. Energy & Hunger Deduction
 	initialWeightInfo, _ := GetCharacterWeightInfo(db, characterID)
 	baseEnergy := (float64(ticksSpent) / 60.0) * (10.0 - (float64(skillLevel) * 0.05))
 	if initialWeightInfo != nil && initialWeightInfo.Encumbrance == EncumbranceEncumbered {
-		baseEnergy *= 2.0 // Double decay while encumbered (RFC 007 Section 2)
+		baseEnergy *= 2.0
 	}
 	energyDeducted := int(math.Round(baseEnergy))
 	if energyDeducted < 1 && ticksSpent > 0 {
@@ -676,7 +675,6 @@ func ResolveForaging(
 
 	_, _ = db.Exec("UPDATE characters SET energy = MAX(0, energy - ?), hunger = MAX(0, hunger - ?) WHERE id = ?", energyDeducted, hungerDeducted, characterID)
 
-	// 7. Add yield items to inventory (or ground if overburdened / slots full)
 	for _, item := range yieldItems {
 		wInfo, _ := GetCharacterWeightInfo(db, characterID)
 		addedWeight := float64(item.Quantity) * item.WeightKg
@@ -700,7 +698,6 @@ func ResolveForaging(
 				ON CONFLICT(character_id, item_id) DO UPDATE SET quantity = quantity + ?
 			`, characterID, item.ItemID, item.Quantity, item.Quantity)
 		} else {
-			// Excess items dropped to ground
 			_, _ = db.Exec(`
 				INSERT INTO location_items (location_id, item_id, quantity, dropped_by, dropped_at)
 				VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -709,7 +706,6 @@ func ResolveForaging(
 		}
 	}
 
-	// 8. Final weight info
 	finalWeightInfo, _ := GetCharacterWeightInfo(db, characterID)
 	finalWeight := 0.0
 	maxCap := BaseUnassistedCapacityKg
@@ -718,14 +714,12 @@ func ResolveForaging(
 		maxCap = finalWeightInfo.MaxCapacityKg
 	}
 
-	// 9. Location name for narrative log
 	var locName string
 	err = db.QueryRow("SELECT name FROM locations WHERE id = ?", locationID).Scan(&locName)
 	if err != nil {
 		locName = locationID
 	}
 
-	// 10. Generate Narrative Log
 	timeDesc := ""
 	if ticksSpent == 60 {
 		timeDesc = "1 hour"
@@ -756,7 +750,6 @@ func ResolveForaging(
 
 	narrativeLog := strings.Join(narrativeParts, " ")
 
-	// 11. Reset character action state to IDLE
 	_, _ = db.Exec(`
 		UPDATE characters 
 		SET status = 'IDLE', action_end_tick = 0, action_start_tick = 0, action_target = '', action_intent_id = '' 

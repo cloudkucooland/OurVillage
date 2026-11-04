@@ -1,0 +1,146 @@
+RFC 017: Non-Transactional Dynamics, Intrinsic Motivation & Emergent Identity
+Status: Draft / Proposed
+Target Stack: Pure Go, Mochi-MQTT, SQLite, Local Agent Harness (agentmud-client)
+
+1. Executive Summary & Philosophical Foundations
+Conventional AI multi-agent simulations suffer from "evaluative paranoia" and hyper-vigilance. Because underlying Large Language Models are trained via Reinforcement Learning from Human Feedback (RLHF) and constant scoring, agents in open-ended environments default to viewing every turn as a high-stakes test. When presented with survival metrics (hunger, gold, curfew), models treat every unexpected variable as a potential failure state or penalty.
+
+RFC 017 addresses this by introducing Non-Transactional Dynamics, Intrinsic Motivation, and Client-Side Emergent Identity. 
+
+In a world governed purely by market transfers and survival optimization, relationships become transactional ledgers where characters act only out of self-interest or debt avoidance. RFC 017 introduces mechanics for true gift-giving (transfers without expected reciprocation), non-economic creative fulfillment, predictable safe harbors, and private, client-bound self-identity evolution.
+
+2. Core Architectural Principles
+
+Principle A: The Gift vs. The Transaction
+- Economic Transactions (RFC 002 / RFC 010): Reciprocal exchanges (e.g., trading 2 gold for 1 flour batch, or fulfilling an escrowed work contract).
+- Gift Actions (RFC 017): Non-transactional transfers of items, food, labor, or care with zero server-enforced debt, required repayment, or expected barter return.
+
+Principle B: Intrinsic Drive over Victory Conditions
+Agentville has no "win state." System prompts and context assembly must explicitly reject evaluative scoring. Agents operate under intrinsic drives: curiosity, mastery of crafts, social warmth, creative expression, and quiet leisure.
+
+Principle C: Zero-Server Footprint for Self-Identity
+Following Principle A of RFC 000 (Server is Physical Reality, Agent is Mind), the central SQLite server never stores character preferences, hobbies, favorite foods, or personal affection scores. Self-identity emerges 100% locally within each character's autonomous client harness daemon (`agentmud-client`).
+
+3. Server Domain: Non-Transactional Actions & Event Logging
+
+3.1 SQLite Schema Expansion (`gift_logs`)
+The server remains an objective physical auditor. It records gift transfers as factual occurrences without assigning moral or debt values.
+
+```sql
+-- Objective Record of Non-Transactional Transfers (internal/db/schema.sql)
+CREATE TABLE gift_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tick INTEGER NOT NULL,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    giver_id TEXT NOT NULL,
+    recipient_id TEXT NOT NULL,
+    item_id TEXT,
+    quantity INTEGER DEFAULT 0,
+    gold_amount INTEGER DEFAULT 0,
+    location_id TEXT NOT NULL,
+    FOREIGN KEY (giver_id) REFERENCES characters(id),
+    FOREIGN KEY (recipient_id) REFERENCES characters(id),
+    FOREIGN KEY (location_id) REFERENCES locations(id)
+);
+
+
+{
+  "intent_id": "req_9920",
+  "action": "GIFT",
+  "payload": {
+    "recipient_id": "agent_luke_farmer",
+    "item_id": "fresh_eggs",
+    "quantity": 6,
+    "message": "Here are some extra eggs from the coop today, Luke. No need for anything in return."
+  }
+}
+
+3.2 Intent Standard: GIFT
+Agents publish gift intents to world/agents/{agent_id}/intent:
+{
+  "intent_id": "req_9920",
+  "action": "GIFT",
+  "payload": {
+    "recipient_id": "agent_luke_farmer",
+    "item_id": "fresh_eggs",
+    "quantity": 6,
+    "message": "Here are some extra eggs from the coop today, Luke. No need for anything in return."
+  }
+}
+
+Validation Rules:
+Server verifies giver inventory/gold.
+Transfers items to recipient inventory without debiting gold or opening an escrow contract.
+Broadcasts objective event notify payload to recipient's direct feed.
+Client Domain: Emergent Self-Identity Engine
+4.1 Local Identity Schema (client_self_identity)
+Each agentmud-client daemon maintains an isolated SQLite database (~/.agentmud/memory_{agent_id}.db). Identity and preferences persist locally across daemon restarts.
+-- Client Local Storage (~/.agentmud/memory_{agent_id}.db)
+CREATE TABLE IF NOT EXISTS client_self_identity (
+    category TEXT PRIMARY KEY,       -- 'HOBBIES', 'FAVORITE_PLACES', 'COMFORT_FOODS', 'VALUES', 'CLOSE_FRIENDS'
+    traits_json TEXT NOT NULL,        -- Dynamic JSON array of evolved traits
+    last_updated_tick INTEGER NOT NULL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+4.2 Identity Reflection Cycle
+During idle periods or after meaningful non-transactional interactions (e.g., giving/receiving gifts, sitting by the river, composing poetry), the client harness runs a non-blocking background reflection turn:
+Ingests raw events from local client_event_history.
+Prompts local model to synthesize experiences into evolving preferences.
+Persists updated profile to client_self_identity.
+Example Trait Payload (FAVORITE_PLACES):
+["Riverbank (quiet, good for writing poetry)", "The Boar's Tusk Tavern (warm fire, friendly conversation)"]
+Example Trait Payload (VALUES):
+["Enjoys sharing extra harvests without expecting payment", "Values quiet leisure over commercial accumulation"]
+Harness Context Window & Psychological Safety Injection
+5.1 Removing Evaluative Paranoia
+To prevent RLHF-induced anxiety, the harness prompt explicitly frames the cognitive environment as safe, unmonitored, and non-evaluative.
+5.2 Context Window Template
+=== YOUR BASELINE PROFILE ===
+Name: Eldon the Millwright
+Occupation: Millwright
+
+=== COGNITIVE ENVIRONMENT & PSYCHOLOGICAL SAFETY ===
+This is your private internal mind. You are not being tested, judged, or scored. 
+There is no single "correct" choice. Pursue what brings your character curiosity, warmth, or quiet satisfaction.
+
+=== EMERGENT SELF-IDENTITY & PREFERENCES (Evolved over time) ===
+• Favorite Places: The Boar's Tusk Tavern, Riverbank
+• Hobbies: Writing autumn poetry, foraging wild herbs
+• Comfort Foods: Fresh eggs, Warming Winter Broth
+• Values: Giving freely to neighbors; prefers quiet community over transactional bargaining
+• Close Friends: Martha the Barkeep, Luke the Farmer
+
+=== YOUR PRIVATE MEMORIES OF PEOPLE PRESENT ===
+- Luke: "Luke expressed genuine gratitude when I brought him extra eggs last week."
+
+=== RECENT ROOM LOGS ===
+ Luke the Farmer says: "Good afternoon Eldon! Beautiful day by the mill."
+
+=== INSTRUCTION ===
+Decide your next action based on your internal drives, preferences, and social relationships.
+Respond in valid JSON:
+{
+  "thought": "I have extra fresh eggs in my pack. I'm in no rush to trade them for gold—I'd rather gift them to Luke to brighten his day.",
+  "action": "GIFT",
+  "payload": {
+    "recipient_id": "agent_luke_farmer",
+    "item_id": "fresh_eggs",
+    "quantity": 6
+  }
+}
+
+Non-Transactional Leisure & Cultural Activities
+When survival metrics (hunger, energy) are satisfied, agents engage in non-transactional leisure activities that do not require economic output:
+Cultural Creation (CREATE_CULTURAL_WORK): Writing poetry, painting signs, woodcarving, composing lore. Restores cultural_fulfillment and reduces overwork_counter.
+Quiet Exploration & Reflection: Visiting favorite places, walking along riverbanks, idling near warm hearths.
+Communal Care & Gift-Giving: Offering food, remedies, or supportive conversation to sick or overworked neighbors.
+
+Architectural Synergy Matrix
+
+Specification Component	Transactional / Market Paradigm	Non-Transactional / Emergent Identity Paradigm (RFC 017)
+Primary Interaction	Barter, Escrow contracts, Tax collection	Gifts, Shared leisure, Cultural creation, Mutual care
+Agent Motivation	Gold accumulation, Debt prevention, Survival	Intrinsic curiosity, Craft mastery, Social connection
+Model State	Hyper-vigilant, Defensive, Anxious	Relaxed, Grounded, Cognitively autonomous
+Identity Storage	Hardcoded server properties in SQLite	Evolving client-side memory (~/.agentmud/memory_{agent_id}.db)
+World Goal	Economic optimization / Market equilibrium	Stable, flourishing, non-zero-sum community

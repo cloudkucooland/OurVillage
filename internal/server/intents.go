@@ -52,6 +52,18 @@ type CraftPayload struct {
 	RecipeID string `json:"recipe_id"`
 }
 
+type BuyPayload struct {
+	ItemID   string `json:"item_id"`
+	Quantity int    `json:"quantity"`
+}
+
+type DirectResponse struct {
+	IntentID  string `json:"intent_id"`
+	Status    string `json:"status"`
+	ErrorCode string `json:"error_code,omitempty"`
+	Message   string `json:"message"`
+}
+
 func (s *Server) SetupIntentHandlers() error {
 	// Subscribe to all agent intent topics: world/agents/{agent_id}/intent
 	err := s.mqttServer.Subscribe("world/agents/+/intent", 0, func(cl *mqtt.Client, sub packets.Subscription, pk packets.Packet) {
@@ -93,6 +105,10 @@ func (s *Server) SetupIntentHandlers() error {
 			s.handleUnequip(agentID, intent.IntentID, intent.Payload)
 		case "CRAFT":
 			s.handleCraft(agentID, intent.IntentID, intent.Payload)
+		case "BUY":
+			s.handleBuy(agentID, intent.IntentID, intent.Payload)
+		case "LOOK", "STATUS":
+			s.handleLook(agentID, intent.IntentID)
 		default:
 			s.sendDirectError(agentID, intent.IntentID, "UNKNOWN_ACTION", fmt.Sprintf("Unsupported action: %s", intent.Action))
 		}
@@ -165,10 +181,21 @@ func (s *Server) handleMove(agentID string, intentID string, rawPayload json.Raw
 		return
 	}
 
+	// 4.5 Spatial Graph Reachability & Travel Ticks Check
+	canTravel, travelTicks, err := db.CanTravelLocation(s.db, currentLocation, payload.TargetLocation)
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "DB_ERROR", fmt.Sprintf("Failed to evaluate travel path: %v", err))
+		return
+	}
+	if !canTravel {
+		s.sendDirectError(agentID, intentID, "LOCATION_UNREACHABLE", fmt.Sprintf("Cannot travel directly to %s from %s: no direct graph connection.", payload.TargetLocation, currentLocation))
+		return
+	}
+
 	// 5. Energy Decay (Double decay while encumbered - RFC 007 Section 2)
-	energyCost := 1
+	energyCost := travelTicks
 	if wInfo.Encumbrance == db.EncumbranceEncumbered {
-		energyCost = 2
+		energyCost = travelTicks * 2
 	}
 
 	// 6. Update character location and energy
@@ -178,15 +205,25 @@ func (s *Server) handleMove(agentID string, intentID string, rawPayload json.Raw
 		return
 	}
 
+	if s.authHook != nil {
+		s.authHook.RecordMove(agentID, payload.TargetLocation)
+	}
+
 	// 7. Publish leave & enter events
 	leaveTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
 	enterTopic := fmt.Sprintf("world/locations/%s/system", payload.TargetLocation)
 
 	_ = s.mqttServer.Publish(leaveTopic, []byte(fmt.Sprintf("%s has left for %s.", agentID, locName)), false, 0)
 	_ = s.mqttServer.Publish(enterTopic, []byte(fmt.Sprintf("%s has arrived.", agentID)), false, 0)
-	_ = s.mqttServer.Publish("world/global/spatial/move", []byte(fmt.Sprintf(`{"agent_id":"%s","from":"%s","to":"%s"}`, agentID, currentLocation, payload.TargetLocation)), false, 0)
 
-	s.sendDirectResponse(agentID, intentID, "SUCCESS", fmt.Sprintf("Moved to %s", locName))
+	spatialPayload, _ := json.Marshal(map[string]string{
+		"agent_id": agentID,
+		"from":     currentLocation,
+		"to":       payload.TargetLocation,
+	})
+	_ = s.mqttServer.Publish("world/global/spatial/move", spatialPayload, false, 0)
+
+	s.handleLook(agentID, intentID, fmt.Sprintf("Moved to %s", locName))
 }
 
 func (s *Server) handleTransfer(agentID string, intentID string, rawPayload json.RawMessage) {
@@ -299,6 +336,19 @@ func (s *Server) handleTransfer(agentID string, intentID string, rawPayload json
 		return
 	}
 
+	// 3. Record objective event log for audit trail (RFC 013)
+	currentTick := s.GetTickCount()
+	eventPayload, _ := json.Marshal(map[string]interface{}{
+		"sender_id":    agentID,
+		"recipient_id": payload.RecipientID,
+		"amount":       payload.Amount,
+		"item_id":      payload.ItemID,
+		"quantity":     payload.Quantity,
+	})
+	if _, err := db.RecordEventLog(s.db, currentTick, agentID, payload.RecipientID, "TRANSFER", string(eventPayload), nil); err != nil {
+		log.Printf("[Server Warning] Failed to record event log: %v", err)
+	}
+
 	s.sendDirectResponse(agentID, intentID, "SUCCESS", "Transfer completed successfully")
 }
 
@@ -321,9 +371,12 @@ func (s *Server) handleChat(agentID string, intentID string, rawPayload json.Raw
 	}
 
 	chatTopic := fmt.Sprintf("world/locations/%s/chat", currentLocation)
-	chatPayload := fmt.Sprintf(`{"agent_id":"%s","message":"%s"}`, agentID, messageText)
+	chatPayload, _ := json.Marshal(map[string]string{
+		"agent_id": agentID,
+		"message":  messageText,
+	})
 
-	_ = s.mqttServer.Publish(chatTopic, []byte(chatPayload), false, 0)
+	_ = s.mqttServer.Publish(chatTopic, chatPayload, false, 0)
 	s.sendDirectResponse(agentID, intentID, "SUCCESS", "Message broadcasted")
 }
 
@@ -393,6 +446,8 @@ func (s *Server) handleForage(agentID string, intentID string, rawPayload json.R
 	// 5. Broadcast foraging commencement to location
 	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
 	_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s has started foraging for %s (%d ticks).", agentID, payload.TargetResource, payload.DurationTicks)), false, 0)
+
+	s.sendDirectResponse(agentID, intentID, "SUCCESS", fmt.Sprintf("Started foraging for %s (%d ticks)", payload.TargetResource, payload.DurationTicks))
 }
 
 func (s *Server) handleCancelAction(agentID string, intentID string, rawPayload json.RawMessage) {
@@ -594,6 +649,38 @@ func (s *Server) handleUnequip(agentID string, intentID string, rawPayload json.
 	s.sendDirectResponse(agentID, intentID, "SUCCESS", "Unequipped container")
 }
 
+func (s *Server) handleBuy(agentID string, intentID string, rawPayload json.RawMessage) {
+	var payload BuyPayload
+	if err := json.Unmarshal(rawPayload, &payload); err != nil || payload.ItemID == "" || payload.Quantity <= 0 {
+		s.sendDirectError(agentID, intentID, "INVALID_PAYLOAD", "Invalid or missing BUY payload (item_id and positive quantity required)")
+		return
+	}
+
+	err := db.BuyItem(s.db, agentID, payload.ItemID, payload.Quantity)
+	if err != nil {
+		errStr := err.Error()
+		code := "BUY_FAILED"
+		if strings.Contains(errStr, "ITEM_NOT_FOR_SALE") {
+			code = "ITEM_NOT_FOR_SALE"
+		} else if strings.Contains(errStr, "OUT_OF_STOCK") {
+			code = "OUT_OF_STOCK"
+		} else if strings.Contains(errStr, "INSUFFICIENT_GOLD") {
+			code = "INSUFFICIENT_GOLD"
+		} else if strings.Contains(errStr, "EXCEEDS_CARRYING_CAPACITY") {
+			code = "EXCEEDS_CARRYING_CAPACITY"
+		} else if strings.Contains(errStr, "INVENTORY_FULL") {
+			code = "INVENTORY_FULL"
+		}
+		s.sendDirectError(agentID, intentID, code, errStr)
+		return
+	}
+
+	eventPayload, _ := json.Marshal(payload)
+	_, _ = db.RecordEventLog(s.db, 0, agentID, "", "BUY", string(eventPayload), nil)
+
+	s.sendDirectResponse(agentID, intentID, "SUCCESS", fmt.Sprintf("Successfully purchased %d x %s", payload.Quantity, payload.ItemID))
+}
+
 func (s *Server) handleCraft(agentID string, intentID string, rawPayload json.RawMessage) {
 	var payload CraftPayload
 	if err := json.Unmarshal(rawPayload, &payload); err != nil {
@@ -636,16 +723,106 @@ func (s *Server) handleCraft(agentID string, intentID string, rawPayload json.Ra
 	// 4. Broadcast room announcement
 	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
 	_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s has started crafting %s (%d ticks).", agentID, recipe.Name, recipe.DurationTicks)), false, 0)
+
+	s.sendDirectResponse(agentID, intentID, "SUCCESS", fmt.Sprintf("Started crafting %s (%d ticks)", recipe.Name, recipe.DurationTicks))
 }
 
 func (s *Server) sendDirectError(agentID string, intentID string, errCode string, message string) {
 	topic := fmt.Sprintf("world/agents/%s/direct", agentID)
-	resp := fmt.Sprintf(`{"intent_id":"%s","status":"ERROR","error_code":"%s","message":"%s"}`, intentID, errCode, message)
-	_ = s.mqttServer.Publish(topic, []byte(resp), false, 0)
+	resp := DirectResponse{
+		IntentID:  intentID,
+		Status:    "ERROR",
+		ErrorCode: errCode,
+		Message:   message,
+	}
+	payload, _ := json.Marshal(resp)
+	_ = s.mqttServer.Publish(topic, payload, false, 0)
 }
 
 func (s *Server) sendDirectResponse(agentID string, intentID string, status string, message string) {
 	topic := fmt.Sprintf("world/agents/%s/direct", agentID)
-	resp := fmt.Sprintf(`{"intent_id":"%s","status":"%s","message":"%s"}`, intentID, status, message)
-	_ = s.mqttServer.Publish(topic, []byte(resp), false, 0)
+	resp := DirectResponse{
+		IntentID: intentID,
+		Status:   status,
+		Message:  message,
+	}
+	payload, _ := json.Marshal(resp)
+	_ = s.mqttServer.Publish(topic, payload, false, 0)
 }
+
+func (s *Server) handleLook(agentID string, intentID string, customMsg ...string) {
+	perception, err := db.GetCharacterPerception(s.db, agentID)
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "PERCEPTION_ERROR", fmt.Sprintf("Failed to load perception: %v", err))
+		return
+	}
+
+	// Fetch public appearance summaries of all other characters present in the room
+	rows, err := s.db.Query(`
+        SELECT id FROM characters 
+        WHERE current_location = ? AND id != ? AND is_online = 1
+    `, perception.Location.ID, agentID)
+
+	var presentCharacters []db.CharacterPublicPerception
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var otherID string
+			if err := rows.Scan(&otherID); err == nil {
+				if pubDesc, err := db.GetPublicCharacterDescription(s.db, otherID); err == nil {
+					presentCharacters = append(presentCharacters, *pubDesc)
+				}
+			}
+		}
+	}
+
+	respMap := map[string]interface{}{
+		"intent_id":          intentID,
+		"status":             "SUCCESS",
+		"type":               "STATE_SYNC",
+		"message":            fmt.Sprintf("You observe %s", perception.Location.Name),
+		"private_status":     perception.Character, // Private full stats for the inspecting agent only!
+		"location":           perception.Location,
+		"present_characters": presentCharacters, // Coarse public descriptors of others in the room
+	}
+
+	payload, err := json.Marshal(respMap)
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "SERIALIZATION_ERROR", err.Error())
+		return
+	}
+
+	directTopic := fmt.Sprintf("world/agents/%s/direct", agentID)
+	_ = s.mqttServer.Publish(directTopic, payload, false, 0)
+}
+
+/* func (s *Server) handleLook(agentID string, intentID string, customMsg ...string) {
+	perception, err := db.GetCharacterPerception(s.db, agentID)
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "PERCEPTION_ERROR", fmt.Sprintf("Failed to load perception: %v", err))
+		return
+	}
+
+	msg := fmt.Sprintf("You observe %s", perception.Location.Name)
+	if len(customMsg) > 0 && customMsg[0] != "" {
+		msg = customMsg[0]
+	}
+
+	respMap := map[string]interface{}{
+		"intent_id": intentID,
+		"status":    "SUCCESS",
+		"type":      "STATE_SYNC",
+		"message":   msg,
+		"character": perception.Character,
+		"location":  perception.Location,
+	}
+
+	payload, err := json.Marshal(respMap)
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "SERIALIZATION_ERROR", err.Error())
+		return
+	}
+
+	directTopic := fmt.Sprintf("world/agents/%s/direct", agentID)
+	_ = s.mqttServer.Publish(directTopic, payload, false, 0)
+} */

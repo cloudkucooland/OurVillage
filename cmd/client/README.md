@@ -228,27 +228,25 @@ Operating LLM agents on resource-constrained devices like the Raspberry Pi intro
 ```
 
 ### Phase 1: Core Harness & Abstraction Layer
-- [ ] Define the `model.InferenceEngine` interface and options struct.
-- [ ] Build the configuration parser supporting CLI flags, environment variables, and `agent.yaml`.
-- [ ] Implement the `mock` engine for automated test suites.
+- [x] Define the `model.InferenceEngine` interface and options struct.
+- [x] Build the configuration parser supporting CLI flags, environment variables, and `agent.yaml`.
+- [x] Implement the `mock` engine for automated test suites.
 
 ### Phase 2: Inference Provider Implementations
-- [ ] Integrate `develerltd/go-llama-pure` dynamic loader (`libllama.so` binding, model context initialization, prompt generation).
-- [ ] Implement `cloud-openai` HTTP REST client supporting OpenAI, OpenRouter, and Ollama endpoints.
-- [ ] Implement GBNF grammar parser to constrain model outputs to RFC 002 JSON schemas.
+- [x] Integrate `develerltd/go-llama-pure` dynamic loader (`libllama.so` binding, model context initialization, prompt generation).
+- [x] Implement `cloud-openai` HTTP REST client supporting OpenAI, OpenRouter, and Ollama endpoints.
+- [x] Implement GBNF grammar parser to constrain model outputs to RFC 002 JSON schemas.
 
 ### Phase 3: Spatial Context Window Manager
-- [ ] Implement sliding sensory ring buffer for incoming room chat, whispers, and system events.
-- [ ] Dynamic location topic subscriptions: automatically unsubscribe from old room topics and subscribe to new room topics upon `MOVE` intent confirmation.
-- [ ] Ingest character profile, hunger/energy thresholds, and inventory states from `world/agents/{agent_id}/direct`.
-- [ ] Inject pairwise relationship sentiments and episodic memories (RFC 013).
+- [x] Implement sliding sensory ring buffer for incoming room chat, whispers, and system events.
+- [x] Dynamic location topic subscriptions: automatically unsubscribe from old room topics and subscribe to new room topics upon `MOVE` intent confirmation.
+- [x] Ingest character profile, hunger/energy thresholds, and inventory states from `world/agents/{agent_id}/direct`.
+- [x] Inject pairwise relationship sentiments and episodic memories (RFC 013).
 
 ### Phase 4: Intent Dispatcher & Error Recovery
-- [ ] Intent validator verifying action enum (`MOVE`, `CHAT`, `TRANSFER`, `FORAGE`, `PICKUP`, `DROP`, `EQUIP`, `UNEQUIP`).
-- [ ] Retry/repair loop for malformed JSON before dispatching to `world/agents/{agent_id}/intent`.
-- [ ] Correlation tracker matching dispatched `intent_id` with incoming server direct execution results.
+- [x] Intent validator verifying action enum (`MOVE`, `CHAT`, `TRANSFER`, `FORAGE`, `PICKUP`, `DROP`, `EQUIP`, `UNEQUIP`).
+- [x] Retry/repair loop for malformed JSON before dispatching to `world/agents/{agent_id}/intent`.
+- [x] Correlation tracker matching dispatched `intent_id` with incoming server direct execution results.
 
 ### Phase 5: Raspberry Pi Deployment & Tooling
-- [ ] Systemd service template (`agentmud-client@.service`) for running autonomous village agents as background system daemons.
-- [ ] Pre-compiled `libllama.so` distribution script for Raspberry Pi OS (ARM64).
 - [ ] Terminal UI / status dashboard showing live agent state, recent sensory inputs, thought processes, and tokens/sec inference metrics.

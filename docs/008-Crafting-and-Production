@@ -22,8 +22,9 @@ Recipes require exact inputs, produce predetermined outputs, consume character e
 - Baking: 2x Bag of Flour + 1x Fresh Water + 20 Ticks -> 3x Loaf of Bread (Station: stone_hearth)
 - Smelting: 2x Iron Ore + 1x Lump of Coal + 30 Ticks -> 1x Iron Ingot (Station: forge_anvil)
 - Smithing: 1x Iron Ingot + 1x Firewood + 40 Ticks -> 1x Smithing Hammer (Station: forge_anvil)
-- Brewing: 3x Wild Berries + 1x Fresh Water + 60 Ticks -> 2x Jug of Berry Wine (Station: brew_cask)
+- Brewing: 3x Field Berries + 1x Fresh Water + 60 Ticks -> 2x Jug of Berry Wine (Station: brew_cask)
 - Basket Weaving: 4x River Reeds + 30 Ticks -> 1x Woven Basket (Requires no fixed station)
+- Sawing Firewood: 1x Wood Log + 20 Ticks -> 4x Firewood Bundle (Station: timber_saw)
 
 4. Database Schema
 ```sql

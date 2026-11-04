@@ -20,6 +20,7 @@ import (
 type Server struct {
 	mqttServer *mqtt.Server
 	db         *sql.DB
+	authHook   *DBAuthHook
 	mu         sync.RWMutex
 	tickCount  uint64
 	weather    string
@@ -38,8 +39,9 @@ func NewServer(database *sql.DB, listenAddr ...string) (*Server, error) {
 		InlineClient: true,
 	})
 
+	authHook := NewDBAuthHook(database)
 	// Add database authentication and ACL hook
-	err := mqttServer.AddHook(NewDBAuthHook(database), nil)
+	err := mqttServer.AddHook(authHook, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to add db auth hook: %w", err)
 	}
@@ -67,6 +69,7 @@ func NewServer(database *sql.DB, listenAddr ...string) (*Server, error) {
 	srv := &Server{
 		mqttServer: mqttServer,
 		db:         database,
+		authHook:   authHook,
 		weather:    "clear",
 	}
 
@@ -83,7 +86,7 @@ func (s *Server) Start() error {
 		log.Println("Starting Mochi-MQTT broker on :1883...")
 		err := s.mqttServer.Serve()
 		if err != nil {
-			log.Fatalf("MQTT server error: %v", err)
+			log.Printf("MQTT server stopped: %v", err)
 		}
 	}()
 
@@ -96,8 +99,7 @@ func (s *Server) Start() error {
 	<-sigChan
 
 	log.Println("Shutting down AgentMUD server...")
-	s.mqttServer.Close()
-	return nil
+	return s.mqttServer.Close()
 }
 
 func (s *Server) GetTickCount() uint64 {
@@ -128,7 +130,7 @@ func (s *Server) SetWeather(w string) {
 }
 
 func (s *Server) runClock() {
-	ticker := time.NewTicker(5 * time.Second) // 1 tick every 5 seconds for simulation
+	ticker := time.NewTicker(50 * time.Second) // 1 tick every 50 seconds for simulation (10x slower)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -146,14 +148,12 @@ func (s *Server) ProcessTick() {
 
 	now := time.Now()
 
-	// Simple in-game time calculation (1 real sec = 12 game minutes or 1 tick = 15 game minutes)
-	inGameHour := (int(currentTick) * 15) % 2400
-	hour := inGameHour / 100
-	minute := inGameHour % 100
-	if minute >= 60 {
-		minute = 59
-	}
-	timeStr := fmt.Sprintf("%02d:%02d", hour%24, minute)
+	// 1 tick = 15 minutes of in-game time (96 ticks = 24 hours / 1 full in-game day)
+	totalMinutes := currentTick * 15
+	hour := (totalMinutes / 60) % 24
+	minute := totalMinutes % 60
+
+	timeStr := fmt.Sprintf("%02d:%02d", hour, minute)
 	isNight := hour < 6 || hour >= 20
 
 	// 1. Replenish dynamic ecological resource pools hourly (every 4 ticks)
@@ -221,7 +221,8 @@ func (s *Server) resolveCompletedActions(currentTick uint64, weather string) {
 	}
 
 	for _, a := range completed {
-		if a.status == "FORAGING" {
+		switch a.status {
+		case "FORAGING":
 			ticksSpent := int(a.endTick - a.startTick)
 			if ticksSpent <= 0 {
 				ticksSpent = 1
@@ -251,12 +252,12 @@ func (s *Server) resolveCompletedActions(currentTick uint64, weather string) {
 				"narrative_log":   res.NarrativeLog,
 			}
 
-			respBytes, err := json.Marshal(respMap)
-			if err == nil {
+			if respBytes, err := json.Marshal(respMap); err == nil {
 				directTopic := fmt.Sprintf("world/agents/%s/direct", a.charID)
 				_ = s.mqttServer.Publish(directTopic, respBytes, false, 0)
 			}
-		} else if a.status == "CRAFTING" {
+
+		case "CRAFTING":
 			res, err := db.ResolveCrafting(s.db, a.charID, a.target)
 			if err != nil {
 				log.Printf("Failed to resolve crafting for %s: %v", a.charID, err)
@@ -283,11 +284,21 @@ func (s *Server) resolveCompletedActions(currentTick uint64, weather string) {
 				"narrative_log":   res.NarrativeLog,
 			}
 
-			respBytes, err := json.Marshal(respMap)
-			if err == nil {
+			if respBytes, err := json.Marshal(respMap); err == nil {
 				directTopic := fmt.Sprintf("world/agents/%s/direct", a.charID)
 				_ = s.mqttServer.Publish(directTopic, respBytes, false, 0)
 			}
+		}
+
+		// Reset character state back to IDLE in SQLite so actions aren't re-executed
+		_, err = s.db.Exec(`
+			UPDATE characters 
+			SET status = 'IDLE', action_target = '', action_start_tick = 0, action_end_tick = 0, action_intent_id = '' 
+			WHERE id = ?`,
+			a.charID,
+		)
+		if err != nil {
+			log.Printf("Failed to clear action state for character %s: %v", a.charID, err)
 		}
 	}
 }

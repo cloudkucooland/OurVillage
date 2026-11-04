@@ -102,3 +102,18 @@ CREATE TABLE inventories (
     FOREIGN KEY (character_id) REFERENCES characters(id),
     FOREIGN KEY (item_id) REFERENCES items(id)
 );
+
+-- Location Connections Graph Table (Spatial Graph)
+CREATE TABLE location_connections (
+    from_location_id TEXT NOT NULL,
+    to_location_id TEXT NOT NULL,
+    travel_ticks INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (from_location_id, to_location_id),
+    FOREIGN KEY (from_location_id) REFERENCES locations(id) ON DELETE CASCADE,
+    FOREIGN KEY (to_location_id) REFERENCES locations(id) ON DELETE CASCADE
+);
+
+### Spatial Graph Topology & Design Rationale
+- **Hub Connectivity (Complete Graph / Clique):** All central village amenities (`town_square`, `market`, `tavern`, `town_mill`, `blacksmith`, `bakery`, `church`, `school`, `town_hall`, `lumberjack_lodge`, `herbalist`, `stables`) are fully connected to each other with a travel cost of 1 tick.
+- **Rationale:** Agentville models a compact, walkable village settlement where local buildings are immediately adjacent to one another. Requiring agents to route through the `town_square` for every minor transition between neighboring village buildings (e.g., school to bakery) would add tedious micro-navigation overhead and planning complexity for LLM agents without adding meaningful economic strategy.
+- **Outer Zones:** Distant wilderness and production zones (`prairie`, `deep_forest`, `mine`, `riverbank`) require directional routing through specific graph edges with higher travel costs (2 to 5 ticks).

@@ -1,0 +1,22 @@
+# GBNF Grammar for AgentMUD RFC 002 Intent JSON Outputs
+# Enforces valid JSON with "thought", "action", and action-specific "payload".
+
+root ::= "{" ws "\"thought\"" ws ":" ws string ws "," ws "\"action\"" ws ":" ws action-type ws "," ws "\"payload\"" ws ":" ws payload ws "}"
+
+action-type ::= "\"MOVE\"" | "\"CHAT\"" | "\"TRANSFER\"" | "\"FORAGE\"" | "\"CANCEL_ACTION\"" | "\"DROP\"" | "\"PICKUP\"" | "\"EQUIP\"" | "\"UNEQUIP\"" | "\"CRAFT\"" | "\"LOOK\"" | "\"STATUS\"" | "\"BUY\""
+
+payload ::= move-payload | chat-payload | transfer-payload | forage-payload | empty-payload | item-payload | craft-payload | buy-payload
+
+move-payload ::= "{" ws "\"target_location\"" ws ":" ws string ws "}"
+chat-payload ::= string | "{" ws "\"message\"" ws ":" ws string ws "}"
+transfer-payload ::= "{" ws "\"recipient_id\"" ws ":" ws string ws "," ws "\"amount\"" ws ":" ws integer ws ("," ws "\"item_id\"" ws ":" ws string ws "," ws "\"quantity\"" ws ":" ws integer ws)? "}"
+forage-payload ::= "{" ws "\"target_resource\"" ws ":" ws string ws ("," ws "\"duration_ticks\"" ws ":" ws integer ws)? "}"
+empty-payload ::= "{" ws "}"
+item-payload ::= "{" ws "\"item_id\"" ws ":" ws string ws ("," ws "\"quantity\"" ws ":" ws integer ws)? "}"
+craft-payload ::= "{" ws "\"recipe_id\"" ws ":" ws string ws "}"
+buy-payload ::= "{" ws "\"item_id\"" ws ":" ws string ws "," ws "\"quantity\"" ws ":" ws integer ws "}"
+
+# Primitive types
+string ::= "\"" ([^"\\] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]))* "\""
+integer ::= "-"? [0-9]+
+ws ::= [ \t\n\r]*
