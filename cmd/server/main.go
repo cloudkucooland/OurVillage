@@ -14,6 +14,16 @@ func main() {
 		dbPath = envPath
 	}
 
+	useTUI := false
+	if os.Getenv("AGENTMUD_TUI") == "true" || os.Getenv("AGENTMUD_TUI") == "1" {
+		useTUI = true
+	}
+	for _, arg := range os.Args {
+		if arg == "--tui" {
+			useTUI = true
+		}
+	}
+
 	log.Printf("Initializing AgentMUD database at %s...", dbPath)
 	database, err := db.InitDB(dbPath)
 	if err != nil {
@@ -26,8 +36,15 @@ func main() {
 		log.Fatalf("Failed to create server: %v", err)
 	}
 
-	log.Println("AgentMUD server initialized successfully. Starting engine...")
-	if err := srv.Start(); err != nil {
-		log.Fatalf("Server stopped with error: %v", err)
+	if useTUI {
+		log.Println("Starting AgentMUD server with TUI...")
+		if err := srv.StartTUI(); err != nil {
+			log.Fatalf("Server stopped with error: %v", err)
+		}
+	} else {
+		log.Println("AgentMUD server initialized successfully. Starting engine...")
+		if err := srv.Start(); err != nil {
+			log.Fatalf("Server stopped with error: %v", err)
+		}
 	}
 }
