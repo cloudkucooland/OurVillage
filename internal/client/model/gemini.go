@@ -21,8 +21,7 @@ type GeminiEngineConfig struct {
 	HTTPClient     *http.Client
 }
 
-// CloudGeminiEngine implements InferenceEngine for Google Gemini REST endpoints
-// (Google Generative Language API: /v1beta/models/{model}:generateContent).
+// CloudGeminiEngine implements InferenceEngine for Google Gemini REST endpoints.
 type CloudGeminiEngine struct {
 	apiBase   string
 	apiKey    string
@@ -71,18 +70,17 @@ func NewCloudGeminiEngine(cfg GeminiEngineConfig) *CloudGeminiEngine {
 	}
 }
 
-// Name returns "cloud-gemini".
 func (c *CloudGeminiEngine) Name() string {
 	return "cloud-gemini"
 }
 
-// geminiRequest represents Google Gemini generateContent payload.
 type geminiRequest struct {
 	Contents         []geminiContent         `json:"contents"`
 	GenerationConfig *geminiGenerationConfig `json:"generationConfig,omitempty"`
 }
 
 type geminiContent struct {
+	Role  string       `json:"role,omitempty"`
 	Parts []geminiPart `json:"parts"`
 }
 
@@ -91,12 +89,12 @@ type geminiPart struct {
 }
 
 type geminiGenerationConfig struct {
-	Temperature     *float32 `json:"temperature,omitempty"`
-	TopP            *float32 `json:"topP,omitempty"`
-	MaxOutputTokens int      `json:"maxOutputTokens,omitempty"`
+	Temperature      *float32 `json:"temperature,omitempty"`
+	TopP             *float32 `json:"topP,omitempty"`
+	MaxOutputTokens  int      `json:"maxOutputTokens,omitempty"`
+	ResponseMimeType string   `json:"responseMimeType,omitempty"`
 }
 
-// geminiResponse represents Google Gemini generateContent response.
 type geminiResponse struct {
 	Candidates []struct {
 		Content struct {
@@ -113,7 +111,6 @@ type geminiResponse struct {
 	} `json:"error,omitempty"`
 }
 
-// Generate executes a synchronous completion request against Gemini API.
 func (c *CloudGeminiEngine) Generate(ctx context.Context, prompt string, opts GenerationOptions) (string, error) {
 	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent?key=%s", c.apiBase, c.modelName, c.apiKey)
 
@@ -122,6 +119,7 @@ func (c *CloudGeminiEngine) Generate(ctx context.Context, prompt string, opts Ge
 	if opts.MaxTokens > 0 {
 		genConfig.MaxOutputTokens = opts.MaxTokens
 	}
+
 	if opts.Temperature > 0 {
 		t := opts.Temperature
 		genConfig.Temperature = &t
@@ -129,6 +127,10 @@ func (c *CloudGeminiEngine) Generate(ctx context.Context, prompt string, opts Ge
 	if opts.TopP > 0 {
 		p := opts.TopP
 		genConfig.TopP = &p
+	}
+
+	if opts.Grammar != "" {
+		genConfig.ResponseMimeType = "application/json"
 	}
 
 	reqBody := geminiRequest{
@@ -184,7 +186,6 @@ func (c *CloudGeminiEngine) Generate(ctx context.Context, prompt string, opts Ge
 	return gemResp.Candidates[0].Content.Parts[0].Text, nil
 }
 
-// Stream executes a streaming completion request (falls back to Generate for Gemini REST if streaming not used).
 func (c *CloudGeminiEngine) Stream(ctx context.Context, prompt string, opts GenerationOptions, callback func(string) bool) error {
 	text, err := c.Generate(ctx, prompt, opts)
 	if err != nil {
@@ -194,7 +195,6 @@ func (c *CloudGeminiEngine) Stream(ctx context.Context, prompt string, opts Gene
 	return nil
 }
 
-// Close cleans up engine resources.
 func (c *CloudGeminiEngine) Close() error {
 	return nil
 }

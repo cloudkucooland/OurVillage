@@ -73,3 +73,26 @@ func TestGenerateIntentWithRetry(t *testing.T) {
 		t.Errorf("expected corrective instruction in prompt, got:\n%s", mockEng.LastPrompt())
 	}
 }
+
+func TestGenerateIntentWithRetry_MalformedJsonFallback(t *testing.T) {
+	mockEng := model.NewMockEngine()
+	ctx := context.Background()
+	opts := model.GenerationOptions{}
+
+	// Queue responses that all fail JSON parsing (malformed JSON attempt containing action/thought)
+	mockEng.QueueResponses(
+		`{"thought": "broken json", "action": INVALID_ACTION_ENUM, "payload": {}}`,
+		`{"thought": "still broken", "action": INVALID_ACTION_ENUM, "payload": {}}`,
+		`{"thought": "even more broken", "action": INVALID_ACTION_ENUM, "payload": {}}`,
+	)
+
+	intent, err := GenerateIntentWithRetry(ctx, mockEng, "What do you do?", opts, 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should fallback to LOOK rather than broadcasting raw malformed JSON as CHAT
+	if intent.Action != "LOOK" {
+		t.Errorf("expected fallback action LOOK, got %s", intent.Action)
+	}
+}

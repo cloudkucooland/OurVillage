@@ -26,6 +26,7 @@ var ValidActionTypes = map[string]struct{}{
 	"CHAT":          {},
 	"TRANSFER":      {},
 	"FORAGE":        {},
+	"COLLECT":       {},
 	"CANCEL_ACTION": {},
 	"DROP":          {},
 	"PICKUP":        {},
@@ -35,6 +36,7 @@ var ValidActionTypes = map[string]struct{}{
 	"LOOK":          {},
 	"STATUS":        {},
 	"BUY":           {},
+	"RESTOCK":       {},
 }
 
 // IsValidAction checks if an action string is a recognized RFC 002 action.
@@ -52,12 +54,37 @@ func ValidateIntent(intent Intent) (Intent, error) {
 
 	actionUpper := strings.ToUpper(strings.TrimSpace(intent.Action))
 	if !IsValidAction(actionUpper) {
-		return intent, fmt.Errorf("invalid action enum %q: must be one of MOVE, CHAT, TRANSFER, FORAGE, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY", intent.Action)
+		return intent, fmt.Errorf("invalid action enum %q: must be one of MOVE, CHAT, TRANSFER, FORAGE, COLLECT, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, RESTOCK", intent.Action)
+	}
+
+	if actionUpper == "COLLECT" {
+		actionUpper = "FORAGE"
 	}
 	intent.Action = actionUpper
 
 	// Validate action-specific payload constraints
 	switch actionUpper {
+	case "RESTOCK":
+		var p struct {
+			ItemID    string `json:"item_id"`
+			Quantity  int    `json:"quantity"`
+			PriceGold int    `json:"price_gold"`
+		}
+		if err := json.Unmarshal(intent.Payload, &p); err != nil {
+			return intent, fmt.Errorf("invalid RESTOCK payload: %w", err)
+		}
+		if strings.TrimSpace(p.ItemID) == "" {
+			return intent, fmt.Errorf("RESTOCK requires non-empty item_id")
+		}
+		if p.Quantity <= 0 {
+			p.Quantity = 1
+		}
+		cleanPayload, _ := json.Marshal(map[string]interface{}{
+			"item_id":    strings.TrimSpace(p.ItemID),
+			"quantity":   p.Quantity,
+			"price_gold": p.PriceGold,
+		})
+		intent.Payload = cleanPayload
 	case "BUY":
 		var p struct {
 			ItemID   string `json:"item_id"`

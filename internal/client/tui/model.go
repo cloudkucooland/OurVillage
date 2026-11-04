@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
@@ -114,7 +115,9 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.viewport.Width = msg.Width - 4
+
+		// Adjust viewport boundaries accounting for borders and headers
+		m.viewport.Width = msg.Width - 6
 		m.viewport.Height = msg.Height - 12
 		if m.viewport.Height < 5 {
 			m.viewport.Height = 5
@@ -125,7 +128,8 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Periodic refresh of viewport content from sensory ring buffer
 		logs := m.ctxMgr.FormatSensoryLogs()
 		content := strings.Join(logs, "\n")
-		m.viewport.SetContent(content)
+		wrapped := lipgloss.NewStyle().Width(m.viewport.Width).Render(content)
+		m.viewport.SetContent(wrapped)
 		m.viewport.GotoBottom()
 		return m, tea.Tick(1*time.Second, func(t time.Time) tea.Msg {
 			return TickMsg(t)

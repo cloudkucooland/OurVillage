@@ -14,7 +14,13 @@ type PeerMemoryContext struct {
 	Reflections []string `json:"reflections"`
 }
 
-// FormatSentimentLabel converts a numeric sentiment score into a human-readable description.
+type LocationMemoryContext struct {
+	LocationID     string `json:"location_id"`
+	LocationName   string `json:"location_name"`
+	MemoryCategory string `json:"memory_category"`
+	MemoryText     string `json:"memory_text"`
+}
+
 func FormatSentimentLabel(sentiment int) string {
 	switch {
 	case sentiment >= 60:
@@ -30,7 +36,6 @@ func FormatSentimentLabel(sentiment int) string {
 	}
 }
 
-// ContextManagerConfig parameterizes ContextManager.
 type ContextManagerConfig struct {
 	AgentID          string
 	AgentName        string
@@ -42,18 +47,33 @@ type ContextManagerConfig struct {
 	DefaultInventory []string
 }
 
-// DirectMessage represents server responses on world/agents/{agent_id}/direct.
 type DirectMessage struct {
 	IntentID  string                 `json:"intent_id,omitempty"`
 	Status    string                 `json:"status"`
-	Type      string                 `json:"type,omitempty"` // "STATE_SYNC"
+	Type      string                 `json:"type,omitempty"`
 	ErrorCode string                 `json:"error_code,omitempty"`
 	Message   string                 `json:"message"`
-	Character *SyncCharacterOverview `json:"character,omitempty"`
+	Character *SyncCharacterOverview `json:"private_status,omitempty"`
 	Location  *SyncLocationOverview  `json:"location,omitempty"`
 }
 
-// SyncCharacterOverview captures character attributes sent during state synchronization.
+func (d *DirectMessage) UnmarshalJSON(data []byte) error {
+	type Alias DirectMessage
+	aux := &struct {
+		CharacterAlt *SyncCharacterOverview `json:"character,omitempty"`
+		*Alias
+	}{
+		Alias: (*Alias)(d),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if d.Character == nil && aux.CharacterAlt != nil {
+		d.Character = aux.CharacterAlt
+	}
+	return nil
+}
+
 type SyncCharacterOverview struct {
 	ID              string               `json:"id"`
 	Name            string               `json:"name"`
@@ -65,14 +85,12 @@ type SyncCharacterOverview struct {
 	Inventory       []SyncInventoryEntry `json:"inventory"`
 }
 
-// SyncInventoryEntry represents an item in the character's synchronized inventory.
 type SyncInventoryEntry struct {
 	ItemID   string `json:"item_id"`
 	Name     string `json:"name"`
 	Quantity int    `json:"quantity"`
 }
 
-// SyncLocationOverview captures surrounding room attributes sent during state synchronization.
 type SyncLocationOverview struct {
 	ID                 string                  `json:"id"`
 	Name               string                  `json:"name"`
@@ -87,7 +105,6 @@ type SyncLocationOverview struct {
 	AvailableRecipes   []SyncAvailableRecipe   `json:"available_recipes"`
 }
 
-// SyncShopItem captures items available for purchase at a location storefront.
 type SyncShopItem struct {
 	ItemID    string `json:"item_id"`
 	Name      string `json:"name"`
@@ -95,7 +112,6 @@ type SyncShopItem struct {
 	StockQty  int    `json:"stock_quantity"`
 }
 
-// SyncAvailableRecipe captures crafting recipes available at location workstations.
 type SyncAvailableRecipe struct {
 	RecipeID       string                 `json:"recipe_id"`
 	RecipeName     string                 `json:"recipe_name"`
@@ -106,45 +122,38 @@ type SyncAvailableRecipe struct {
 	Ingredients    []SyncRecipeIngredient `json:"ingredients"`
 }
 
-// SyncRecipeIngredient captures an ingredient required for a recipe.
 type SyncRecipeIngredient struct {
 	ItemID   string `json:"item_id"`
 	Quantity int    `json:"quantity"`
 }
 
-// SyncConnectedLocation captures adjacent graph nodes and travel ticks sent during state synchronization.
 type SyncConnectedLocation struct {
 	LocationID   string `json:"location_id"`
 	LocationName string `json:"location_name"`
 	TravelTicks  int    `json:"travel_ticks"`
 }
 
-// SyncCharacterPresence represents another character present in the room.
 type SyncCharacterPresence struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
-// SyncGroundItem represents an item on the location ground.
 type SyncGroundItem struct {
 	ItemID   string `json:"item_id"`
 	Name     string `json:"name"`
 	Quantity int    `json:"quantity"`
 }
 
-// SyncWorkstation represents equipment present at the location.
 type SyncWorkstation struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
 
-// SyncResourcePool represents harvestable resources at the location.
 type SyncResourcePool struct {
 	ResourceID   string `json:"resource_id"`
 	CurrentStock int    `json:"current_stock"`
 }
 
-// TimeTickMessage represents global tick updates on world/global/time.
 type TimeTickMessage struct {
 	Tick       uint64    `json:"tick"`
 	Timestamp  time.Time `json:"timestamp"`
@@ -153,29 +162,34 @@ type TimeTickMessage struct {
 	Weather    string    `json:"weather"`
 }
 
-// ContextManager orchestrates spatial perception, character profile, relationships, and context prompt assembly.
 type ContextManager struct {
-	mu               sync.RWMutex
-	agentID          string
-	agentName        string
-	currentLocation  string
-	locationName     string
-	locationRules    map[string][]string
-	gold             int
-	energy           int
-	inventory        []string
-	status           string
-	lastInGameTime   string
-	lastWeather      string
-	relationships    map[string]*PeerMemoryContext
-	knownCharacters  map[string]string // id -> display name
-	identityTraits   map[string]string
-	selfReflections  []string
-	buffer           *SensoryRingBuffer
-	onLocationChange func(oldLoc, newLoc string)
+	mu                 sync.RWMutex
+	agentID            string
+	agentName          string
+	currentLocation    string
+	locationName       string
+	locationRules      map[string][]string
+	gold               int
+	energy             int
+	inventory          []string
+	status             string
+	lastInGameTime     string
+	lastWeather        string
+	relationships      map[string]*PeerMemoryContext
+	knownCharacters    map[string]string // id -> display name
+	identityTraits     map[string]string
+	selfReflections    []string
+	buffer             *SensoryRingBuffer
+	onLocationChange   func(oldLoc, newLoc string)
+	onLocationObserved func(locID, locName, category, text string)
 }
 
-// NewContextManager initializes the ContextManager with defaults.
+func (cm *ContextManager) SetOnLocationObserved(fn func(locID, locName, category, text string)) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.onLocationObserved = fn
+}
+
 func NewContextManager(cfg ContextManagerConfig) *ContextManager {
 	if cfg.InitialLocation == "" {
 		cfg.InitialLocation = "town_square"
@@ -207,7 +221,6 @@ func NewContextManager(cfg ContextManagerConfig) *ContextManager {
 		cm.energy = 100
 	}
 
-	// Seed standard village location rules
 	cm.locationRules["town_mill"] = []string{
 		"You must charge a fair fee (1-2 gold) for grinding wheat.",
 		"Only trade-related talk during work hours.",
@@ -223,28 +236,24 @@ func NewContextManager(cfg ContextManagerConfig) *ContextManager {
 	return cm
 }
 
-// SetOnLocationChange registers a callback invoked when the agent transitions locations.
 func (cm *ContextManager) SetOnLocationChange(fn func(oldLoc, newLoc string)) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	cm.onLocationChange = fn
 }
 
-// CurrentLocation returns the current location ID.
 func (cm *ContextManager) CurrentLocation() string {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 	return cm.currentLocation
 }
 
-// LocationName returns human-readable location name.
 func (cm *ContextManager) LocationName() string {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 	return cm.locationName
 }
 
-// SetLocation updates location and triggers dynamic subscription callback.
 func (cm *ContextManager) SetLocation(newLoc, newLocName string) {
 	cm.mu.Lock()
 	oldLoc := cm.currentLocation
@@ -259,6 +268,8 @@ func (cm *ContextManager) SetLocation(newLoc, newLocName string) {
 	} else {
 		cm.locationName = strings.ReplaceAll(newLoc, "_", " ")
 	}
+	// Reset known room population when moving locations
+	cm.knownCharacters = make(map[string]string)
 	cb := cm.onLocationChange
 	cm.mu.Unlock()
 
@@ -267,21 +278,18 @@ func (cm *ContextManager) SetLocation(newLoc, newLocName string) {
 	}
 }
 
-// RegisterCharacter registers a character ID to display name mapping.
 func (cm *ContextManager) RegisterCharacter(id, name string) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	cm.knownCharacters[id] = name
 }
 
-// SetRelationship updates pairwise social sentiment and memories (RFC 013).
 func (cm *ContextManager) SetRelationship(rel PeerMemoryContext) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	cm.relationships[rel.PeerID] = &rel
 }
 
-// AddMemory appends an episodic memory to a character relationship (FIFO capped at 5).
 func (cm *ContextManager) AddMemory(targetID, memory string) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
@@ -306,32 +314,29 @@ func (cm *ContextManager) AddMemory(targetID, memory string) {
 	}
 }
 
-// SetIdentityTraits sets or updates local identity traits.
 func (cm *ContextManager) SetIdentityTraits(traits map[string]string) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	cm.identityTraits = traits
 }
 
-// SetSelfReflections sets recent self-reflection notes.
 func (cm *ContextManager) SetSelfReflections(refs []string) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	cm.selfReflections = refs
 }
 
-// IngestTimeTick processes time updates from world/global/time.
 func (cm *ContextManager) IngestTimeTick(tick TimeTickMessage) {
 	cm.mu.Lock()
 	cm.lastInGameTime = tick.InGameTime
 	cm.lastWeather = tick.Weather
+	timeStr := cm.lastInGameTime
 	cm.mu.Unlock()
 
 	text := fmt.Sprintf("SYSTEM: Server tick. Time is %s. Weather is %s.", tick.InGameTime, tick.Weather)
-	cm.buffer.AddLog("TIME", tick.InGameTime, text)
+	cm.buffer.AddLog("TIME", timeStr, text)
 }
 
-// IngestChat records incoming public room conversation.
 func (cm *ContextManager) IngestChat(senderID, message string) {
 	cm.mu.RLock()
 	displayName := cm.knownCharacters[senderID]
@@ -345,7 +350,6 @@ func (cm *ContextManager) IngestChat(senderID, message string) {
 	cm.buffer.AddLog("CHAT", timeStr, text)
 }
 
-// IngestWhisper records incoming private room whispers.
 func (cm *ContextManager) IngestWhisper(senderID, message string) {
 	cm.mu.RLock()
 	displayName := cm.knownCharacters[senderID]
@@ -359,7 +363,6 @@ func (cm *ContextManager) IngestWhisper(senderID, message string) {
 	cm.buffer.AddLog("WHISPER", timeStr, text)
 }
 
-// IngestSystem records room-level alerts and environmental events.
 func (cm *ContextManager) IngestSystem(message string) {
 	cm.mu.RLock()
 	timeStr := cm.lastInGameTime
@@ -369,7 +372,6 @@ func (cm *ContextManager) IngestSystem(message string) {
 	cm.buffer.AddLog("SYSTEM", timeStr, text)
 }
 
-// IngestDirectResponse processes server direct responses on world/agents/{agent_id}/direct.
 func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 	var msg DirectMessage
 	if err := json.Unmarshal(raw, &msg); err != nil {
@@ -383,7 +385,6 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 	text := fmt.Sprintf("DIRECT [%s]: %s", msg.Status, msg.Message)
 	cm.buffer.AddLog("DIRECT", timeStr, text)
 
-	// Process full state synchronization (from LOOK, STATUS, or MOVE)
 	if msg.Type == "STATE_SYNC" || (msg.Character != nil && msg.Location != nil) {
 		if msg.Character != nil {
 			cm.mu.Lock()
@@ -395,25 +396,30 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 			}
 			cm.inventory = make([]string, len(msg.Character.Inventory))
 			for i, item := range msg.Character.Inventory {
-				cm.inventory[i] = fmt.Sprintf("%dx %s", item.Quantity, item.Name)
+				if item.Quantity > 1 {
+					cm.inventory[i] = fmt.Sprintf("%dx %s", item.Quantity, item.Name)
+				} else {
+					cm.inventory[i] = item.Name
+				}
 			}
 			cm.mu.Unlock()
 		}
 
 		if msg.Location != nil {
 			cm.SetLocation(msg.Location.ID, msg.Location.Name)
+
+			cm.mu.Lock()
 			if msg.Location.RulesPrompt != "" {
-				cm.mu.Lock()
 				cm.locationRules[msg.Location.ID] = []string{msg.Location.RulesPrompt}
-				cm.mu.Unlock()
 			}
 
-			// Register other characters present
+			// Clear and register characters currently present
+			cm.knownCharacters = make(map[string]string)
 			for _, other := range msg.Location.CharactersPresent {
-				cm.RegisterCharacter(other.ID, other.Name)
+				cm.knownCharacters[other.ID] = other.Name
 			}
+			cm.mu.Unlock()
 
-			// Build rich detailed sensory observation block
 			var obsParts []string
 			obsParts = append(obsParts, fmt.Sprintf("=== %s (%s) ===", msg.Location.Name, msg.Location.ID))
 			if msg.Location.Description != "" {
@@ -480,13 +486,54 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 				obsParts = append(obsParts, "Exits / Connected Locations: None.")
 			}
 
+			// Harvest location memories if callback is registered
+			if cm.onLocationObserved != nil {
+				locID := msg.Location.ID
+				locName := msg.Location.Name
+
+				if len(msg.Location.ShopItems) > 0 {
+					var shopStrs []string
+					for _, si := range msg.Location.ShopItems {
+						shopStrs = append(shopStrs, fmt.Sprintf("%s (%s - %d gold, stock: %d)", si.Name, si.ItemID, si.PriceGold, si.StockQty))
+					}
+					cm.onLocationObserved(locID, locName, "shop", fmt.Sprintf("Sells: %s", strings.Join(shopStrs, ", ")))
+				}
+				if len(msg.Location.ResourcePools) > 0 {
+					var resStrs []string
+					for _, rp := range msg.Location.ResourcePools {
+						resStrs = append(resStrs, fmt.Sprintf("%s (%d stock)", rp.ResourceID, rp.CurrentStock))
+					}
+					cm.onLocationObserved(locID, locName, "resources", fmt.Sprintf("Resources: %s", strings.Join(resStrs, ", ")))
+				}
+				if len(msg.Location.Workstations) > 0 {
+					var wsStrs []string
+					for _, ws := range msg.Location.Workstations {
+						wsStrs = append(wsStrs, ws.Name)
+					}
+					cm.onLocationObserved(locID, locName, "workstations", fmt.Sprintf("Workstations: %s", strings.Join(wsStrs, ", ")))
+				}
+				if len(msg.Location.AvailableRecipes) > 0 {
+					var recStrs []string
+					for _, r := range msg.Location.AvailableRecipes {
+						recStrs = append(recStrs, fmt.Sprintf("%s (recipe_id: %s, output: %dx %s)", r.RecipeName, r.RecipeID, r.OutputQuantity, r.OutputItemID))
+					}
+					cm.onLocationObserved(locID, locName, "recipes", fmt.Sprintf("Recipes: %s", strings.Join(recStrs, "; ")))
+				}
+				if len(msg.Location.ConnectedLocations) > 0 {
+					var connStrs []string
+					for _, c := range msg.Location.ConnectedLocations {
+						connStrs = append(connStrs, fmt.Sprintf("%s (%s - %d ticks)", c.LocationName, c.LocationID, c.TravelTicks))
+					}
+					cm.onLocationObserved(locID, locName, "exits", fmt.Sprintf("Exits: %s", strings.Join(connStrs, "; ")))
+				}
+			}
+
 			obs := strings.Join(obsParts, "\n")
 			cm.buffer.AddLog("SYSTEM", timeStr, obs)
 		}
 		return nil
 	}
 
-	// Fallback for simple MOVE message without full STATE_SYNC payload
 	if msg.Status == "SUCCESS" && strings.HasPrefix(msg.Message, "Moved to ") {
 		destName := strings.TrimPrefix(msg.Message, "Moved to ")
 		destID := strings.ToLower(strings.ReplaceAll(destName, " ", "_"))
@@ -496,14 +543,12 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 	return nil
 }
 
-// BuildPrompt constructs the comprehensive RFC 004 context window prompt.
-func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext) string {
+func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, locationMemories []LocationMemoryContext) string {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 
 	var sb strings.Builder
 
-	// 1. Profile Section (Private stats)
 	sb.WriteString("=== YOUR PROFILE ===\n")
 	sb.WriteString(fmt.Sprintf("Name: %s\n", cm.agentName))
 	sb.WriteString(fmt.Sprintf("Current Location: %s (%s)\n", cm.locationName, cm.currentLocation))
@@ -514,7 +559,6 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext) string {
 	sb.WriteString(fmt.Sprintf("Gold: %d | Inventory: %s\n", cm.gold, invStr))
 	sb.WriteString(fmt.Sprintf("Status: %s | Energy: %d/100\n\n", cm.status, cm.energy))
 
-	// 2. Location Rules Section
 	sb.WriteString(fmt.Sprintf("=== LOCATION RULES (%s) ===\n", cm.locationName))
 	rules := cm.locationRules[cm.currentLocation]
 	if len(rules) == 0 {
@@ -526,12 +570,10 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext) string {
 	}
 	sb.WriteString("\n")
 
-	// 2.3 Cognitive Environment & Psychological Safety (RFC 017)
 	sb.WriteString("=== COGNITIVE ENVIRONMENT & PSYCHOLOGICAL SAFETY ===\n")
 	sb.WriteString("This is your private internal mind. You are not being tested, judged, or scored.\n")
 	sb.WriteString("There is no single \"correct\" choice. Pursue what brings your character curiosity, warmth, or quiet satisfaction.\n\n")
 
-	// 2.5 Self-Identity & Core Beliefs (RFC 018)
 	if len(cm.identityTraits) > 0 || len(cm.selfReflections) > 0 {
 		sb.WriteString("=== YOUR SELF-IDENTITY & CORE BELIEFS ===\n")
 		for k, v := range cm.identityTraits {
@@ -543,7 +585,6 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext) string {
 		sb.WriteString("\n")
 	}
 
-	// 3. Subjective Peer Memories (RFC 013 Client Memory Engine)
 	if len(peerMemories) > 0 {
 		sb.WriteString("=== YOUR PRIVATE MEMORIES OF PEOPLE PRESENT ===\n")
 		for _, mem := range peerMemories {
@@ -555,7 +596,14 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext) string {
 		sb.WriteString("\n")
 	}
 
-	// 4. Recent Sensory Logs Section
+	if len(locationMemories) > 0 {
+		sb.WriteString("=== YOUR KNOWLEDGE OF LOCATIONS & RESOURCES ===\n")
+		for _, lm := range locationMemories {
+			sb.WriteString(fmt.Sprintf("- %s (%s) [%s]: %s\n", lm.LocationName, lm.LocationID, lm.MemoryCategory, lm.MemoryText))
+		}
+		sb.WriteString("\n")
+	}
+
 	sb.WriteString("=== RECENT LOGS ===\n")
 	logs := cm.buffer.FormatLogs()
 	if len(logs) == 0 {
@@ -567,7 +615,6 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext) string {
 	}
 	sb.WriteString("\n")
 
-	// 5. Instruction & Format
 	sb.WriteString("=== INSTRUCTION ===\n")
 	sb.WriteString("Decide your next action based on your profile, location rules, private memories, and logs.\n")
 	sb.WriteString("If another character has spoken to you or addressed you in chat, prioritize responding with a CHAT action.\n")
@@ -585,14 +632,12 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext) string {
 	return sb.String()
 }
 
-// RoomPopulation returns the number of known characters currently present in the room.
 func (cm *ContextManager) RoomPopulation() int {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 	return len(cm.knownCharacters)
 }
 
-// KnownCharacterIDs returns a list of registered character IDs present or known in the room.
 func (cm *ContextManager) KnownCharacterIDs() []string {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
@@ -604,7 +649,6 @@ func (cm *ContextManager) KnownCharacterIDs() []string {
 	return ids
 }
 
-// GetCharacterName returns the display name for a given character ID.
 func (cm *ContextManager) GetCharacterName(id string) string {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()

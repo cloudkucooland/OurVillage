@@ -67,6 +67,12 @@ func TestSanitizeAndExtractJSON(t *testing.T) {
 			wantErr:    false,
 		},
 		{
+			name:       "JSON with unquoted action enum",
+			input:      `{"thought": "Saying hi", "action": CHAT, "payload": "Hi!"}`,
+			wantAction: "CHAT",
+			wantErr:    false,
+		},
+		{
 			name:    "Invalid action enum",
 			input:   `{"action": "EXPLODE_TOWN", "payload": {}}`,
 			wantErr: true,

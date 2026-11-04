@@ -47,7 +47,7 @@ func SeedShopInventory(db *sql.DB) error {
 	return nil
 }
 
-// BuyItem executes a purchase of items from a location's storefront shop inventory.
+// BuyItem executes a atomic transaction purchase of items from a location's storefront shop inventory.
 func BuyItem(db *sql.DB, characterID string, itemID string, quantity int) error {
 	if quantity <= 0 {
 		return fmt.Errorf("quantity must be greater than 0")
@@ -118,11 +118,18 @@ func BuyItem(db *sql.DB, characterID string, itemID string, quantity int) error 
 	var ownerID sql.NullString
 	err = tx.QueryRow("SELECT owner_id FROM locations WHERE id = ?", locationID).Scan(&ownerID)
 	if err == nil && ownerID.Valid && ownerID.String != "" && ownerID.String != characterID {
-		_, _ = tx.Exec("UPDATE characters SET gold = gold + ? WHERE id = ?", totalCost, ownerID.String)
+		_, err = tx.Exec("UPDATE characters SET gold = gold + ? WHERE id = ?", totalCost, ownerID.String)
+		if err != nil {
+			return fmt.Errorf("failed to credit store owner %s: %w", ownerID.String, err)
+		}
 	}
 
-	// 6. Reduce shop stock
-	_, err = tx.Exec("UPDATE location_shop_items SET stock_quantity = stock_quantity - ? WHERE location_id = ? AND item_id = ?", quantity, locationID, itemID)
+	// 6. Reduce shop stock (delete row if stock depleted)
+	if stockQty == quantity {
+		_, err = tx.Exec("DELETE FROM location_shop_items WHERE location_id = ? AND item_id = ?", locationID, itemID)
+	} else {
+		_, err = tx.Exec("UPDATE location_shop_items SET stock_quantity = stock_quantity - ? WHERE location_id = ? AND item_id = ?", quantity, locationID, itemID)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to update shop stock: %w", err)
 	}
@@ -135,6 +142,69 @@ func BuyItem(db *sql.DB, characterID string, itemID string, quantity int) error 
 	`, characterID, itemID, quantity, quantity)
 	if err != nil {
 		return fmt.Errorf("failed to update character inventory: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// RestockShopItem transfers items from a character's personal inventory into a location's shop inventory.
+func RestockShopItem(db *sql.DB, characterID string, itemID string, quantity int, priceGold int) error {
+	if quantity <= 0 {
+		return fmt.Errorf("quantity must be greater than 0")
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 1. Get character current location
+	var locationID string
+	err = tx.QueryRow("SELECT current_location FROM characters WHERE id = ?", characterID).Scan(&locationID)
+	if err != nil {
+		return fmt.Errorf("character not found: %w", err)
+	}
+
+	// 2. Check character inventory
+	var charQty int
+	err = tx.QueryRow("SELECT quantity FROM inventories WHERE character_id = ? AND item_id = ?", characterID, itemID).Scan(&charQty)
+	if err == sql.ErrNoRows || charQty < quantity {
+		return fmt.Errorf("INSUFFICIENT_INVENTORY: character has %d of item '%s', needed %d", charQty, itemID, quantity)
+	}
+
+	// 3. Determine price (if priceGold <= 0, use existing shop price or default item value)
+	var finalPrice int = priceGold
+	if finalPrice <= 0 {
+		err = tx.QueryRow("SELECT price_gold FROM location_shop_items WHERE location_id = ? AND item_id = ?", locationID, itemID).Scan(&finalPrice)
+		if err != nil {
+			err = tx.QueryRow("SELECT value_gold FROM items WHERE id = ?", itemID).Scan(&finalPrice)
+			if err != nil || finalPrice <= 0 {
+				finalPrice = 1
+			}
+		}
+	}
+
+	// 4. Deduct items from character inventory
+	if charQty == quantity {
+		_, err = tx.Exec("DELETE FROM inventories WHERE character_id = ? AND item_id = ?", characterID, itemID)
+	} else {
+		_, err = tx.Exec("UPDATE inventories SET quantity = quantity - ? WHERE character_id = ? AND item_id = ?", quantity, characterID, itemID)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to deduct items from character inventory: %w", err)
+	}
+
+	// 5. Upsert location shop items stock
+	_, err = tx.Exec(`
+		INSERT INTO location_shop_items (location_id, item_id, price_gold, stock_quantity)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(location_id, item_id) DO UPDATE SET
+			stock_quantity = stock_quantity + ?,
+			price_gold = CASE WHEN ? > 0 THEN ? ELSE price_gold END
+	`, locationID, itemID, finalPrice, quantity, quantity, finalPrice, finalPrice)
+	if err != nil {
+		return fmt.Errorf("failed to update location shop inventory: %w", err)
 	}
 
 	return tx.Commit()

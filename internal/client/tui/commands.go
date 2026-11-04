@@ -10,6 +10,7 @@ import (
 	"agentmud/internal/client/dispatcher"
 	"agentmud/internal/client/model"
 	"agentmud/internal/client/spatial"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -58,6 +59,8 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 		return nil
 
 	case "/look", "/l":
+		ctx := m.ctx
+		disp := m.dispatcher
 		return func() (msg tea.Msg) {
 			defer func() {
 				if r := recover(); r != nil {
@@ -69,7 +72,7 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 				Action:   "LOOK",
 				Payload:  json.RawMessage(`{}`),
 			}
-			res, err := m.dispatcher.Dispatch(m.ctx, lookIntent, 5*time.Second)
+			res, err := disp.Dispatch(ctx, lookIntent, 5*time.Second)
 			if err != nil {
 				return errMsg{err: fmt.Errorf("look failed: %v", err)}
 			}
@@ -82,6 +85,8 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 			return nil
 		}
 		targetLoc := args[0]
+		ctx := m.ctx
+		disp := m.dispatcher
 		return func() (msg tea.Msg) {
 			defer func() {
 				if r := recover(); r != nil {
@@ -94,7 +99,7 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 				Action:   "MOVE",
 				Payload:  payload,
 			}
-			res, err := m.dispatcher.Dispatch(m.ctx, moveIntent, 5*time.Second)
+			res, err := disp.Dispatch(ctx, moveIntent, 5*time.Second)
 			if err != nil {
 				return errMsg{err: fmt.Errorf("move failed: %v", err)}
 			}
@@ -106,7 +111,10 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 			m.errMessage = "Usage: /chat <message>"
 			return nil
 		}
-		msg := strings.Join(args, " ")
+		msgStr := strings.Join(args, " ")
+		ctx := m.ctx
+		disp := m.dispatcher
+		agentID := m.agentID
 		return func() (retMsg tea.Msg) {
 			defer func() {
 				if r := recover(); r != nil {
@@ -114,15 +122,15 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 				}
 			}()
 			payload, _ := json.Marshal(map[string]string{
-				"agent_id": m.agentID,
-				"message":  msg,
+				"agent_id": agentID,
+				"message":  msgStr,
 			})
 			chatIntent := dispatcher.Intent{
 				IntentID: fmt.Sprintf("req_tui_chat_%d", time.Now().UnixNano()),
 				Action:   "CHAT",
 				Payload:  payload,
 			}
-			res, err := m.dispatcher.Dispatch(m.ctx, chatIntent, 5*time.Second)
+			res, err := disp.Dispatch(ctx, chatIntent, 5*time.Second)
 			if err != nil {
 				return errMsg{err: fmt.Errorf("chat failed: %v", err)}
 			}
@@ -136,40 +144,57 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 		}
 		hint := strings.Join(args, " ")
 		m.ctxMgr.IngestSystem(fmt.Sprintf("[Human Suggestion] %s", hint))
+
+		if m.engine == nil {
+			msg := fmt.Sprintf("Suggestion recorded (no engine active): %s", hint)
+			m.ctxMgr.IngestSystem(msg)
+			m.infoMessage = msg
+			return nil
+		}
+
 		m.isThinking = true
+
+		// Capture snapshot references safely for the goroutine execution
+		ctx := m.ctx
+		eng := m.engine
+		disp := m.dispatcher
+		ctxMgr := m.ctxMgr
+		fetchMemories := m.fetchPeerMemories
+
+		temp := 0.7
+		if m.temperature != nil {
+			temp = *m.temperature
+		}
+
 		return func() (retMsg tea.Msg) {
 			defer func() {
 				if r := recover(); r != nil {
 					retMsg = errMsg{err: fmt.Errorf("panic recovered in /suggest: %v", r)}
 				}
 			}()
-			if m.engine == nil {
-				msg := fmt.Sprintf("Suggestion recorded (no engine active): %s", hint)
-				m.ctxMgr.IngestSystem(msg)
-				return infoMsg(msg)
-			}
+
 			var memories []spatial.PeerMemoryContext
-			if m.fetchPeerMemories != nil {
-				memories = m.fetchPeerMemories()
+			if fetchMemories != nil {
+				memories = fetchMemories()
 			}
-			prompt := m.ctxMgr.BuildPrompt(memories)
-			temp := 0.7
-			if m.temperature != nil {
-				temp = *m.temperature
-			}
+
+			prompt := ctxMgr.BuildPrompt(memories, nil)
 			genOpts := model.GenerationOptions{
 				Temperature: float32(temp),
 			}
-			intent, err := dispatcher.GenerateIntentWithRetry(m.ctx, m.engine, prompt, genOpts, 2)
+
+			intent, err := dispatcher.GenerateIntentWithRetry(ctx, eng, prompt, genOpts, 2)
 			if err != nil {
 				return errMsg{err: fmt.Errorf("cognition generation failed: %v", err)}
 			}
-			res, err := m.dispatcher.Dispatch(m.ctx, intent, 10*time.Second)
+
+			res, err := disp.Dispatch(ctx, intent, 10*time.Second)
 			if err != nil {
 				return errMsg{err: fmt.Errorf("intent dispatch failed: %v", err)}
 			}
+
 			msg := fmt.Sprintf("Suggestion processed -> Action: %s (Thought: %s) [%s]", intent.Action, intent.Thought, res.Message)
-			m.ctxMgr.IngestSystem(msg)
+			ctxMgr.IngestSystem(msg)
 			return infoMsg(msg)
 		}
 

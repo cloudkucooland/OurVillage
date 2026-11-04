@@ -74,6 +74,12 @@ func BuildIntentMessage(actionCfg ActionConfig) ([]byte, error) {
 			"item_id":  actionCfg.Item,
 			"quantity": actionCfg.Qty,
 		})
+	case "RESTOCK":
+		payload, err = json.Marshal(map[string]interface{}{
+			"item_id":    actionCfg.Item,
+			"quantity":   actionCfg.Qty,
+			"price_gold": actionCfg.Amount,
+		})
 	default:
 		return nil, fmt.Errorf("unknown action: %s", actionCfg.Action)
 	}
@@ -98,12 +104,19 @@ func BuildIntentMessage(actionCfg ActionConfig) ([]byte, error) {
 
 // RunClient initializes the MQTT client and event loops according to the provided configuration.
 func RunClient(ctx context.Context, cfg *Config) error {
-	if cfg.Client.TUI {
-		logFile, err := os.OpenFile("agentmud-client.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	clientCtx, cancelClient := context.WithCancel(ctx)
+	defer cancelClient()
+
+	logPath := cfg.Client.LogFile
+	if logPath == "" && cfg.Client.TUI {
+		logPath = "agentmud-client.log"
+	}
+	if logPath != "" {
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err == nil {
 			log.SetOutput(logFile)
 			defer logFile.Close()
-		} else {
+		} else if cfg.Client.TUI {
 			log.SetOutput(io.Discard)
 		}
 	}
@@ -114,7 +127,6 @@ func RunClient(ctx context.Context, cfg *Config) error {
 	}
 	defer engine.Close()
 
-	// Initialize Spatial Context Window Manager (Phase 3)
 	initLoc := cfg.Action.TargetLoc
 	if initLoc == "" {
 		initLoc = "town_square"
@@ -128,7 +140,6 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		DefaultInventory: []string{"bread", "water_flask"},
 	})
 
-	// Initialize Client Memory Store (RFC 013)
 	memoryStore, err := memory.NewClientMemoryStore(cfg.Memory.DBPath)
 	if err != nil {
 		return fmt.Errorf("failed to initialize client memory store: %w", err)
@@ -141,9 +152,8 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		cfg.Client.AgentID,
 		time.Duration(cfg.Cognition.ReflectionIntervalTicks)*time.Second,
 	)
-	synthesizer.Start(ctx)
+	synthesizer.Start(clientCtx)
 
-	// Helper to assemble peer memories for context building
 	fetchPeerMemories := func() []spatial.PeerMemoryContext {
 		traits, err := memoryStore.GetIdentityTraits()
 		if err == nil && len(traits) > 0 {
@@ -180,7 +190,27 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		return peerMemories
 	}
 
-	// Initialize Intent Correlation Tracker (Phase 4)
+	ctxMgr.SetOnLocationObserved(func(locID, locName, cat, text string) {
+		_ = memoryStore.UpsertLocationMemory(locID, locName, cat, text, 0)
+	})
+
+	fetchLocationMemories := func() []spatial.LocationMemoryContext {
+		mems, err := memoryStore.GetLocationMemories()
+		if err != nil || len(mems) == 0 {
+			return nil
+		}
+		var res []spatial.LocationMemoryContext
+		for _, lm := range mems {
+			res = append(res, spatial.LocationMemoryContext{
+				LocationID:     lm.LocationID,
+				LocationName:   lm.LocationName,
+				MemoryCategory: lm.MemoryCategory,
+				MemoryText:     lm.MemoryText,
+			})
+		}
+		return res
+	}
+
 	tracker := dispatcher.NewCorrelationTracker(50)
 	defer tracker.Close()
 
@@ -198,6 +228,7 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		opts.SetKeepAlive(time.Duration(cfg.Client.KeepAliveSeconds) * time.Second)
 	}
 
+	idleTicks := 0
 	var activeMQTTClient mqtt.Client
 
 	subscribeLocation := func(c mqtt.Client, loc string) {
@@ -206,6 +237,7 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		whisperTopic := fmt.Sprintf("world/locations/%s/whisper/%s", loc, cfg.Client.AgentID)
 
 		c.Subscribe(chatTopic, 0, func(_ mqtt.Client, msg mqtt.Message) {
+			idleTicks = 0
 			log.Printf("[LOCATION CHAT (%s)] %s", msg.Topic(), string(msg.Payload()))
 			var chatPayload struct {
 				AgentID string `json:"agent_id"`
@@ -213,10 +245,8 @@ func RunClient(ctx context.Context, cfg *Config) error {
 			}
 			if err := json.Unmarshal(msg.Payload(), &chatPayload); err == nil && chatPayload.AgentID != "" {
 				ctxMgr.IngestChat(chatPayload.AgentID, chatPayload.Message)
-				// Record raw event log into client memory
 				_ = memoryStore.AddEvent(0, chatPayload.AgentID, "CHAT", string(msg.Payload()))
 
-				// Autonomous chat response evaluation (skip if message is from ourselves)
 				if chatPayload.AgentID != cfg.Client.AgentID && engine != nil {
 					go func() {
 						textLower := strings.ToLower(chatPayload.Message)
@@ -235,7 +265,6 @@ func RunClient(ctx context.Context, cfg *Config) error {
 								pop = 1
 							}
 							scaledProb := cfg.Cognition.ChatResponseProbability / float64(pop)
-							// pseudo-random roll
 							roll := float64(time.Now().UnixNano()%1000) / 1000.0
 							if roll < scaledProb {
 								log.Printf("[Autonomous Chat] Chat response probability triggered (roll %.3f < scaled prob %.3f, base %.2f, pop %d)", roll, scaledProb, cfg.Cognition.ChatResponseProbability, pop)
@@ -244,11 +273,9 @@ func RunClient(ctx context.Context, cfg *Config) error {
 						}
 
 						if shouldRespond {
-							var memories []spatial.PeerMemoryContext
-							if fetchPeerMemories != nil {
-								memories = fetchPeerMemories()
-							}
-							prompt := ctxMgr.BuildPrompt(memories)
+							memories := fetchPeerMemories()
+							prompt := ctxMgr.BuildPrompt(memories, fetchLocationMemories())
+
 							temp := cfg.Model.LlamaPure.Temperature
 							if temp <= 0 {
 								temp = 0.7
@@ -256,18 +283,19 @@ func RunClient(ctx context.Context, cfg *Config) error {
 							genOpts := model.GenerationOptions{
 								Temperature: float32(temp),
 							}
-							intent, err := dispatcher.GenerateIntentWithRetry(ctx, engine, prompt, genOpts, 2)
+							intent, err := dispatcher.GenerateIntentWithRetry(clientCtx, engine, prompt, genOpts, 2)
 							if err != nil {
 								log.Printf("[Autonomous Chat] Cognition generation failed: %v", err)
 								return
 							}
 
 							disp := dispatcher.NewIntentDispatcher(cfg.Client.AgentID, c, tracker)
-							res, err := disp.Dispatch(ctx, intent, 10*time.Second)
+							res, err := disp.Dispatch(clientCtx, intent, 10*time.Second)
 							if err != nil {
 								log.Printf("[Autonomous Chat] Intent dispatch failed: %v", err)
 								return
 							}
+							idleTicks = 0
 							log.Printf("[Autonomous Chat] Triggered response processed -> Action: %s (Thought: %s) [%s]", intent.Action, intent.Thought, res.Message)
 						}
 					}()
@@ -283,6 +311,7 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		})
 
 		c.Subscribe(whisperTopic, 0, func(_ mqtt.Client, msg mqtt.Message) {
+			idleTicks = 0
 			log.Printf("[WHISPER (%s)] %s", msg.Topic(), string(msg.Payload()))
 			var whisperPayload struct {
 				AgentID string `json:"agent_id"`
@@ -320,18 +349,56 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		log.Printf("[AgentMUD] Connected to MQTT broker %s as %s (client: %s, engine: %s)",
 			cfg.Client.BrokerURL, cfg.Client.AgentID, clientID, cfg.Model.Provider)
 
-		// Subscribe to global time
+		// Re-subscribe to global time
 		c.Subscribe("world/global/time", 0, func(_ mqtt.Client, msg mqtt.Message) {
 			log.Printf("[TIME] %s", string(msg.Payload()))
 			var tick spatial.TimeTickMessage
 			if err := json.Unmarshal(msg.Payload(), &tick); err == nil {
 				ctxMgr.IngestTimeTick(tick)
 			}
+
+			if cfg.Cognition.IdleThresholdTicks > 0 {
+				idleTicks++
+				if idleTicks >= cfg.Cognition.IdleThresholdTicks {
+					idleTicks = 0
+					log.Printf("[Intrinsic Motivation] Idle threshold reached (%d ticks). Triggering autonomous motivation turn...", cfg.Cognition.IdleThresholdTicks)
+
+					go func() {
+						ctxMgr.IngestSystem("You feel a quiet moment of intrinsic curiosity and urge to act. What shall you do? Perhaps you should explore the village, check your inventory, forage for resources, or visit the tavern.")
+
+						memories := fetchPeerMemories()
+						prompt := ctxMgr.BuildPrompt(memories, fetchLocationMemories())
+
+						temp := cfg.Model.LlamaPure.Temperature
+						if temp <= 0 {
+							temp = 0.7
+						}
+						genOpts := model.GenerationOptions{
+							Temperature: float32(temp),
+						}
+						intent, err := dispatcher.GenerateIntentWithRetry(clientCtx, engine, prompt, genOpts, 2)
+						if err != nil {
+							log.Printf("[Intrinsic Motivation] Cognition generation failed: %v", err)
+							return
+						}
+
+						disp := dispatcher.NewIntentDispatcher(cfg.Client.AgentID, c, tracker)
+						res, err := disp.Dispatch(clientCtx, intent, 10*time.Second)
+						if err != nil {
+							log.Printf("[Intrinsic Motivation] Intent dispatch failed: %v", err)
+							return
+						}
+						idleTicks = 0
+						log.Printf("[Intrinsic Motivation] Action: %s (Thought: %s) [%s]", intent.Action, intent.Thought, res.Message)
+					}()
+				}
+			}
 		})
 
-		// Subscribe to agent direct messages and resolve through CorrelationTracker (Phase 4)
+		// Re-subscribe to agent direct messages
 		directTopic := fmt.Sprintf("world/agents/%s/direct", cfg.Client.AgentID)
 		c.Subscribe(directTopic, 0, func(_ mqtt.Client, msg mqtt.Message) {
+			idleTicks = 0
 			log.Printf("[DIRECT RESPONSE] %s", string(msg.Payload()))
 			res, matched := tracker.Resolve(msg.Payload())
 			if matched {
@@ -341,10 +408,16 @@ func RunClient(ctx context.Context, cfg *Config) error {
 			_ = ctxMgr.IngestDirectResponse(msg.Payload())
 		})
 
-		// Dispatch initial LOOK intent to sync true character location from server and trigger dynamic room subscription
+		// Re-subscribe to current location topics on reconnect
+		currentLoc := ctxMgr.CurrentLocation()
+		if currentLoc != "" {
+			subscribeLocation(c, currentLoc)
+		}
+
+		// Dispatch initial LOOK intent to sync true character location from server
 		go func() {
 			select {
-			case <-ctx.Done():
+			case <-clientCtx.Done():
 				return
 			case <-time.After(200 * time.Millisecond):
 			}
@@ -356,20 +429,18 @@ func RunClient(ctx context.Context, cfg *Config) error {
 				Action:   "LOOK",
 				Payload:  json.RawMessage(`{}`),
 			}
-			_, _ = disp.Dispatch(ctx, lookIntent, 5*time.Second)
+			_, _ = disp.Dispatch(clientCtx, lookIntent, 5*time.Second)
 		}()
 
-		// If an action was configured, dispatch it through IntentDispatcher (Phase 4)
 		if cfg.Action.Action != "" {
 			go func() {
 				select {
-				case <-ctx.Done():
+				case <-clientCtx.Done():
 					return
 				case <-time.After(1000 * time.Millisecond):
 				}
 
-				// Build prompt using memories for logging/debugging
-				prompt := ctxMgr.BuildPrompt(fetchPeerMemories())
+				prompt := ctxMgr.BuildPrompt(fetchPeerMemories(), fetchLocationMemories())
 				log.Printf("[Cognition Prompt Ready] Context window assembled (%d bytes)", len(prompt))
 
 				disp := dispatcher.NewIntentDispatcher(cfg.Client.AgentID, c, tracker)
@@ -386,7 +457,7 @@ func RunClient(ctx context.Context, cfg *Config) error {
 				}
 
 				log.Printf("[INTENT] Dispatching %s intent (%s)...", rawIntent.Action, rawIntent.IntentID)
-				res, err := disp.Dispatch(ctx, rawIntent, 10*time.Second)
+				res, err := disp.Dispatch(clientCtx, rawIntent, 10*time.Second)
 				if err != nil {
 					log.Printf("[INTENT RESULT ERROR] %s failed: %v", rawIntent.Action, err)
 				} else {
@@ -407,18 +478,17 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		temp := &cfg.Model.LlamaPure.Temperature
 		debounce := &cfg.Cognition.TickIntervalDebounceMS
 
-		tuiModel := tui.NewTUIModel(ctx, cfg.Client.AgentID, client, tracker, ctxMgr, engine, fetchPeerMemories, chatProb, refFreq, temp, debounce)
+		tuiModel := tui.NewTUIModel(clientCtx, cfg.Client.AgentID, client, tracker, ctxMgr, engine, fetchPeerMemories, chatProb, refFreq, temp, debounce)
 		p := tea.NewProgram(tuiModel, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			log.Printf("[TUI Error] %v", err)
 		}
 	} else {
-		// Trap termination signals for clean shutdown
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 		select {
-		case <-ctx.Done():
+		case <-clientCtx.Done():
 			log.Println("[AgentMUD] Context cancelled, shutting down...")
 		case sig := <-sigChan:
 			log.Printf("[AgentMUD] Received signal %v, shutting down...", sig)

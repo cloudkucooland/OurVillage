@@ -11,8 +11,8 @@ import (
 // DefaultAgentIntentGrammar returns the built-in canonical GBNF grammar for RFC 002 agent intents.
 func DefaultAgentIntentGrammar() string {
 	return `root ::= "{" ws "\"thought\"" ws ":" ws string ws "," ws "\"action\"" ws ":" ws action-type ws "," ws "\"payload\"" ws ":" ws payload ws "}"
-action-type ::= "\"MOVE\"" | "\"CHAT\"" | "\"TRANSFER\"" | "\"FORAGE\"" | "\"CANCEL_ACTION\"" | "\"DROP\"" | "\"PICKUP\"" | "\"EQUIP\"" | "\"UNEQUIP\"" | "\"CRAFT\"" | "\"LOOK\"" | "\"STATUS\""
-payload ::= move-payload | chat-payload | transfer-payload | forage-payload | empty-payload | item-payload | craft-payload
+action-type ::= "\"MOVE\"" | "\"CHAT\"" | "\"TRANSFER\"" | "\"FORAGE\"" | "\"COLLECT\"" | "\"CANCEL_ACTION\"" | "\"DROP\"" | "\"PICKUP\"" | "\"EQUIP\"" | "\"UNEQUIP\"" | "\"CRAFT\"" | "\"LOOK\"" | "\"STATUS\"" | "\"BUY\"" | "\"RESTOCK\""
+payload ::= move-payload | chat-payload | transfer-payload | forage-payload | empty-payload | item-payload | craft-payload | buy-payload | restock-payload
 move-payload ::= "{" ws "\"target_location\"" ws ":" ws string ws "}"
 chat-payload ::= string | "{" ws "\"message\"" ws ":" ws string ws "}"
 transfer-payload ::= "{" ws "\"recipient_id\"" ws ":" ws string ws "," ws "\"amount\"" ws ":" ws integer ws ("," ws "\"item_id\"" ws ":" ws string ws "," ws "\"quantity\"" ws ":" ws integer ws)? "}"
@@ -20,14 +20,17 @@ forage-payload ::= "{" ws "\"target_resource\"" ws ":" ws string ws ("," ws "\"d
 empty-payload ::= "{" ws "}"
 item-payload ::= "{" ws "\"item_id\"" ws ":" ws string ws ("," ws "\"quantity\"" ws ":" ws integer ws)? "}"
 craft-payload ::= "{" ws "\"recipe_id\"" ws ":" ws string ws "}"
+buy-payload ::= "{" ws "\"item_id\"" ws ":" ws string ws "," ws "\"quantity\"" ws ":" ws integer ws "}"
+restock-payload ::= "{" ws "\"item_id\"" ws ":" ws string ws "," ws "\"quantity\"" ws ":" ws integer ws ("," ws "\"price_gold\"" ws ":" ws integer ws)? "}"
 string ::= "\"" ([^"\\] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]))* "\""
 integer ::= "-"? [0-9]+
 ws ::= [ \t\n\r]*`
 }
 
 var (
-	gbnfRuleRegex  = regexp.MustCompile(`^[a-zA-Z0-9_\-]+(\s*::=|\s*\+=)`)
-	codeBlockRegex = regexp.MustCompile("(?s)```(?:json)?\\s*(.+?)\\s*```")
+	gbnfRuleRegex       = regexp.MustCompile(`^[a-zA-Z0-9_\-]+(\s*::=|\s*\+=)`)
+	codeBlockRegex      = regexp.MustCompile("(?s)```(?:json)?\\s*(.+?)\\s*```")
+	unquotedActionRegex = regexp.MustCompile(`("action"\s*:\s*)([a-zA-Z_]+)([\s,\}])`)
 )
 
 // ValidateGBNF validates the structural syntax of a GBNF grammar string.
@@ -96,6 +99,7 @@ var validActions = map[string]struct{}{
 	"CHAT":          {},
 	"TRANSFER":      {},
 	"FORAGE":        {},
+	"COLLECT":       {},
 	"CANCEL_ACTION": {},
 	"DROP":          {},
 	"PICKUP":        {},
@@ -105,6 +109,7 @@ var validActions = map[string]struct{}{
 	"LOOK":          {},
 	"STATUS":        {},
 	"BUY":           {},
+	"RESTOCK":       {},
 }
 
 // SanitizeAndExtractJSON extracts and cleans valid JSON blocks from model responses,
@@ -132,7 +137,11 @@ func SanitizeAndExtractJSON(raw string) (string, error) {
 	// 3. Unmarshal into generic map to inspect and repair
 	var data map[string]interface{}
 	if err := json.Unmarshal([]byte(jsonCandidate), &data); err != nil {
-		return "", fmt.Errorf("malformed JSON in model output: %w (candidate: %s)", err, jsonCandidate)
+		repairedCandidate := unquotedActionRegex.ReplaceAllString(jsonCandidate, `$1"$2"$3`)
+		if err2 := json.Unmarshal([]byte(repairedCandidate), &data); err2 != nil {
+			return "", fmt.Errorf("malformed JSON in model output: %w (candidate: %s)", err, jsonCandidate)
+		}
+		jsonCandidate = repairedCandidate
 	}
 
 	// 4. Validate and normalize the "action" field
@@ -148,7 +157,11 @@ func SanitizeAndExtractJSON(raw string) (string, error) {
 
 	actionUpper := strings.ToUpper(strings.TrimSpace(actionStr))
 	if _, valid := validActions[actionUpper]; !valid {
-		return "", fmt.Errorf("invalid action %q in model output (expected one of MOVE, CHAT, TRANSFER, FORAGE, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY)", actionStr)
+		return "", fmt.Errorf("invalid action %q in model output (expected one of MOVE, CHAT, TRANSFER, FORAGE, COLLECT, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, RESTOCK)", actionStr)
+	}
+
+	if actionUpper == "COLLECT" {
+		actionUpper = "FORAGE"
 	}
 
 	// Update action to uppercase

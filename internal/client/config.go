@@ -29,6 +29,7 @@ type ClientConfig struct {
 	ClientID         string `yaml:"client_id" json:"client_id"`
 	KeepAliveSeconds int    `yaml:"keepalive_seconds" json:"keepalive_seconds"`
 	TUI              bool   `yaml:"tui" json:"tui"`
+	LogFile          string `yaml:"log_file" json:"log_file"`
 }
 
 // ModelConfig specifies the inference engine backend and provider-specific configurations.
@@ -82,6 +83,7 @@ type CognitionConfig struct {
 	ChatResponseProbability float64 `yaml:"chat_response_probability" json:"chat_response_probability"`
 	MaxSensoryLogLines      int     `yaml:"max_sensory_log_lines" json:"max_sensory_log_lines"`
 	ReflectionIntervalTicks int     `yaml:"reflection_interval_ticks" json:"reflection_interval_ticks"`
+	IdleThresholdTicks      int     `yaml:"idle_threshold_ticks" json:"idle_threshold_ticks"`
 }
 
 // ActionConfig allows specifying an intent to fire upon connecting (useful for CLI test actions).
@@ -138,6 +140,7 @@ func DefaultConfig() *Config {
 			ChatResponseProbability: 0.85,
 			MaxSensoryLogLines:      12,
 			ReflectionIntervalTicks: 30,
+			IdleThresholdTicks:      10,
 		},
 		Action: ActionConfig{
 			TargetLoc: "tavern",
@@ -238,6 +241,9 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.Client.TUI = b
 		}
 	}
+	if val := getFirstEnv("AGENTMUD_LOG_FILE", "AGENTMUD_LOG"); val != "" {
+		cfg.Client.LogFile = val
+	}
 
 	if val := getFirstEnv("AGENTMUD_ENGINE", "AGENTMUD_MODEL_PROVIDER"); val != "" {
 		cfg.Model.Provider = val
@@ -307,6 +313,11 @@ func applyEnvOverrides(cfg *Config) {
 			cfg.Cognition.ChatResponseProbability = f
 		}
 	}
+	if val := os.Getenv("AGENTMUD_IDLE_THRESHOLD"); val != "" {
+		if n, err := strconv.Atoi(val); err == nil {
+			cfg.Cognition.IdleThresholdTicks = n
+		}
+	}
 
 	if val := os.Getenv("AGENTMUD_ACTION"); val != "" {
 		cfg.Action.Action = val
@@ -334,6 +345,9 @@ func applyCLIOverrides(cmd *cli.Command, cfg *Config) {
 	}
 	if cmd.IsSet("tui") {
 		cfg.Client.TUI = cmd.Bool("tui")
+	}
+	if cmd.IsSet("log-file") {
+		cfg.Client.LogFile = cmd.String("log-file")
 	}
 
 	// Model flags
@@ -388,6 +402,9 @@ func applyCLIOverrides(cmd *cli.Command, cfg *Config) {
 	}
 	if cmd.IsSet("chat-prob") {
 		cfg.Cognition.ChatResponseProbability = cmd.Float("chat-prob")
+	}
+	if cmd.IsSet("idle-threshold") {
+		cfg.Cognition.IdleThresholdTicks = int(cmd.Int("idle-threshold"))
 	}
 
 	// Action flags

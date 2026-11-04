@@ -101,7 +101,7 @@ func (m TUIModel) View() string {
 		}
 	}
 
-	mainPane := paneStyle.Render(tabRow + "\n\n" + contentBody)
+	mainPane := paneStyle.Width(m.width - 2).Render(tabRow + "\n\n" + contentBody)
 
 	// 4. Status / Feedback line
 	var statusLine string

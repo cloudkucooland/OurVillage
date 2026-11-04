@@ -59,6 +59,12 @@ func CommonFlags() []cli.Flag {
 			Value:   false,
 			Sources: cli.EnvVars("AGENTMUD_TUI"),
 		},
+		&cli.StringFlag{
+			Name:      "log-file",
+			Usage:     "Path to client log file",
+			TakesFile: true,
+			Sources:   cli.EnvVars("AGENTMUD_LOG_FILE", "AGENTMUD_LOG"),
+		},
 
 		// Model Provider flags
 		&cli.StringFlag{
@@ -161,6 +167,12 @@ func CommonFlags() []cli.Flag {
 			Value:   0.85,
 			Sources: cli.EnvVars("AGENTMUD_CHAT_PROB"),
 		},
+		&cli.IntFlag{
+			Name:    "idle-threshold",
+			Usage:   "Number of consecutive quiet time ticks before triggering intrinsic motivation",
+			Value:   10,
+			Sources: cli.EnvVars("AGENTMUD_IDLE_THRESHOLD"),
+		},
 
 		// Action flags
 		&cli.StringFlag{
@@ -251,7 +263,7 @@ func NewApp() *cli.Command {
 						InitialLocation: initLoc,
 						MaxSensoryLines: cfg.Cognition.MaxSensoryLogLines,
 					})
-					fmt.Print(ctxMgr.BuildPrompt([]spatial.PeerMemoryContext{}))
+					fmt.Print(ctxMgr.BuildPrompt([]spatial.PeerMemoryContext{}, nil))
 					return nil
 				},
 			},

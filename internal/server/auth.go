@@ -75,7 +75,6 @@ func (h *DBAuthHook) OnConnectAuthenticate(cl *mqtt.Client, pk packets.Packet) b
 		return false
 	}
 
-	// Update character state to online
 	_, _ = h.db.Exec("UPDATE characters SET is_online = 1 WHERE id = ?", username)
 	log.Printf("[Auth] Successfully authenticated character: '%s'", username)
 	return true
@@ -92,8 +91,8 @@ func (h *DBAuthHook) OnDisconnect(cl *mqtt.Client, err error, expire bool) {
 	}
 
 	if username != "" {
-		_, _ = h.db.Exec("UPDATE characters SET is_online = 0 WHERE id = ?", username)
-		log.Printf("[Auth] Character disconnected: '%s'", username)
+		_, _ = h.db.Exec("UPDATE characters SET is_online = 0, status = 'IDLE', action_target = '', action_start_tick = 0, action_end_tick = 0, action_intent_id = '' WHERE id = ?", username)
+		log.Printf("[Auth] Character disconnected: '%s' (resetting active actions to IDLE)", username)
 	}
 }
 
@@ -111,14 +110,11 @@ func (h *DBAuthHook) OnACLCheck(cl *mqtt.Client, topic string, write bool) bool 
 		return false
 	}
 
-	// 1. Write Permissions (Publishing Intents & Chat)
 	if write {
-		// Agents can publish intent payloads to their own intent channel: world/agents/{username}/intent
 		if topic == "world/agents/"+username+"/intent" {
 			return true
 		}
 
-		// Agents can publish chat to room chat IF they are physically in that location
 		if strings.HasPrefix(topic, "world/locations/") && strings.HasSuffix(topic, "/chat") {
 			parts := strings.Split(topic, "/")
 			if len(parts) >= 4 {
@@ -131,19 +127,14 @@ func (h *DBAuthHook) OnACLCheck(cl *mqtt.Client, topic string, write bool) bool 
 		return false
 	}
 
-	// 2. Read Permissions (Subscribing / Receiving)
-
-	// Global broadcasts (time, announcements) are readable by all authenticated agents
 	if strings.HasPrefix(topic, "world/global/") {
 		return true
 	}
 
-	// Strictly isolate personal agent channels (status, direct, whisper)
 	if strings.HasPrefix(topic, "world/agents/") {
 		parts := strings.Split(topic, "/")
 		if len(parts) >= 3 {
 			targetAgentID := parts[2]
-			// Strictly deny if the client is not the owner of this agent topic
 			if targetAgentID != username {
 				log.Printf("[ACL] Read denied for user '%s' on private topic '%s'", username, topic)
 				return false
@@ -152,30 +143,25 @@ func (h *DBAuthHook) OnACLCheck(cl *mqtt.Client, topic string, write bool) bool 
 		}
 	}
 
-	// Spatial location checks (world/locations/{location_id}/*)
 	if strings.HasPrefix(topic, "world/locations/") {
 		parts := strings.Split(topic, "/")
 		if len(parts) >= 4 {
 			targetLocationID := parts[2]
 			channelType := parts[3]
 
-			// Must be physically present in the room
 			if !h.isCharacterAtLocation(username, targetLocationID) {
 				log.Printf("[ACL] Read denied for user '%s' on location '%s': character not present", username, targetLocationID)
 				return false
 			}
 
-			// Handle whispers (world/locations/{loc}/whisper/{target_agent_id})
 			if channelType == "whisper" {
 				if len(parts) == 5 {
 					targetAgentID := parts[4]
-					// Characters can only read whispers directed at themselves
 					return targetAgentID == username
 				}
 				return false
 			}
 
-			// Room system alerts and public chat are allowed if present
 			return channelType == "chat" || channelType == "system"
 		}
 	}
@@ -184,7 +170,6 @@ func (h *DBAuthHook) OnACLCheck(cl *mqtt.Client, topic string, write bool) bool 
 	return false
 }
 
-// Helper to query spatial presence from SQLite
 func (h *DBAuthHook) isCharacterAtLocation(characterID, locationID string) bool {
 	h.mu.Lock()
 	if rec, ok := h.recentMoves[characterID]; ok {

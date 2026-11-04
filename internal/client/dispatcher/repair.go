@@ -124,14 +124,28 @@ func GenerateIntentWithRetry(
 
 	// Ultimate fallback for SLMs when retries are exhausted:
 	// If model outputted plain conversational text without JSON, wrap it as a CHAT intent.
+	// If it was a JSON/intent generation attempt, fallback to a safe action like LOOK rather than leaking raw JSON into chat.
 	trimmed := strings.TrimSpace(lastRawOutput)
 	if trimmed != "" {
-		fallbackIntent := Intent{
-			IntentID: GenerateIntentID(),
-			Thought:  trimmed,
-			Action:   "CHAT",
+		isJsonAttempt := strings.Contains(trimmed, "{") || strings.Contains(trimmed, "\"action\"") || strings.Contains(trimmed, "\"thought\"") || strings.Contains(trimmed, "```")
+
+		var fallbackIntent Intent
+		if isJsonAttempt {
+			fallbackIntent = Intent{
+				IntentID: GenerateIntentID(),
+				Thought:  "Fallback recovery from malformed output",
+				Action:   "LOOK",
+				Payload:  json.RawMessage("{}"),
+			}
+		} else {
+			fallbackIntent = Intent{
+				IntentID: GenerateIntentID(),
+				Thought:  trimmed,
+				Action:   "CHAT",
+			}
+			fallbackIntent.Payload, _ = json.Marshal(trimmed)
 		}
-		fallbackIntent.Payload, _ = json.Marshal(trimmed)
+
 		if validated, valErr := ValidateIntent(fallbackIntent); valErr == nil {
 			return validated, nil
 		}

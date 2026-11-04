@@ -30,6 +30,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Cognition.TickIntervalDebounceMS != 2000 {
 		t.Fatalf("expected debounce 2000, got %d", cfg.Cognition.TickIntervalDebounceMS)
 	}
+	if cfg.Cognition.IdleThresholdTicks != 10 {
+		t.Fatalf("expected idle threshold 10, got %d", cfg.Cognition.IdleThresholdTicks)
+	}
 }
 
 func TestLoadConfigFile(t *testing.T) {
@@ -56,6 +59,7 @@ model:
 cognition:
   tick_interval_debounce_ms: 3500
   chat_response_probability: 0.95
+  idle_threshold_ticks: 15
 `
 
 	if err := os.WriteFile(configPath, []byte(yamlData), 0644); err != nil {
@@ -99,6 +103,9 @@ cognition:
 	}
 	if cfg.Cognition.ChatResponseProbability != 0.95 {
 		t.Errorf("expected chat response prob 0.95, got %f", cfg.Cognition.ChatResponseProbability)
+	}
+	if cfg.Cognition.IdleThresholdTicks != 15 {
+		t.Errorf("expected idle threshold 15, got %d", cfg.Cognition.IdleThresholdTicks)
 	}
 }
 
@@ -236,5 +243,60 @@ func TestConfigToYAMLAndJSON(t *testing.T) {
 	}
 	if jsonStr == "" {
 		t.Fatal("JSON string is empty")
+	}
+}
+
+func TestClientLogFileConfiguration(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "agent.yaml")
+
+	yamlData := `
+client:
+  agent_id: "log_agent"
+  log_file: "config_custom.log"
+`
+	if err := os.WriteFile(configPath, []byte(yamlData), 0644); err != nil {
+		t.Fatalf("failed to write test config file: %v", err)
+	}
+
+	// 1. Test loading from config file
+	cfg := DefaultConfig()
+	if err := LoadConfigFile(configPath, cfg); err != nil {
+		t.Fatalf("unexpected error loading config: %v", err)
+	}
+	if cfg.Client.LogFile != "config_custom.log" {
+		t.Errorf("expected config_custom.log, got %s", cfg.Client.LogFile)
+	}
+
+	// 2. Test environment variable override
+	t.Setenv("AGENTMUD_LOG_FILE", "env_custom.log")
+	t.Setenv("AGENTMUD_CONFIG", configPath)
+
+	app := NewApp()
+	var resolved *Config
+	app.Action = func(ctx context.Context, cmd *cli.Command) error {
+		var err error
+		resolved, err = ResolveConfig(cmd)
+		return err
+	}
+
+	if err := app.Run(context.Background(), []string{"agentmud-client"}); err != nil {
+		t.Fatalf("unexpected error running app: %v", err)
+	}
+	if resolved.Client.LogFile != "env_custom.log" {
+		t.Errorf("expected env_custom.log, got %s", resolved.Client.LogFile)
+	}
+
+	// 3. Test CLI flag override
+	args := []string{
+		"agentmud-client",
+		"--config", configPath,
+		"--log-file", "cli_custom.log",
+	}
+	if err := app.Run(context.Background(), args); err != nil {
+		t.Fatalf("unexpected error running app: %v", err)
+	}
+	if resolved.Client.LogFile != "cli_custom.log" {
+		t.Errorf("expected cli_custom.log, got %s", resolved.Client.LogFile)
 	}
 }

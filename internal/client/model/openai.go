@@ -12,7 +12,6 @@ import (
 	"time"
 )
 
-// OpenAIEngineConfig configures the CloudOpenAIEngine.
 type OpenAIEngineConfig struct {
 	APIBase        string
 	APIKey         string
@@ -22,8 +21,6 @@ type OpenAIEngineConfig struct {
 	HTTPClient     *http.Client
 }
 
-// CloudOpenAIEngine implements InferenceEngine for OpenAI-compatible REST endpoints
-// (including OpenAI, OpenRouter, Groq, Together AI, and Ollama/vLLM servers).
 type CloudOpenAIEngine struct {
 	apiBase   string
 	apiKey    string
@@ -33,7 +30,6 @@ type CloudOpenAIEngine struct {
 	client    *http.Client
 }
 
-// NewCloudOpenAIEngine creates a new OpenAI-compatible inference engine.
 func NewCloudOpenAIEngine(cfg OpenAIEngineConfig) *CloudOpenAIEngine {
 	base := strings.TrimRight(strings.TrimSpace(cfg.APIBase), "/")
 	if base == "" {
@@ -72,12 +68,10 @@ func NewCloudOpenAIEngine(cfg OpenAIEngineConfig) *CloudOpenAIEngine {
 	}
 }
 
-// Name returns "cloud-openai".
 func (c *CloudOpenAIEngine) Name() string {
 	return "cloud-openai"
 }
 
-// chatRequest represents the OpenAI chat completions payload.
 type chatRequest struct {
 	Model          string          `json:"model"`
 	Messages       []chatMessage   `json:"messages"`
@@ -98,7 +92,6 @@ type responseFormat struct {
 	Type string `json:"type"`
 }
 
-// chatResponse represents non-streaming chat completions response.
 type chatResponse struct {
 	Choices []struct {
 		Message struct {
@@ -113,7 +106,6 @@ type chatResponse struct {
 	} `json:"error,omitempty"`
 }
 
-// chatStreamChunk represents a streaming SSE chunk.
 type chatStreamChunk struct {
 	Choices []struct {
 		Delta struct {
@@ -161,7 +153,6 @@ func (c *CloudOpenAIEngine) preparePayload(prompt string, opts GenerationOptions
 		req.Stop = opts.StopSequences
 	}
 
-	// If a grammar or schema constraint is given, request json_object mode
 	if opts.Grammar != "" {
 		req.ResponseFormat = &responseFormat{Type: "json_object"}
 	}
@@ -169,7 +160,6 @@ func (c *CloudOpenAIEngine) preparePayload(prompt string, opts GenerationOptions
 	return req
 }
 
-// Generate issues a synchronous non-streaming chat completions request.
 func (c *CloudOpenAIEngine) Generate(ctx context.Context, prompt string, opts GenerationOptions) (string, error) {
 	reqBody := c.preparePayload(prompt, opts, false)
 	jsonBytes, err := json.Marshal(reqBody)
@@ -219,7 +209,6 @@ func (c *CloudOpenAIEngine) Generate(ctx context.Context, prompt string, opts Ge
 	return chatResp.Choices[0].Message.Content, nil
 }
 
-// Stream issues an SSE streaming chat completions request, delivering tokens via onToken.
 func (c *CloudOpenAIEngine) Stream(ctx context.Context, prompt string, opts GenerationOptions, onToken func(token string) bool) error {
 	reqBody := c.preparePayload(prompt, opts, true)
 	jsonBytes, err := json.Marshal(reqBody)
@@ -260,7 +249,7 @@ func (c *CloudOpenAIEngine) Stream(ctx context.Context, prompt string, opts Gene
 
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, ":") {
-			continue // comment or keep-alive line
+			continue
 		}
 
 		if !strings.HasPrefix(line, "data: ") {
@@ -274,7 +263,6 @@ func (c *CloudOpenAIEngine) Stream(ctx context.Context, prompt string, opts Gene
 
 		var chunk chatStreamChunk
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			// Skip unrecognized chunks or logging
 			continue
 		}
 
@@ -285,7 +273,6 @@ func (c *CloudOpenAIEngine) Stream(ctx context.Context, prompt string, opts Gene
 		for _, choice := range chunk.Choices {
 			if choice.Delta.Content != "" {
 				if !onToken(choice.Delta.Content) {
-					// Client consumer requested early stop
 					return nil
 				}
 			}
@@ -299,7 +286,6 @@ func (c *CloudOpenAIEngine) Stream(ctx context.Context, prompt string, opts Gene
 	return nil
 }
 
-// Close releases any idle HTTP transport connections.
 func (c *CloudOpenAIEngine) Close() error {
 	if tr, ok := c.client.Transport.(*http.Transport); ok {
 		tr.CloseIdleConnections()

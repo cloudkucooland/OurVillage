@@ -42,7 +42,7 @@ func TestContextManager_PromptAssembly(t *testing.T) {
 		},
 	}
 
-	prompt := cm.BuildPrompt(peerMemories)
+	prompt := cm.BuildPrompt(peerMemories, nil)
 
 	// Verify profile section
 	if !strings.Contains(prompt, "=== YOUR PROFILE ===") {
@@ -180,7 +180,7 @@ func TestContextManager_StateSync(t *testing.T) {
 		t.Errorf("expected The Town Mill, got %s", cm.LocationName())
 	}
 
-	prompt := cm.BuildPrompt(nil)
+	prompt := cm.BuildPrompt(nil, nil)
 	if !strings.Contains(prompt, "Gold: 50 | Inventory: 3x Bag of Flour") {
 		t.Errorf("expected updated gold and inventory in prompt, got:\n%s", prompt)
 	}

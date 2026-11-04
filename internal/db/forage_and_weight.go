@@ -393,12 +393,12 @@ func UnequipContainer(db *sql.DB, characterID string) error {
 	return nil
 }
 
-// GetSkill retrieves current skill level and experience points.
-func GetSkill(db *sql.DB, characterID, skillID string) (int, int, error) {
+// GetSkill retrieves current skill level and experience points over any Queryable (*sql.DB or *sql.Tx).
+func GetSkill(q Queryable, characterID, skillID string) (int, int, error) {
 	var level, exp int
-	err := db.QueryRow("SELECT level, experience FROM character_skills WHERE character_id = ? AND skill_id = ?", characterID, skillID).Scan(&level, &exp)
+	err := q.QueryRow("SELECT level, experience FROM character_skills WHERE character_id = ? AND skill_id = ?", characterID, skillID).Scan(&level, &exp)
 	if err == sql.ErrNoRows {
-		_, _ = db.Exec("INSERT INTO character_skills (character_id, skill_id, level, experience) VALUES (?, ?, 1, 0)", characterID, skillID)
+		_, _ = execQueryable(q, "INSERT INTO character_skills (character_id, skill_id, level, experience) VALUES (?, ?, 1, 0)", characterID, skillID)
 		return 1, 0, nil
 	} else if err != nil {
 		return 1, 0, fmt.Errorf("failed to query character skill: %w", err)
@@ -406,9 +406,9 @@ func GetSkill(db *sql.DB, characterID, skillID string) (int, int, error) {
 	return level, exp, nil
 }
 
-// AddSkillXP awards experience to a skill and scales the level (1-100).
-func AddSkillXP(db *sql.DB, characterID, skillID string, xpGained int) (int, int, error) {
-	currLevel, currExp, err := GetSkill(db, characterID, skillID)
+// AddSkillXP awards experience to a skill and scales the level (1-100) over any Queryable (*sql.DB or *sql.Tx).
+func AddSkillXP(q Queryable, characterID, skillID string, xpGained int) (int, int, error) {
+	currLevel, currExp, err := GetSkill(q, characterID, skillID)
 	if err != nil {
 		return 1, 0, err
 	}
@@ -422,7 +422,7 @@ func AddSkillXP(db *sql.DB, characterID, skillID string, xpGained int) (int, int
 		newLevel = currLevel
 	}
 
-	_, err = db.Exec(`
+	_, err = execQueryable(q, `
 		INSERT INTO character_skills (character_id, skill_id, level, experience)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT(character_id, skill_id) DO UPDATE SET
@@ -495,9 +495,9 @@ func GetWeatherMultiplier(resourceID string, weather string) float64 {
 	}
 }
 
-// DepleteLocationResource decrements available stock down to 0.
-func DepleteLocationResource(db *sql.DB, locationID, resourceID string, amount int) error {
-	_, err := db.Exec("UPDATE location_resources SET current_stock = MAX(0, current_stock - ?) WHERE location_id = ? AND resource_id = ?", amount, locationID, resourceID)
+// DepleteLocationResource decrements available stock down to 0 within any Queryable.
+func DepleteLocationResource(q Queryable, locationID, resourceID string, amount int) error {
+	_, err := execQueryable(q, "UPDATE location_resources SET current_stock = MAX(0, current_stock - ?) WHERE location_id = ? AND resource_id = ?", amount, locationID, resourceID)
 	return err
 }
 
@@ -559,7 +559,7 @@ func ReplenishLocationResources(db *sql.DB, weather string) error {
 	return nil
 }
 
-// ResolveForaging evaluates duration foraging formulas, ecological stock, drops, skill XP, and narrative output.
+// ResolveForaging evaluates duration foraging formulas, ecological stock, drops, skill XP, and narrative output within a transaction.
 func ResolveForaging(
 	db *sql.DB,
 	characterID string,
@@ -573,14 +573,20 @@ func ResolveForaging(
 		ticksSpent = 0
 	}
 
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("failed to start foraging transaction: %w", err)
+	}
+	defer tx.Rollback()
+
 	skillID := GetSkillForResource(targetResource)
-	skillLevel, _, err := GetSkill(db, characterID, skillID)
+	skillLevel, _, err := GetSkill(tx, characterID, skillID)
 	if err != nil {
 		skillLevel = 1
 	}
 
 	var currentStock, maxStock int
-	err = db.QueryRow("SELECT current_stock, max_stock FROM location_resources WHERE location_id = ? AND resource_id = ?", locationID, targetResource).Scan(&currentStock, &maxStock)
+	err = tx.QueryRow("SELECT current_stock, max_stock FROM location_resources WHERE location_id = ? AND resource_id = ?", locationID, targetResource).Scan(&currentStock, &maxStock)
 	stockDepletionMult := 1.0
 	if err == nil {
 		if currentStock <= 0 {
@@ -606,14 +612,14 @@ func ResolveForaging(
 	}
 
 	if primaryQty > 0 {
-		_ = DepleteLocationResource(db, locationID, targetResource, primaryQty)
+		_ = DepleteLocationResource(tx, locationID, targetResource, primaryQty)
 	}
 
 	var yieldItems []ForageYieldItem
 
 	var primaryWeight float64
 	var primaryName string
-	err = db.QueryRow("SELECT name, weight_kg FROM items WHERE id = ?", targetResource).Scan(&primaryName, &primaryWeight)
+	err = tx.QueryRow("SELECT name, weight_kg FROM items WHERE id = ?", targetResource).Scan(&primaryName, &primaryWeight)
 	if err != nil {
 		primaryName = targetResource
 		primaryWeight = 1.0
@@ -637,7 +643,7 @@ func ResolveForaging(
 			if rand.Float64() < chance {
 				var secWeight float64
 				var secName string
-				err := db.QueryRow("SELECT name, weight_kg FROM items WHERE id = ?", rule.SecondaryItemID).Scan(&secName, &secWeight)
+				err := tx.QueryRow("SELECT name, weight_kg FROM items WHERE id = ?", rule.SecondaryItemID).Scan(&secName, &secWeight)
 				if err != nil {
 					secName = rule.SecondaryItemID
 					secWeight = 0.2
@@ -657,9 +663,9 @@ func ResolveForaging(
 	if xpGained < 1 && ticksSpent > 0 {
 		xpGained = 1
 	}
-	newSkillLevel, _, _ := AddSkillXP(db, characterID, skillID, xpGained)
+	newSkillLevel, _, _ := AddSkillXP(tx, characterID, skillID, xpGained)
 
-	initialWeightInfo, _ := GetCharacterWeightInfo(db, characterID)
+	initialWeightInfo, _ := GetCharacterWeightInfo(tx, characterID)
 	baseEnergy := (float64(ticksSpent) / 60.0) * (10.0 - (float64(skillLevel) * 0.05))
 	if initialWeightInfo != nil && initialWeightInfo.Encumbrance == EncumbranceEncumbered {
 		baseEnergy *= 2.0
@@ -673,10 +679,10 @@ func ResolveForaging(
 		hungerDeducted = 1
 	}
 
-	_, _ = db.Exec("UPDATE characters SET energy = MAX(0, energy - ?), hunger = MAX(0, hunger - ?) WHERE id = ?", energyDeducted, hungerDeducted, characterID)
+	_, _ = tx.Exec("UPDATE characters SET energy = MAX(0, energy - ?), hunger = MAX(0, hunger - ?) WHERE id = ?", energyDeducted, hungerDeducted, characterID)
 
 	for _, item := range yieldItems {
-		wInfo, _ := GetCharacterWeightInfo(db, characterID)
+		wInfo, _ := GetCharacterWeightInfo(tx, characterID)
 		addedWeight := float64(item.Quantity) * item.WeightKg
 
 		canCarry := true
@@ -685,20 +691,20 @@ func ResolveForaging(
 				canCarry = false
 			}
 			var existingQty int
-			err := db.QueryRow("SELECT quantity FROM inventories WHERE character_id = ? AND item_id = ?", characterID, item.ItemID).Scan(&existingQty)
+			err := tx.QueryRow("SELECT quantity FROM inventories WHERE character_id = ? AND item_id = ?", characterID, item.ItemID).Scan(&existingQty)
 			if (err == sql.ErrNoRows || existingQty == 0) && wInfo.SlotsUsed >= wInfo.MaxSlots {
 				canCarry = false
 			}
 		}
 
 		if canCarry {
-			_, _ = db.Exec(`
+			_, _ = tx.Exec(`
 				INSERT INTO inventories (character_id, item_id, quantity)
 				VALUES (?, ?, ?)
 				ON CONFLICT(character_id, item_id) DO UPDATE SET quantity = quantity + ?
 			`, characterID, item.ItemID, item.Quantity, item.Quantity)
 		} else {
-			_, _ = db.Exec(`
+			_, _ = tx.Exec(`
 				INSERT INTO location_items (location_id, item_id, quantity, dropped_by, dropped_at)
 				VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
 				ON CONFLICT(location_id, item_id) DO UPDATE SET quantity = quantity + ?
@@ -706,7 +712,7 @@ func ResolveForaging(
 		}
 	}
 
-	finalWeightInfo, _ := GetCharacterWeightInfo(db, characterID)
+	finalWeightInfo, _ := GetCharacterWeightInfo(tx, characterID)
 	finalWeight := 0.0
 	maxCap := BaseUnassistedCapacityKg
 	if finalWeightInfo != nil {
@@ -715,7 +721,7 @@ func ResolveForaging(
 	}
 
 	var locName string
-	err = db.QueryRow("SELECT name FROM locations WHERE id = ?", locationID).Scan(&locName)
+	err = tx.QueryRow("SELECT name FROM locations WHERE id = ?", locationID).Scan(&locName)
 	if err != nil {
 		locName = locationID
 	}
@@ -750,11 +756,15 @@ func ResolveForaging(
 
 	narrativeLog := strings.Join(narrativeParts, " ")
 
-	_, _ = db.Exec(`
+	_, _ = tx.Exec(`
 		UPDATE characters 
 		SET status = 'IDLE', action_end_tick = 0, action_start_tick = 0, action_target = '', action_intent_id = '' 
 		WHERE id = ?
 	`, characterID)
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit foraging transaction: %w", err)
+	}
 
 	return &ForageResolutionResult{
 		TicksSpent:      ticksSpent,

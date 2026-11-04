@@ -11,7 +11,6 @@ import (
 	"agentmud/internal/client/model"
 )
 
-// EventRecord represents a raw unreflected client event.
 type EventRecord struct {
 	ID         int64
 	Tick       uint64
@@ -20,7 +19,6 @@ type EventRecord struct {
 	RawPayload string
 }
 
-// ReflectionSynthesizer periodically summarizes raw client events into subjective LLM reflections.
 type ReflectionSynthesizer struct {
 	store    *ClientMemoryStore
 	engine   model.InferenceEngine
@@ -28,10 +26,9 @@ type ReflectionSynthesizer struct {
 	agentID  string
 }
 
-// NewReflectionSynthesizer initializes the synthesizer background worker.
 func NewReflectionSynthesizer(store *ClientMemoryStore, engine model.InferenceEngine, agentID string, interval time.Duration) *ReflectionSynthesizer {
 	if interval <= 0 {
-		interval = 30 * time.Second
+		interval = 2 * time.Minute
 	}
 	return &ReflectionSynthesizer{
 		store:    store,
@@ -41,38 +38,71 @@ func NewReflectionSynthesizer(store *ClientMemoryStore, engine model.InferenceEn
 	}
 }
 
-// Start runs the synthesis loop in a background goroutine until ctx is cancelled.
 func (s *ReflectionSynthesizer) Start(ctx context.Context) {
 	go func() {
-		ticker := time.NewTicker(s.interval)
-		defer ticker.Stop()
+		currentInterval := s.interval
+		if currentInterval < 2*time.Minute {
+			currentInterval = 2 * time.Minute
+		}
 
-		log.Printf("[Synthesizer] Background reflection engine started (interval: %v)", s.interval)
+		log.Printf("[Synthesizer] Background reflection engine started (initial interval: %v)", currentInterval)
 
 		for {
 			select {
 			case <-ctx.Done():
 				log.Println("[Synthesizer] Stopping background reflection engine...")
 				return
-			case <-ticker.C:
-				if err := s.SynthesizeNextBatch(ctx); err != nil {
+			case <-time.After(currentInterval):
+				startTime := time.Now()
+				err := s.SynthesizeNextBatch(ctx)
+				duration := time.Since(startTime)
+
+				if err != nil {
 					log.Printf("[Synthesizer Warning] Batch synthesis failed: %v", err)
+					errStr := err.Error()
+					if strings.Contains(errStr, "429") || strings.Contains(errStr, "RESOURCE_EXHAUSTED") || strings.Contains(errStr, "quota") {
+						currentInterval = currentInterval * 2
+						if currentInterval > 30*time.Minute {
+							currentInterval = 30 * time.Minute
+						}
+						log.Printf("[Synthesizer] Rate limit hit (429/Quota). Backing off interval to %v", currentInterval)
+					} else {
+						currentInterval = time.Duration(float64(currentInterval) * 1.5)
+						if currentInterval > 10*time.Minute {
+							currentInterval = 10 * time.Minute
+						}
+					}
+				} else {
+					if duration > 0 {
+						adaptiveInterval := duration * 4
+						if adaptiveInterval < 2*time.Minute {
+							adaptiveInterval = 2 * time.Minute
+						}
+						if adaptiveInterval > 20*time.Minute {
+							adaptiveInterval = 20 * time.Minute
+						}
+						currentInterval = adaptiveInterval
+					} else {
+						if currentInterval < 5*time.Minute {
+							currentInterval = 5 * time.Minute
+						}
+					}
 				}
 			}
 		}
 	}()
 }
 
-// SynthesizeNextBatch processes recent events and generates reflection notes via the InferenceEngine.
 func (s *ReflectionSynthesizer) SynthesizeNextBatch(ctx context.Context) error {
 	events, err := s.store.GetUnreflectedEvents(10)
 	if err != nil || len(events) == 0 {
 		return err
 	}
 
-	// Group events by peer
 	eventsByPeer := make(map[string][]EventRecord)
 	var maxID int64
+	var latestTick uint64
+
 	for _, ev := range events {
 		if ev.PeerID != "" && ev.PeerID != "SERVER" && ev.PeerID != s.agentID {
 			eventsByPeer[ev.PeerID] = append(eventsByPeer[ev.PeerID], ev)
@@ -80,12 +110,18 @@ func (s *ReflectionSynthesizer) SynthesizeNextBatch(ctx context.Context) error {
 		if ev.ID > maxID {
 			maxID = ev.ID
 		}
+		if ev.Tick > latestTick {
+			latestTick = ev.Tick
+		}
 	}
 
+	var batchErr error
+
+	// Synthesize peer reflections
 	for peerID, peerEvents := range eventsByPeer {
 		prompt := s.buildReflectionPrompt(peerID, peerEvents)
 
-		genCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		genCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		respText, err := s.engine.Generate(genCtx, prompt, model.GenerationOptions{
 			Temperature: 0.5,
 			MaxTokens:   150,
@@ -94,31 +130,45 @@ func (s *ReflectionSynthesizer) SynthesizeNextBatch(ctx context.Context) error {
 
 		if err != nil {
 			log.Printf("[Synthesizer] Failed to generate reflection for peer %s: %v", peerID, err)
+			batchErr = err
 			continue
 		}
 
 		reflectionText, salience := parseReflectionResponse(respText)
 		if reflectionText != "" {
-			latestTick := peerEvents[len(peerEvents)-1].Tick
-			err := s.store.AddReflection(peerID, latestTick, salience, reflectionText)
-			if err != nil {
+			tick := peerEvents[len(peerEvents)-1].Tick
+			if err := s.store.AddReflection(peerID, tick, salience, reflectionText); err != nil {
 				log.Printf("[Synthesizer Error] Failed to store reflection for %s: %v", peerID, err)
 			} else {
 				log.Printf("[Synthesizer] Reflected on %s (Salience: %d): %s", peerID, salience, reflectionText)
 			}
-			// Periodically synthesize self-identity and self-reflections
-			_ = s.SynthesizeSelfIdentity(ctx, latestTick)
+		}
+	}
+
+	// Run self-identity reflection once per batch if relevant events occurred
+	if len(eventsByPeer) > 0 {
+		if err := s.SynthesizeSelfIdentity(ctx, latestTick); err != nil {
+			log.Printf("[Synthesizer] Failed to generate self-identity update: %v", err)
+			if batchErr == nil {
+				batchErr = err
+			}
+		}
+	}
+
+	if batchErr != nil {
+		errStr := batchErr.Error()
+		if strings.Contains(errStr, "429") || strings.Contains(errStr, "RESOURCE_EXHAUSTED") || strings.Contains(errStr, "quota") {
+			return batchErr
 		}
 	}
 
 	return s.store.MarkEventsReflectedUpTo(maxID)
 }
 
-// SynthesizeSelfIdentity prompts the local LLM to evolve character identity and self-reflections.
 func (s *ReflectionSynthesizer) SynthesizeSelfIdentity(ctx context.Context, tick uint64) error {
 	prompt := s.buildSelfIdentityPrompt()
 
-	genCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	genCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	respText, err := s.engine.Generate(genCtx, prompt, model.GenerationOptions{
 		Temperature: 0.6,
 		MaxTokens:   200,

@@ -57,6 +57,12 @@ type BuyPayload struct {
 	Quantity int    `json:"quantity"`
 }
 
+type RestockPayload struct {
+	ItemID    string `json:"item_id"`
+	Quantity  int    `json:"quantity"`
+	PriceGold int    `json:"price_gold"`
+}
+
 type DirectResponse struct {
 	IntentID  string `json:"intent_id"`
 	Status    string `json:"status"`
@@ -65,7 +71,6 @@ type DirectResponse struct {
 }
 
 func (s *Server) SetupIntentHandlers() error {
-	// Subscribe to all agent intent topics: world/agents/{agent_id}/intent
 	err := s.mqttServer.Subscribe("world/agents/+/intent", 0, func(cl *mqtt.Client, sub packets.Subscription, pk packets.Packet) {
 		topic := pk.TopicName
 		parts := strings.Split(topic, "/")
@@ -107,6 +112,8 @@ func (s *Server) SetupIntentHandlers() error {
 			s.handleCraft(agentID, intent.IntentID, intent.Payload)
 		case "BUY":
 			s.handleBuy(agentID, intent.IntentID, intent.Payload)
+		case "RESTOCK":
+			s.handleRestock(agentID, intent.IntentID, intent.Payload)
 		case "LOOK", "STATUS":
 			s.handleLook(agentID, intent.IntentID)
 		default:
@@ -129,7 +136,6 @@ func (s *Server) handleMove(agentID string, intentID string, rawPayload json.Raw
 		return
 	}
 
-	// 1. Verify target location exists
 	var locName string
 	err := s.db.QueryRow("SELECT name FROM locations WHERE id = ?", payload.TargetLocation).Scan(&locName)
 	if err == sql.ErrNoRows {
@@ -140,7 +146,6 @@ func (s *Server) handleMove(agentID string, intentID string, rawPayload json.Raw
 		return
 	}
 
-	// 2. Concurrency Protection (RFC 007 Section 6: Action Locks)
 	var currentLocation, status string
 	err = s.db.QueryRow("SELECT current_location, status FROM characters WHERE id = ?", agentID).Scan(&currentLocation, &status)
 	if err != nil {
@@ -154,11 +159,10 @@ func (s *Server) handleMove(agentID string, intentID string, rawPayload json.Raw
 	}
 
 	if currentLocation == payload.TargetLocation {
-		s.sendDirectResponse(agentID, intentID, "SUCCESS", "Already at target location")
+		s.handleLook(agentID, intentID, "Already at target location")
 		return
 	}
 
-	// 3. Encumbrance & Overburdened Check (RFC 007 Section 2)
 	wInfo, err := db.GetCharacterWeightInfo(s.db, agentID)
 	if err != nil {
 		s.sendDirectError(agentID, intentID, "DB_ERROR", fmt.Sprintf("Failed to evaluate carrying weight: %v", err))
@@ -170,7 +174,6 @@ func (s *Server) handleMove(agentID string, intentID string, rawPayload json.Raw
 		return
 	}
 
-	// 4. Spatial Container & Vehicle Accessibility Check (RFC 007 Section 4)
 	canAccess, reason, err := db.CanAccessLocation(s.db, agentID, payload.TargetLocation)
 	if err != nil {
 		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
@@ -181,7 +184,6 @@ func (s *Server) handleMove(agentID string, intentID string, rawPayload json.Raw
 		return
 	}
 
-	// 4.5 Spatial Graph Reachability & Travel Ticks Check
 	canTravel, travelTicks, err := db.CanTravelLocation(s.db, currentLocation, payload.TargetLocation)
 	if err != nil {
 		s.sendDirectError(agentID, intentID, "DB_ERROR", fmt.Sprintf("Failed to evaluate travel path: %v", err))
@@ -192,13 +194,11 @@ func (s *Server) handleMove(agentID string, intentID string, rawPayload json.Raw
 		return
 	}
 
-	// 5. Energy Decay (Double decay while encumbered - RFC 007 Section 2)
 	energyCost := travelTicks
 	if wInfo.Encumbrance == db.EncumbranceEncumbered {
 		energyCost = travelTicks * 2
 	}
 
-	// 6. Update character location and energy
 	_, err = s.db.Exec("UPDATE characters SET current_location = ?, energy = MAX(0, energy - ?) WHERE id = ?", payload.TargetLocation, energyCost, agentID)
 	if err != nil {
 		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
@@ -209,7 +209,6 @@ func (s *Server) handleMove(agentID string, intentID string, rawPayload json.Raw
 		s.authHook.RecordMove(agentID, payload.TargetLocation)
 	}
 
-	// 7. Publish leave & enter events
 	leaveTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
 	enterTopic := fmt.Sprintf("world/locations/%s/system", payload.TargetLocation)
 
@@ -233,9 +232,8 @@ func (s *Server) handleTransfer(agentID string, intentID string, rawPayload json
 		return
 	}
 
-	// Concurrency check (RFC 007 Section 6)
-	var status string
-	err := s.db.QueryRow("SELECT status FROM characters WHERE id = ?", agentID).Scan(&status)
+	var status, currentLocation string
+	err := s.db.QueryRow("SELECT status, current_location FROM characters WHERE id = ?", agentID).Scan(&status, &currentLocation)
 	if err != nil {
 		s.sendDirectError(agentID, intentID, "CHARACTER_NOT_FOUND", "Character not found")
 		return
@@ -245,7 +243,6 @@ func (s *Server) handleTransfer(agentID string, intentID string, rawPayload json
 		return
 	}
 
-	// Begin transaction for safe economic transfer
 	tx, err := s.db.Begin()
 	if err != nil {
 		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
@@ -253,7 +250,6 @@ func (s *Server) handleTransfer(agentID string, intentID string, rawPayload json
 	}
 	defer tx.Rollback()
 
-	// 1. Handle Gold Transfer if amount > 0
 	if payload.Amount > 0 {
 		var senderGold int
 		err := tx.QueryRow("SELECT gold FROM characters WHERE id = ?", agentID).Scan(&senderGold)
@@ -285,7 +281,6 @@ func (s *Server) handleTransfer(agentID string, intentID string, rawPayload json
 		}
 	}
 
-	// 2. Handle Item Transfer if ItemID != "" and Quantity > 0
 	if payload.ItemID != "" && payload.Quantity > 0 {
 		var senderQty int
 		err := tx.QueryRow("SELECT quantity FROM inventories WHERE character_id = ? AND item_id = ?", agentID, payload.ItemID).Scan(&senderQty)
@@ -294,7 +289,6 @@ func (s *Server) handleTransfer(agentID string, intentID string, rawPayload json
 			return
 		}
 
-		// Recipient carrying capacity validation
 		var itemWeight float64
 		_ = tx.QueryRow("SELECT weight_kg FROM items WHERE id = ?", payload.ItemID).Scan(&itemWeight)
 
@@ -313,14 +307,16 @@ func (s *Server) handleTransfer(agentID string, intentID string, rawPayload json
 			}
 		}
 
-		// Deduct from sender
-		_, err = tx.Exec("UPDATE inventories SET quantity = quantity - ? WHERE character_id = ? AND item_id = ?", payload.Quantity, agentID, payload.ItemID)
+		if senderQty == payload.Quantity {
+			_, err = tx.Exec("DELETE FROM inventories WHERE character_id = ? AND item_id = ?", agentID, payload.ItemID)
+		} else {
+			_, err = tx.Exec("UPDATE inventories SET quantity = quantity - ? WHERE character_id = ? AND item_id = ?", payload.Quantity, agentID, payload.ItemID)
+		}
 		if err != nil {
 			s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
 			return
 		}
 
-		// Add to recipient
 		_, err = tx.Exec(`
 			INSERT INTO inventories (character_id, item_id, quantity) VALUES (?, ?, ?)
 			ON CONFLICT(character_id, item_id) DO UPDATE SET quantity = quantity + ?
@@ -336,20 +332,19 @@ func (s *Server) handleTransfer(agentID string, intentID string, rawPayload json
 		return
 	}
 
-	// 3. Record objective event log for audit trail (RFC 013)
 	currentTick := s.GetTickCount()
-	eventPayload, _ := json.Marshal(map[string]interface{}{
+	eventPayload := map[string]interface{}{
 		"sender_id":    agentID,
 		"recipient_id": payload.RecipientID,
 		"amount":       payload.Amount,
 		"item_id":      payload.ItemID,
 		"quantity":     payload.Quantity,
-	})
-	if _, err := db.RecordEventLog(s.db, currentTick, agentID, payload.RecipientID, "TRANSFER", string(eventPayload), nil); err != nil {
+	}
+	if _, err := db.RecordEventLog(s.db, currentTick, "TRANSFER", agentID, payload.RecipientID, currentLocation, eventPayload); err != nil {
 		log.Printf("[Server Warning] Failed to record event log: %v", err)
 	}
 
-	s.sendDirectResponse(agentID, intentID, "SUCCESS", "Transfer completed successfully")
+	s.handleLook(agentID, intentID, "Transfer completed successfully")
 }
 
 func (s *Server) handleChat(agentID string, intentID string, rawPayload json.RawMessage) {
@@ -395,7 +390,6 @@ func (s *Server) handleForage(agentID string, intentID string, rawPayload json.R
 		payload.DurationTicks = 60
 	}
 
-	// 1. Check character status and location
 	var status, currentLocation string
 	var energy, hunger int
 	err := s.db.QueryRow("SELECT status, current_location, energy, hunger FROM characters WHERE id = ?", agentID).Scan(&status, &currentLocation, &energy, &hunger)
@@ -414,14 +408,12 @@ func (s *Server) handleForage(agentID string, intentID string, rawPayload json.R
 		return
 	}
 
-	// 2. Check Overburden state
 	wInfo, err := db.GetCharacterWeightInfo(s.db, agentID)
 	if err == nil && wInfo != nil && wInfo.Encumbrance == db.EncumbranceOverburdened {
 		s.sendDirectError(agentID, intentID, "OVERBURDENED", "Character is overburdened and cannot forage. Relieve excess weight first.")
 		return
 	}
 
-	// 3. Verify valid foraging location and resource pool
 	var resCount int
 	err = s.db.QueryRow("SELECT COUNT(*) FROM location_resources WHERE location_id = ? AND resource_id = ?", currentLocation, payload.TargetResource).Scan(&resCount)
 	if err != nil || resCount == 0 {
@@ -429,7 +421,6 @@ func (s *Server) handleForage(agentID string, intentID string, rawPayload json.R
 		return
 	}
 
-	// 4. Action Lock: Set character status to FORAGING (RFC 007 Section 6)
 	currentTick := s.GetTickCount()
 	endTick := currentTick + uint64(payload.DurationTicks)
 
@@ -443,7 +434,6 @@ func (s *Server) handleForage(agentID string, intentID string, rawPayload json.R
 		return
 	}
 
-	// 5. Broadcast foraging commencement to location
 	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
 	_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s has started foraging for %s (%d ticks).", agentID, payload.TargetResource, payload.DurationTicks)), false, 0)
 
@@ -480,11 +470,9 @@ func (s *Server) handleCancelAction(agentID string, intentID string, rawPayload 
 			return
 		}
 
-		// Broadcast room cancellation event
 		sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
 		_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s stopped foraging early.", agentID)), false, 0)
 
-		// Direct response matching RFC 007 Section 10.5
 		respMap := map[string]interface{}{
 			"intent_id":       intentID,
 			"status":          "SUCCESS",
@@ -509,15 +497,13 @@ func (s *Server) handleCancelAction(agentID string, intentID string, rawPayload 
 			return
 		}
 
-		// Broadcast room cancellation event
 		sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
 		_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s stopped crafting.", agentID)), false, 0)
 
-		s.sendDirectResponse(agentID, intentID, "SUCCESS", "Crafting action cancelled; ingredients refunded.")
+		s.handleLook(agentID, intentID, "Crafting action cancelled; ingredients refunded.")
 	} else {
-		// Generic cancel for other actions
 		_, _ = s.db.Exec("UPDATE characters SET status = 'IDLE', action_end_tick = 0, action_start_tick = 0 WHERE id = ?", agentID)
-		s.sendDirectResponse(agentID, intentID, "SUCCESS", "Action cancelled")
+		s.handleLook(agentID, intentID, "Action cancelled")
 	}
 }
 
@@ -551,11 +537,10 @@ func (s *Server) handleDrop(agentID string, intentID string, rawPayload json.Raw
 		itemName = payload.ItemID
 	}
 
-	// Broadcast room system message (RFC 007 Section 3)
 	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
 	_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s dropped %d %s on the ground.", agentID, payload.Quantity, itemName)), false, 0)
 
-	s.sendDirectResponse(agentID, intentID, "SUCCESS", fmt.Sprintf("Dropped %d %s", payload.Quantity, itemName))
+	s.handleLook(agentID, intentID, fmt.Sprintf("Dropped %d %s", payload.Quantity, itemName))
 }
 
 func (s *Server) handlePickup(agentID string, intentID string, rawPayload json.RawMessage) {
@@ -594,11 +579,10 @@ func (s *Server) handlePickup(agentID string, intentID string, rawPayload json.R
 		itemName = payload.ItemID
 	}
 
-	// Broadcast room system message (RFC 007 Section 3)
 	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
 	_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s picked up %d %s from the ground.", agentID, payload.Quantity, itemName)), false, 0)
 
-	s.sendDirectResponse(agentID, intentID, "SUCCESS", fmt.Sprintf("Picked up %d %s", payload.Quantity, itemName))
+	s.handleLook(agentID, intentID, fmt.Sprintf("Picked up %d %s", payload.Quantity, itemName))
 }
 
 func (s *Server) handleEquip(agentID string, intentID string, rawPayload json.RawMessage) {
@@ -625,7 +609,7 @@ func (s *Server) handleEquip(agentID string, intentID string, rawPayload json.Ra
 		return
 	}
 
-	s.sendDirectResponse(agentID, intentID, "SUCCESS", fmt.Sprintf("Equipped %s", payload.ItemID))
+	s.handleLook(agentID, intentID, fmt.Sprintf("Equipped %s", payload.ItemID))
 }
 
 func (s *Server) handleUnequip(agentID string, intentID string, rawPayload json.RawMessage) {
@@ -646,7 +630,7 @@ func (s *Server) handleUnequip(agentID string, intentID string, rawPayload json.
 		return
 	}
 
-	s.sendDirectResponse(agentID, intentID, "SUCCESS", "Unequipped container")
+	s.handleLook(agentID, intentID, "Unequipped container")
 }
 
 func (s *Server) handleBuy(agentID string, intentID string, rawPayload json.RawMessage) {
@@ -656,7 +640,16 @@ func (s *Server) handleBuy(agentID string, intentID string, rawPayload json.RawM
 		return
 	}
 
-	err := db.BuyItem(s.db, agentID, payload.ItemID, payload.Quantity)
+	// 1. Fetch current location before completing the transaction
+	var currentLocation string
+	err := s.db.QueryRow("SELECT current_location FROM characters WHERE id = ?", agentID).Scan(&currentLocation)
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "CHARACTER_NOT_FOUND", "Character not found")
+		return
+	}
+
+	// 2. Perform the database transaction for item purchase
+	err = db.BuyItem(s.db, agentID, payload.ItemID, payload.Quantity)
 	if err != nil {
 		errStr := err.Error()
 		code := "BUY_FAILED"
@@ -676,9 +669,14 @@ func (s *Server) handleBuy(agentID string, intentID string, rawPayload json.RawM
 	}
 
 	eventPayload, _ := json.Marshal(payload)
-	_, _ = db.RecordEventLog(s.db, 0, agentID, "", "BUY", string(eventPayload), nil)
+	_, _ = db.RecordEventLog(s.db, s.GetTickCount(), "BUY", agentID, "", currentLocation, eventPayload)
 
-	s.sendDirectResponse(agentID, intentID, "SUCCESS", fmt.Sprintf("Successfully purchased %d x %s", payload.Quantity, payload.ItemID))
+	// 3. Notify the location owner (if present)
+	s.notifyLocationOwnerOfPurchase(currentLocation, agentID, payload.ItemID, payload.Quantity)
+
+	// 4. Send updated STATE_SYNC response to buyer
+	msg := fmt.Sprintf("Successfully purchased %d x %s", payload.Quantity, payload.ItemID)
+	s.handleLook(agentID, intentID, msg)
 }
 
 func (s *Server) handleCraft(agentID string, intentID string, rawPayload json.RawMessage) {
@@ -693,7 +691,6 @@ func (s *Server) handleCraft(agentID string, intentID string, rawPayload json.Ra
 		return
 	}
 
-	// 1. Concurrency Check
 	var status, currentLocation string
 	err := s.db.QueryRow("SELECT status, current_location FROM characters WHERE id = ?", agentID).Scan(&status, &currentLocation)
 	if err != nil {
@@ -705,14 +702,12 @@ func (s *Server) handleCraft(agentID string, intentID string, rawPayload json.Ra
 		return
 	}
 
-	// 2. Fetch Recipe
 	recipe, err := db.GetRecipe(s.db, payload.RecipeID)
 	if err != nil {
 		s.sendDirectError(agentID, intentID, "RECIPE_NOT_FOUND", err.Error())
 		return
 	}
 
-	// 3. Start Crafting
 	currentTick := s.GetTickCount()
 	err = db.StartCrafting(s.db, agentID, payload.RecipeID, intentID, currentTick)
 	if err != nil {
@@ -720,7 +715,6 @@ func (s *Server) handleCraft(agentID string, intentID string, rawPayload json.Ra
 		return
 	}
 
-	// 4. Broadcast room announcement
 	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
 	_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s has started crafting %s (%d ticks).", agentID, recipe.Name, recipe.DurationTicks)), false, 0)
 
@@ -757,11 +751,10 @@ func (s *Server) handleLook(agentID string, intentID string, customMsg ...string
 		return
 	}
 
-	// Fetch public appearance summaries of all other characters present in the room
 	rows, err := s.db.Query(`
-        SELECT id FROM characters 
-        WHERE current_location = ? AND id != ? AND is_online = 1
-    `, perception.Location.ID, agentID)
+		SELECT id FROM characters 
+		WHERE current_location = ? AND id != ? AND is_online = 1
+	`, perception.Location.ID, agentID)
 
 	var presentCharacters []db.CharacterPublicPerception
 	if err == nil {
@@ -776,14 +769,19 @@ func (s *Server) handleLook(agentID string, intentID string, customMsg ...string
 		}
 	}
 
+	msg := fmt.Sprintf("You observe %s", perception.Location.Name)
+	if len(customMsg) > 0 && customMsg[0] != "" {
+		msg = customMsg[0]
+	}
+
 	respMap := map[string]interface{}{
 		"intent_id":          intentID,
 		"status":             "SUCCESS",
 		"type":               "STATE_SYNC",
-		"message":            fmt.Sprintf("You observe %s", perception.Location.Name),
-		"private_status":     perception.Character, // Private full stats for the inspecting agent only!
+		"message":            msg,
+		"private_status":     perception.Character,
 		"location":           perception.Location,
-		"present_characters": presentCharacters, // Coarse public descriptors of others in the room
+		"present_characters": presentCharacters,
 	}
 
 	payload, err := json.Marshal(respMap)
@@ -796,33 +794,87 @@ func (s *Server) handleLook(agentID string, intentID string, customMsg ...string
 	_ = s.mqttServer.Publish(directTopic, payload, false, 0)
 }
 
-/* func (s *Server) handleLook(agentID string, intentID string, customMsg ...string) {
-	perception, err := db.GetCharacterPerception(s.db, agentID)
-	if err != nil {
-		s.sendDirectError(agentID, intentID, "PERCEPTION_ERROR", fmt.Sprintf("Failed to load perception: %v", err))
+func (s *Server) handleRestock(agentID string, intentID string, rawPayload json.RawMessage) {
+	var payload RestockPayload
+	if err := json.Unmarshal(rawPayload, &payload); err != nil || payload.ItemID == "" || payload.Quantity <= 0 {
+		s.sendDirectError(agentID, intentID, "INVALID_PAYLOAD", "Invalid or missing RESTOCK payload (item_id and positive quantity required)")
 		return
 	}
 
-	msg := fmt.Sprintf("You observe %s", perception.Location.Name)
-	if len(customMsg) > 0 && customMsg[0] != "" {
-		msg = customMsg[0]
-	}
-
-	respMap := map[string]interface{}{
-		"intent_id": intentID,
-		"status":    "SUCCESS",
-		"type":      "STATE_SYNC",
-		"message":   msg,
-		"character": perception.Character,
-		"location":  perception.Location,
-	}
-
-	payload, err := json.Marshal(respMap)
+	err := db.RestockShopItem(s.db, agentID, payload.ItemID, payload.Quantity, payload.PriceGold)
 	if err != nil {
-		s.sendDirectError(agentID, intentID, "SERIALIZATION_ERROR", err.Error())
+		errStr := err.Error()
+		code := "RESTOCK_FAILED"
+		if strings.Contains(errStr, "INSUFFICIENT_INVENTORY") {
+			code = "INSUFFICIENT_INVENTORY"
+		}
+		s.sendDirectError(agentID, intentID, code, errStr)
 		return
 	}
 
-	directTopic := fmt.Sprintf("world/agents/%s/direct", agentID)
-	_ = s.mqttServer.Publish(directTopic, payload, false, 0)
-} */
+	var currentLocation string
+	_ = s.db.QueryRow("SELECT current_location FROM characters WHERE id = ?", agentID).Scan(&currentLocation)
+
+	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
+	sysMsg := fmt.Sprintf("%s has restocked %d x %s.", agentID, payload.Quantity, payload.ItemID)
+	_ = s.mqttServer.Publish(sysTopic, []byte(sysMsg), false, 0)
+
+	eventPayload, _ := json.Marshal(payload)
+	_, _ = db.RecordEventLog(s.db, s.GetTickCount(), "RESTOCK", agentID, "", currentLocation, eventPayload)
+
+	msg := fmt.Sprintf("Successfully restocked %d x %s", payload.Quantity, payload.ItemID)
+	s.handleLook(agentID, intentID, msg)
+}
+
+func (s *Server) notifyLocationOwnerOfPurchase(locationID string, buyerID string, itemID string, quantity int) {
+	// Find the owner of the location (or shopkeeper associated with location_id)
+	var ownerID string
+	err := s.db.QueryRow(`
+		SELECT owner_character_id
+		FROM locations
+		WHERE id = ? AND owner_character_id IS NOT NULL AND owner_character_id != ''
+	`, locationID).Scan(&ownerID)
+
+	// If table uses occupation/role mapping instead of owner_character_id column:
+	if err == sql.ErrNoRows {
+		// Fallback query: look up character whose workplace matches the location
+		_ = s.db.QueryRow(`
+			SELECT id FROM characters
+			WHERE current_location = ? AND id != ? AND is_online = 1
+			LIMIT 1
+		`, locationID, buyerID).Scan(&ownerID)
+	}
+
+	if ownerID == "" || ownerID == buyerID {
+		return // No owner found or owner is the buyer
+	}
+
+	// Verify owner is currently present in the location and online
+	var isPresent int
+	_ = s.db.QueryRow(`
+		SELECT COUNT(*) FROM characters
+		WHERE id = ? AND current_location = ? AND is_online = 1
+	`, ownerID, locationID).Scan(&isPresent)
+
+	if isPresent == 0 {
+		return
+	}
+
+	// Fetch buyer's readable name
+	var buyerName string
+	_ = s.db.QueryRow("SELECT name FROM characters WHERE id = ?", buyerID).Scan(&buyerName)
+	if buyerName == "" {
+		buyerName = buyerID
+	}
+
+	// Fetch item name
+	var itemName string
+	_ = s.db.QueryRow("SELECT name FROM items WHERE id = ?", itemID).Scan(&itemName)
+	if itemName == "" {
+		itemName = itemID
+	}
+
+	// Send an instant state sync + notice message to the owner so their TUI shop revenue/gold updates
+	s.handleLook(ownerID, fmt.Sprintf("req_owner_notice_%d", s.GetTickCount()),
+		fmt.Sprintf("%s just purchased %d x %s from your shop!", buyerName, quantity, itemName))
+}

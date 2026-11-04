@@ -12,7 +12,10 @@ import (
 	"time"
 
 	"agentmud/internal/db"
+	"agentmud/internal/server/admin"
+	"agentmud/internal/server/tui"
 
+	tea "github.com/charmbracelet/bubbletea"
 	mqtt "github.com/mochi-mqtt/server/v2"
 	"github.com/mochi-mqtt/server/v2/listeners"
 )
@@ -73,6 +76,9 @@ func NewServer(database *sql.DB, listenAddr ...string) (*Server, error) {
 		weather:    "clear",
 	}
 
+	// Reset any stuck character statuses and online flags on server startup
+	_, _ = database.Exec("UPDATE characters SET status = 'IDLE', action_target = '', action_start_tick = 0, action_end_tick = 0, action_intent_id = '', is_online = 0")
+
 	if err := srv.SetupIntentHandlers(); err != nil {
 		return nil, fmt.Errorf("failed to setup intent handlers: %w", err)
 	}
@@ -97,6 +103,28 @@ func (s *Server) Start() error {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
+
+	log.Println("Shutting down AgentMUD server...")
+	return s.mqttServer.Close()
+}
+
+func (s *Server) StartTUI() error {
+	// Start MQTT server in background
+	go func() {
+		err := s.mqttServer.Serve()
+		if err != nil {
+			log.Printf("MQTT server stopped: %v", err)
+		}
+	}()
+
+	// Start Master Clock & Tick Engine
+	go s.runClock()
+
+	tuiModel := tui.NewModel(s.db, admin.NewAdminCommandExecutor(s.db, s.SetWeather), s)
+	p := tea.NewProgram(tuiModel, tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		log.Printf("[TUI Error] %v", err)
+	}
 
 	log.Println("Shutting down AgentMUD server...")
 	return s.mqttServer.Close()

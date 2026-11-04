@@ -65,3 +65,43 @@ func TestBuyItemStorefront(t *testing.T) {
 		t.Errorf("Expected OUT_OF_STOCK error, got nil")
 	}
 }
+
+func TestRestockShopItem(t *testing.T) {
+	database, err := InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to initialize in-memory DB: %v", err)
+	}
+	defer database.Close()
+
+	_, err = database.Exec("UPDATE characters SET current_location = 'tavern' WHERE id = 'eldon_millwright'")
+	if err != nil {
+		t.Fatalf("Failed to update test character: %v", err)
+	}
+
+	_, err = database.Exec("INSERT INTO inventories (character_id, item_id, quantity) VALUES ('eldon_millwright', 'bread', 5)")
+	if err != nil {
+		t.Fatalf("Failed to insert inventory: %v", err)
+	}
+
+	err = RestockShopItem(database, "eldon_millwright", "bread", 3, 2)
+	if err != nil {
+		t.Fatalf("Expected successful restock, got error: %v", err)
+	}
+
+	var invQty int
+	err = database.QueryRow("SELECT quantity FROM inventories WHERE character_id = 'eldon_millwright' AND item_id = 'bread'").Scan(&invQty)
+	if err != nil || invQty != 2 {
+		t.Errorf("Expected 2 bread remaining in inventory, got %d (err: %v)", invQty, err)
+	}
+
+	var shopStock, shopPrice int
+	err = database.QueryRow("SELECT stock_quantity, price_gold FROM location_shop_items WHERE location_id = 'tavern' AND item_id = 'bread'").Scan(&shopStock, &shopPrice)
+	if err != nil || shopStock != 3 || shopPrice != 2 {
+		t.Errorf("Expected 3 stock at price 2 in tavern, got stock %d price %d (err: %v)", shopStock, shopPrice, err)
+	}
+
+	err = RestockShopItem(database, "eldon_millwright", "bread", 10, 2)
+	if err == nil {
+		t.Errorf("Expected INSUFFICIENT_INVENTORY error, got nil")
+	}
+}
