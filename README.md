@@ -10,7 +10,7 @@ My philosophy on this is captured in the docs directory.
 
 The client/server protocol is simple MQTT.
 
-The client LLMs can be cloud based (ollama, Gemini), loaded via llama.cpp (wrapped with go-llama-pure) or RLKKM.
+The client LLMs can be cloud based (ollama, Gemini), loaded via llama.cpp (wrapped with go-llama-pure) or RKLLM on 3588-based hardware.
 
-In my experiences the cloud-based large models do well. qwen3 on RKLLM (on 3588 based hardware) does very well.
-The llama.cpp GGUF models I can run (on tiny edge hardware Raspberry Pi 5) tend to be too slow or limited for much engagement.
+In my experiences the cloud-based large models do well. qwen3-4b on RKLLM does very well even with 16k context windows.
+The llama.cpp GGUF models I can run (on tiny edge hardware Raspberry Pi 5) tend to be too slow or context limited for much engagement (4k context seems to be the maximum).
