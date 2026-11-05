@@ -2,9 +2,12 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"agentmud/internal/client/memory"
 	"agentmud/internal/client/spatial"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestTUIParamTuning(t *testing.T) {
@@ -39,5 +42,53 @@ func TestTUIParamTuning(t *testing.T) {
 	model.handleSlashCommand("/set debounce 1000")
 	if debounce != 1000 {
 		t.Errorf("expected debounce to be 1000, got %d", debounce)
+	}
+}
+
+func TestSynthesisStatusAppearsInTUI(t *testing.T) {
+	ctxMgr := spatial.NewContextManager(spatial.ContextManagerConfig{AgentID: "elda"})
+	model := NewTUIModel(context.Background(), "elda", nil, nil, ctxMgr, nil, nil, nil, nil, nil, nil)
+	statuses := make(chan string, 1)
+	statuses <- "Memory synthesis: reflecting on mira — started"
+	model.SetSynthesisStatusChannel(statuses)
+
+	updated, _ := model.Update(synthesisStatusMsg(<-statuses))
+	model = updated.(TUIModel)
+	if !strings.Contains(model.View(), "Memory synthesis: reflecting on mira") {
+		t.Fatal("TUI does not display background synthesis status")
+	}
+}
+
+func TestSelfIdentityTabLoadsAndDisplaysPersistedMemory(t *testing.T) {
+	ctxMgr := spatial.NewContextManager(spatial.ContextManagerConfig{AgentID: "elda"})
+	model := NewTUIModel(context.Background(), "elda", nil, nil, ctxMgr, nil, nil, nil, nil, nil, nil)
+	model.SetSelfIdentityProvider(func() ([]memory.IdentityTrait, []memory.SelfReflection, error) {
+		return []memory.IdentityTrait{{
+				Key: "craftsmanship", Value: "I value patient, durable work.", SalienceScore: 8, UpdatedAtTick: 41,
+			}}, []memory.SelfReflection{{
+				Tick: 42, ReflectionText: "I felt content repairing the old mill.",
+			}}, nil
+	})
+
+	var updated tea.Model
+	var cmd tea.Cmd
+	for i := 0; i < 3; i++ {
+		updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyTab})
+		model = updated.(TUIModel)
+	}
+	if model.tab != 3 {
+		t.Fatalf("tab after three switches = %d, want self identity", model.tab)
+	}
+	if cmd == nil {
+		t.Fatal("selecting Self Identity did not request persisted data")
+	}
+	loaded := cmd()
+	updated, _ = model.Update(loaded)
+	model = updated.(TUIModel)
+	view := model.View()
+	for _, expected := range []string{"Self Identity", "craftsmanship", "patient, durable work", "Tick 42", "old mill"} {
+		if !strings.Contains(view, expected) {
+			t.Errorf("Self Identity view missing %q", expected)
+		}
 	}
 }

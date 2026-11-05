@@ -3,6 +3,7 @@ package server
 import (
 	"agentmud/internal/db"
 	"testing"
+	"time"
 
 	mqtt "github.com/mochi-mqtt/server/v2"
 	"github.com/mochi-mqtt/server/v2/packets"
@@ -13,6 +14,7 @@ func TestDBAuthHook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to init in-memory db: %v", err)
 	}
+
 	defer database.Close()
 
 	hook := NewDBAuthHook(database)
@@ -83,5 +85,29 @@ func TestDBAuthHook(t *testing.T) {
 	// Can read global time
 	if !hook.OnACLCheck(client, "world/global/time", false) {
 		t.Errorf("Expected read access to world/global/time")
+	}
+}
+
+func TestRecordMovePurgesExpiredMoves(t *testing.T) {
+	hook := NewDBAuthHook(nil)
+	hook.recentMoves["expired"] = moveRecord{
+		locationID: "old_location",
+		time:       time.Now().Add(-recentMoveTTL - time.Second),
+	}
+	hook.recentMoves["recent"] = moveRecord{
+		locationID: "current_location",
+		time:       time.Now(),
+	}
+
+	hook.RecordMove("new", "new_location")
+
+	if _, ok := hook.recentMoves["expired"]; ok {
+		t.Error("expired move was not purged")
+	}
+	if _, ok := hook.recentMoves["recent"]; !ok {
+		t.Error("recent move was incorrectly purged")
+	}
+	if _, ok := hook.recentMoves["new"]; !ok {
+		t.Error("new move was not recorded")
 	}
 }

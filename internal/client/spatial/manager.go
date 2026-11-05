@@ -12,7 +12,16 @@ import (
 type PeerMemoryContext struct {
 	PeerID      string   `json:"peer_id"`
 	PeerName    string   `json:"peer_name"`
+	Summary     string   `json:"summary,omitempty"`
+	Commitments []string `json:"commitments,omitempty"`
 	Reflections []string `json:"reflections"`
+}
+
+type PersonalProjectContext struct {
+	Title      string `json:"title"`
+	Motivation string `json:"motivation"`
+	Progress   string `json:"progress"`
+	NextStep   string `json:"next_step"`
 }
 
 type LocationMemoryContext struct {
@@ -169,20 +178,46 @@ type ContextManager struct {
 	agentName          string
 	currentLocation    string
 	locationName       string
+	locationSynced     bool
+	targetDestination  string   // persistent multi-step goal destination ID
+	travelPlan         []string // sequence of location IDs for journey
 	locationRules      map[string][]string
 	gold               int
 	energy             int
 	inventory          []string
+	inventoryDetails   []SyncInventoryEntry
 	status             string
 	lastInGameTime     string
 	lastWeather        string
+	currentTick        uint64
 	relationships      map[string]*PeerMemoryContext
 	knownCharacters    map[string]string // id -> display name
 	identityTraits     map[string]string
 	selfReflections    []string
+	personalProjects   []PersonalProjectContext
 	buffer             *SensoryRingBuffer
 	onLocationChange   func(oldLoc, newLoc string)
 	onLocationObserved func(locID, locName, category, text string)
+}
+
+func (cm *ContextManager) SetTargetDestination(destID string, plan []string) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.targetDestination = destID
+	cm.travelPlan = plan
+}
+
+func (cm *ContextManager) ClearTargetDestination() {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.targetDestination = ""
+	cm.travelPlan = nil
+}
+
+func (cm *ContextManager) TargetDestination() (string, []string) {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.targetDestination, cm.travelPlan
 }
 
 func (cm *ContextManager) SetOnLocationObserved(fn func(locID, locName, category, text string)) {
@@ -196,7 +231,13 @@ func NewContextManager(cfg ContextManagerConfig) *ContextManager {
 		cfg.InitialLocation = "town_square"
 	}
 	if cfg.LocationName == "" {
-		cfg.LocationName = "Town Square"
+		words := strings.Split(cfg.InitialLocation, "_")
+		for i, w := range words {
+			if len(w) > 0 {
+				words[i] = strings.ToUpper(w[:1]) + w[1:]
+			}
+		}
+		cfg.LocationName = strings.Join(words, " ")
 	}
 	if cfg.AgentName == "" {
 		cfg.AgentName = strings.ReplaceAll(cfg.AgentID, "_", " ")
@@ -222,6 +263,9 @@ func NewContextManager(cfg ContextManagerConfig) *ContextManager {
 		cm.energy = 100
 	}
 
+	cm.locationRules["town_square"] = []string{
+		"Public gathering area.",
+	}
 	cm.locationRules["town_mill"] = []string{
 		"You must charge a fair fee (1-2 gold) for grinding wheat.",
 		"Only trade-related talk during work hours.",
@@ -229,9 +273,6 @@ func NewContextManager(cfg ContextManagerConfig) *ContextManager {
 	cm.locationRules["tavern"] = []string{
 		"No unprovoked violence; brawls result in sheriff fines.",
 		"Trade, gossip, and drinks are encouraged.",
-	}
-	cm.locationRules["town_square"] = []string{
-		"Public gathering area. Keep the peace.",
 	}
 
 	return cm
@@ -253,6 +294,12 @@ func (cm *ContextManager) LocationName() string {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 	return cm.locationName
+}
+
+func (cm *ContextManager) IsLocationSynced() bool {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.locationSynced
 }
 
 func (cm *ContextManager) SetLocation(newLoc, newLocName string) {
@@ -327,10 +374,17 @@ func (cm *ContextManager) SetSelfReflections(refs []string) {
 	cm.selfReflections = refs
 }
 
+func (cm *ContextManager) SetPersonalProjects(projects []PersonalProjectContext) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.personalProjects = append([]PersonalProjectContext(nil), projects...)
+}
+
 func (cm *ContextManager) IngestTimeTick(tick TimeTickMessage) {
 	cm.mu.Lock()
 	cm.lastInGameTime = tick.InGameTime
 	cm.lastWeather = tick.Weather
+	cm.currentTick = tick.Tick
 	timeStr := cm.lastInGameTime
 	cm.mu.Unlock()
 
@@ -396,6 +450,7 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 				cm.agentName = msg.Character.Name
 			}
 			cm.inventory = make([]string, len(msg.Character.Inventory))
+			cm.inventoryDetails = append([]SyncInventoryEntry(nil), msg.Character.Inventory...)
 			for i, item := range msg.Character.Inventory {
 				if item.Quantity > 1 {
 					cm.inventory[i] = fmt.Sprintf("%dx %s", item.Quantity, item.Name)
@@ -410,6 +465,7 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 			cm.SetLocation(msg.Location.ID, msg.Location.Name)
 
 			cm.mu.Lock()
+			cm.locationSynced = true
 			if msg.Location.RulesPrompt != "" {
 				cm.locationRules[msg.Location.ID] = []string{msg.Location.RulesPrompt}
 			}
@@ -491,40 +547,49 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 			if cm.onLocationObserved != nil {
 				locID := msg.Location.ID
 				locName := msg.Location.Name
-
-				if len(msg.Location.ShopItems) > 0 {
-					var shopStrs []string
-					for _, si := range msg.Location.ShopItems {
-						shopStrs = append(shopStrs, fmt.Sprintf("%s (%s - %d gold, stock: %d)", si.Name, si.ItemID, si.PriceGold, si.StockQty))
-					}
+				var shopStrs []string
+				for _, si := range msg.Location.ShopItems {
+					shopStrs = append(shopStrs, fmt.Sprintf("%s (%s - %d gold, stock: %d)", si.Name, si.ItemID, si.PriceGold, si.StockQty))
+				}
+				if len(shopStrs) == 0 {
+					cm.onLocationObserved(locID, locName, "shop", "No items currently listed.")
+				} else {
 					cm.onLocationObserved(locID, locName, "shop", fmt.Sprintf("Sells: %s", strings.Join(shopStrs, ", ")))
 				}
-				if len(msg.Location.ResourcePools) > 0 {
-					var resStrs []string
-					for _, rp := range msg.Location.ResourcePools {
-						resStrs = append(resStrs, fmt.Sprintf("%s (%d stock)", rp.ResourceID, rp.CurrentStock))
-					}
+				var resStrs []string
+				for _, rp := range msg.Location.ResourcePools {
+					resStrs = append(resStrs, fmt.Sprintf("%s (%d stock)", rp.ResourceID, rp.CurrentStock))
+				}
+				if len(resStrs) == 0 {
+					cm.onLocationObserved(locID, locName, "resources", "No resources currently available.")
+				} else {
 					cm.onLocationObserved(locID, locName, "resources", fmt.Sprintf("Resources: %s", strings.Join(resStrs, ", ")))
 				}
-				if len(msg.Location.Workstations) > 0 {
-					var wsStrs []string
-					for _, ws := range msg.Location.Workstations {
-						wsStrs = append(wsStrs, ws.Name)
-					}
+				var wsStrs []string
+				for _, ws := range msg.Location.Workstations {
+					wsStrs = append(wsStrs, ws.Name)
+				}
+				if len(wsStrs) == 0 {
+					cm.onLocationObserved(locID, locName, "workstations", "No workstations observed.")
+				} else {
 					cm.onLocationObserved(locID, locName, "workstations", fmt.Sprintf("Workstations: %s", strings.Join(wsStrs, ", ")))
 				}
-				if len(msg.Location.AvailableRecipes) > 0 {
-					var recStrs []string
-					for _, r := range msg.Location.AvailableRecipes {
-						recStrs = append(recStrs, fmt.Sprintf("%s (recipe_id: %s, output: %dx %s)", r.RecipeName, r.RecipeID, r.OutputQuantity, r.OutputItemID))
-					}
+				var recStrs []string
+				for _, r := range msg.Location.AvailableRecipes {
+					recStrs = append(recStrs, fmt.Sprintf("%s (recipe_id: %s, output: %dx %s)", r.RecipeName, r.RecipeID, r.OutputQuantity, r.OutputItemID))
+				}
+				if len(recStrs) == 0 {
+					cm.onLocationObserved(locID, locName, "recipes", "No recipes observed.")
+				} else {
 					cm.onLocationObserved(locID, locName, "recipes", fmt.Sprintf("Recipes: %s", strings.Join(recStrs, "; ")))
 				}
-				if len(msg.Location.ConnectedLocations) > 0 {
-					var connStrs []string
-					for _, c := range msg.Location.ConnectedLocations {
-						connStrs = append(connStrs, fmt.Sprintf("%s (%s - %d ticks)", c.LocationName, c.LocationID, c.TravelTicks))
-					}
+				var connStrs []string
+				for _, c := range msg.Location.ConnectedLocations {
+					connStrs = append(connStrs, fmt.Sprintf("%s (%s - %d ticks)", c.LocationName, c.LocationID, c.TravelTicks))
+				}
+				if len(connStrs) == 0 {
+					cm.onLocationObserved(locID, locName, "exits", "No connected locations observed.")
+				} else {
 					cm.onLocationObserved(locID, locName, "exits", fmt.Sprintf("Exits: %s", strings.Join(connStrs, "; ")))
 				}
 			}
@@ -553,11 +618,28 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 	sb.WriteString("=== YOUR PROFILE ===\n")
 	sb.WriteString(fmt.Sprintf("Name: %s\n", cm.agentName))
 	sb.WriteString(fmt.Sprintf("Current Location: %s (%s)\n", cm.locationName, cm.currentLocation))
+	if cm.targetDestination != "" {
+		planStr := ""
+		if len(cm.travelPlan) > 0 {
+			planStr = fmt.Sprintf(" | Planned Route: %s", strings.Join(cm.travelPlan, " -> "))
+		}
+		sb.WriteString(fmt.Sprintf("Active Journey Destination: %s%s\n", cm.targetDestination, planStr))
+	}
 	invStr := "Empty"
 	if len(cm.inventory) > 0 {
 		invStr = strings.Join(cm.inventory, ", ")
 	}
 	sb.WriteString(fmt.Sprintf("Gold: %d | Inventory: %s\n", cm.gold, invStr))
+	if len(cm.inventoryDetails) > 0 {
+		sb.WriteString("Inventory item IDs and exact quantities:\n")
+		for _, item := range cm.inventoryDetails {
+			name := item.Name
+			if name == "" {
+				name = item.ItemID
+			}
+			sb.WriteString(fmt.Sprintf("- item_id: %s | name: %s | quantity: %d\n", item.ItemID, name, item.Quantity))
+		}
+	}
 	sb.WriteString(fmt.Sprintf("Status: %s | Energy: %d/100\n\n", cm.status, cm.energy))
 
 	hour := 12
@@ -579,7 +661,7 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 	sb.WriteString(fmt.Sprintf("=== LOCATION RULES (%s) ===\n", cm.locationName))
 	rules := cm.locationRules[cm.currentLocation]
 	if len(rules) == 0 {
-		sb.WriteString("- Observe normal village laws. Maintain peace and fair trade.\n")
+		sb.WriteString("Follow your own curiosity.\n")
 	} else {
 		for _, rule := range rules {
 			sb.WriteString(fmt.Sprintf("- %s\n", rule))
@@ -605,11 +687,34 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 
 	if len(peerMemories) > 0 {
 		sb.WriteString("=== YOUR PRIVATE MEMORIES OF PEOPLE PRESENT ===\n")
+		sb.WriteString("These may include people you know from past encounters, whether or not they are here now.\n")
 		for _, mem := range peerMemories {
 			sb.WriteString(fmt.Sprintf("Regarding %s (%s):\n", mem.PeerName, mem.PeerID))
+			if mem.Summary != "" {
+				sb.WriteString(fmt.Sprintf("- Relationship: %s\n", mem.Summary))
+			}
+			for _, commitment := range mem.Commitments {
+				sb.WriteString(fmt.Sprintf("- Open follow-up: %s\n", commitment))
+			}
 			for _, r := range mem.Reflections {
 				sb.WriteString(fmt.Sprintf("- Memory: %s\n", r))
 			}
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(cm.personalProjects) > 0 {
+		sb.WriteString("=== YOUR OPTIONAL PERSONAL PROJECTS ===\n")
+		sb.WriteString("These are self-chosen interests, not duties; follow, pause, change, or abandon them freely.\n")
+		for _, project := range cm.personalProjects {
+			sb.WriteString(fmt.Sprintf("- %s: %s", project.Title, project.Progress))
+			if project.Motivation != "" {
+				sb.WriteString(fmt.Sprintf(" (why it matters: %s)", project.Motivation))
+			}
+			if project.NextStep != "" {
+				sb.WriteString(fmt.Sprintf(" | possible next step: %s", project.NextStep))
+			}
+			sb.WriteString("\n")
 		}
 		sb.WriteString("\n")
 	}
@@ -636,6 +741,9 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 	sb.WriteString("=== INSTRUCTION ===\n")
 	sb.WriteString("Decide your next action based purely on your personal desires, values, intrinsic motivation, memories, and immediate surroundings.\n")
 	sb.WriteString("If another character has spoken to you or addressed you in chat, prioritize responding with a CHAT action.\n")
+	sb.WriteString("MOVE RULE: When choosing MOVE, check the 'Exits / Connected Locations' list in observation logs above and specify the exact location_id (e.g., 'tavern', 'town_square', 'blacksmith') as target_location. Do not guess location IDs.\n")
+	sb.WriteString("PICKUP RULE: When choosing PICKUP, check the 'On Ground' list in observation logs above and specify the exact item_id and quantity.\n")
+	sb.WriteString("DROP RULE: DROP is always your choice, never required to make room or satisfy a suggestion. If you choose to drop something, use an exact item_id from the inventory list above and a positive quantity no greater than the quantity you currently carry. Do not guess item IDs, names, or quantities; if exact inventory details are unavailable, do not attempt DROP.\n")
 	sb.WriteString("FORAGING RULE: When choosing FORAGE, check the location observation logs above for available room resource pools (e.g., wild_grain, animal_fodder, fresh_water, clay_lumps, firewood). Always select a target_resource that is actually present at your current location. Do not default to firewood unless firewood is available in the room.\n")
 	sb.WriteString("BUY RULE: When choosing BUY, check the 'Shop Items for Sale' list in observation logs above and specify the exact item_id (e.g., roasted_mutton, ale_mug, bread) and quantity.\n")
 	sb.WriteString("CRAFT RULE: When choosing CRAFT, check the 'Crafting Recipes Available' list in observation logs above, ensure you have the required ingredients in your inventory, and specify the exact recipe_id.\n")
@@ -712,6 +820,12 @@ func (cm *ContextManager) LastWeather() string {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 	return cm.lastWeather
+}
+
+func (cm *ContextManager) CurrentTick() uint64 {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.currentTick
 }
 
 func (cm *ContextManager) Inventory() []string {

@@ -8,6 +8,8 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -113,6 +115,14 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		logPath = "agentmud-client.log"
 	}
 	if logPath != "" {
+		if strings.HasPrefix(logPath, "~/") {
+			if home, err := os.UserHomeDir(); err == nil {
+				logPath = filepath.Join(home, logPath[2:])
+			}
+		}
+		if dir := filepath.Dir(logPath); dir != "." && dir != "" {
+			_ = os.MkdirAll(dir, 0755)
+		}
 		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err == nil {
 			log.SetOutput(logFile)
@@ -153,11 +163,28 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		cfg.Client.AgentID,
 		time.Duration(cfg.Cognition.ReflectionIntervalTicks)*time.Second,
 	)
+	var synthesisStatuses chan string
+	if cfg.Client.TUI {
+		synthesisStatuses = make(chan string, 8)
+		synthesizer.SetStatusCallback(func(status string) {
+			select {
+			case synthesisStatuses <- status:
+			default:
+				log.Printf("[Synthesizer Status] %s", status)
+			}
+		})
+	} else {
+		synthesizer.SetStatusCallback(func(status string) {
+			log.Printf("[Synthesizer Status] %s", status)
+		})
+	}
 	synthesizer.Start(clientCtx)
 
 	fetchPeerMemories := func() []spatial.PeerMemoryContext {
 		traits, err := memoryStore.GetIdentityTraits()
-		if err == nil && len(traits) > 0 {
+		if err != nil {
+			log.Printf("[Memory] Failed to load identity traits: %v", err)
+		} else if len(traits) > 0 {
 			tMap := make(map[string]string)
 			for _, t := range traits {
 				tMap[t.Key] = t.Value
@@ -165,7 +192,9 @@ func RunClient(ctx context.Context, cfg *Config) error {
 			ctxMgr.SetIdentityTraits(tMap)
 		}
 		selfRefs, err := memoryStore.GetRecentSelfReflections(3)
-		if err == nil && len(selfRefs) > 0 {
+		if err != nil {
+			log.Printf("[Memory] Failed to load self-reflections: %v", err)
+		} else if len(selfRefs) > 0 {
 			var refTexts []string
 			for _, r := range selfRefs {
 				refTexts = append(refTexts, r.ReflectionText)
@@ -173,31 +202,98 @@ func RunClient(ctx context.Context, cfg *Config) error {
 			ctxMgr.SetSelfReflections(refTexts)
 		}
 
-		var peerMemories []spatial.PeerMemoryContext
-		for _, peerID := range ctxMgr.KnownCharacterIDs() {
+		projects, err := memoryStore.GetProjects(true, 10)
+		if err != nil {
+			log.Printf("[Memory] Failed to load personal projects: %v", err)
+			ctxMgr.SetPersonalProjects(nil)
+		} else {
+			projectContexts := make([]spatial.PersonalProjectContext, 0, len(projects))
+			for _, project := range projects {
+				projectContexts = append(projectContexts, spatial.PersonalProjectContext{
+					Title: project.Title, Motivation: project.Motivation,
+					Progress: project.Progress, NextStep: project.NextStep,
+				})
+			}
+			ctxMgr.SetPersonalProjects(projectContexts)
+		}
+
+		peerByID := make(map[string]*spatial.PeerMemoryContext)
+		var peerIDs []string
+		addPeer := func(peerID string) *spatial.PeerMemoryContext {
+			if peer := peerByID[peerID]; peer != nil {
+				return peer
+			}
+			peer := &spatial.PeerMemoryContext{PeerID: peerID, PeerName: ctxMgr.GetCharacterName(peerID)}
+			peerByID[peerID] = peer
+			peerIDs = append(peerIDs, peerID)
+			return peer
+		}
+		relationships, err := memoryStore.GetRecentRelationships(10)
+		if err != nil {
+			log.Printf("[Memory] Failed to load relationship summaries: %v", err)
+		} else {
+			for _, relationship := range relationships {
+				peer := addPeer(relationship.PeerID)
+				peer.Summary = relationship.Summary
+				peer.Commitments = relationship.Commitments
+			}
+		}
+		knownIDs := ctxMgr.KnownCharacterIDs()
+		sort.Strings(knownIDs)
+		for _, peerID := range knownIDs {
+			addPeer(peerID)
+		}
+		for _, peerID := range peerIDs {
+			peer := peerByID[peerID]
 			reflections, err := memoryStore.GetReflectionsForPeer(peerID, cfg.Memory.MaxReflectionsPerPeer)
-			if err == nil && len(reflections) > 0 {
+			if err != nil {
+				log.Printf("[Memory] Failed to load reflections for %s: %v", peerID, err)
+			} else if len(reflections) > 0 {
 				var texts []string
 				for _, r := range reflections {
 					texts = append(texts, r.ReflectionText)
 				}
-				peerMemories = append(peerMemories, spatial.PeerMemoryContext{
-					PeerID:      peerID,
-					PeerName:    ctxMgr.GetCharacterName(peerID),
-					Reflections: texts,
-				})
+				peer.Reflections = texts
 			}
+		}
+		peerMemories := make([]spatial.PeerMemoryContext, 0, len(peerIDs))
+		for _, peerID := range peerIDs {
+			peerMemories = append(peerMemories, *peerByID[peerID])
 		}
 		return peerMemories
 	}
 
 	ctxMgr.SetOnLocationObserved(func(locID, locName, cat, text string) {
-		_ = memoryStore.UpsertLocationMemory(locID, locName, cat, text, 0)
+		if err := memoryStore.UpsertLocationMemory(locID, locName, cat, text, ctxMgr.CurrentTick()); err != nil {
+			log.Printf("[Memory] Failed to save %s observation for %s: %v", cat, locID, err)
+		}
 	})
 
 	fetchLocationMemories := func() []spatial.LocationMemoryContext {
-		mems, err := memoryStore.GetLocationMemories()
-		if err != nil || len(mems) == 0 {
+		locationSet := map[string]struct{}{ctxMgr.CurrentLocation(): {}}
+		projects, err := memoryStore.GetProjects(true, 10)
+		if err != nil {
+			log.Printf("[Memory] Failed to load project locations: %v", err)
+		} else {
+			for _, project := range projects {
+				for _, locationID := range project.Locations {
+					locationSet[locationID] = struct{}{}
+				}
+			}
+		}
+		locationIDs := make([]string, 0, len(locationSet))
+		for locationID := range locationSet {
+			if locationID != "" {
+				locationIDs = append(locationIDs, locationID)
+			}
+		}
+		sort.Strings(locationIDs)
+		mems, err := memoryStore.GetLocationMemoriesForLocations(locationIDs, 20)
+		if err != nil {
+			log.Printf("[Memory] Failed to load location observations: %v", err)
+			return nil
+		}
+		if len(mems) == 0 {
 			return nil
 		}
 		var res []spatial.LocationMemoryContext
@@ -246,7 +342,9 @@ func RunClient(ctx context.Context, cfg *Config) error {
 			}
 			if err := json.Unmarshal(msg.Payload(), &chatPayload); err == nil && chatPayload.AgentID != "" {
 				ctxMgr.IngestChat(chatPayload.AgentID, chatPayload.Message)
-				_ = memoryStore.AddEvent(0, chatPayload.AgentID, "CHAT", string(msg.Payload()))
+				if err := memoryStore.AddEvent(ctxMgr.CurrentTick(), chatPayload.AgentID, "CHAT", string(msg.Payload())); err != nil {
+					log.Printf("[Memory] Failed to record chat event: %v", err)
+				}
 
 				if chatPayload.AgentID != cfg.Client.AgentID && engine != nil {
 					go func() {
@@ -320,7 +418,9 @@ func RunClient(ctx context.Context, cfg *Config) error {
 			}
 			if err := json.Unmarshal(msg.Payload(), &whisperPayload); err == nil && whisperPayload.AgentID != "" {
 				ctxMgr.IngestWhisper(whisperPayload.AgentID, whisperPayload.Message)
-				_ = memoryStore.AddEvent(0, whisperPayload.AgentID, "WHISPER", string(msg.Payload()))
+				if err := memoryStore.AddEvent(ctxMgr.CurrentTick(), whisperPayload.AgentID, "WHISPER", string(msg.Payload())); err != nil {
+					log.Printf("[Memory] Failed to record whisper event: %v", err)
+				}
 			} else {
 				ctxMgr.IngestWhisper("Unknown", string(msg.Payload()))
 			}
@@ -358,9 +458,13 @@ func RunClient(ctx context.Context, cfg *Config) error {
 				ctxMgr.IngestTimeTick(tick)
 			}
 
+			if !ctxMgr.IsLocationSynced() {
+				return
+			}
+
 			if cfg.Cognition.IdleThresholdTicks > 0 {
 				status := ctxMgr.Status()
-				if status == "CRAFTING" || status == "FORAGING" {
+				if status != "IDLE" {
 					idleTicks = 0
 				} else {
 					idleTicks++
@@ -439,7 +543,9 @@ func RunClient(ctx context.Context, cfg *Config) error {
 			res, matched := tracker.Resolve(msg.Payload())
 			if matched {
 				log.Printf("[Correlation] Intent %s acknowledged by server: %s in %v", res.IntentID, res.Status, res.Duration)
-				_ = memoryStore.AddEvent(0, "SERVER", "DIRECT_RESPONSE", string(msg.Payload()))
+				if err := memoryStore.AddEvent(ctxMgr.CurrentTick(), cfg.Client.AgentID, "ACTION_RESULT", string(msg.Payload())); err != nil {
+					log.Printf("[Memory] Failed to record action outcome: %v", err)
+				}
 			}
 			_ = ctxMgr.IngestDirectResponse(msg.Payload())
 		})
@@ -450,15 +556,9 @@ func RunClient(ctx context.Context, cfg *Config) error {
 			subscribeLocation(c, currentLoc)
 		}
 
-		// Dispatch initial LOOK intent to sync true character location from server
+		// Dispatch initial LOOK intent immediately to sync true character location from database
 		go func() {
-			select {
-			case <-clientCtx.Done():
-				return
-			case <-time.After(200 * time.Millisecond):
-			}
-
-			log.Printf("[Startup] Dispatching initial LOOK to query true character location...")
+			log.Printf("[Startup] Dispatching initial LOOK to query true character location from database...")
 			disp := dispatcher.NewIntentDispatcher(cfg.Client.AgentID, c, tracker)
 			lookIntent := dispatcher.Intent{
 				IntentID: fmt.Sprintf("req_startup_look_%d", time.Now().UnixNano()),
@@ -515,6 +615,18 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		debounce := &cfg.Cognition.TickIntervalDebounceMS
 
 		tuiModel := tui.NewTUIModel(clientCtx, cfg.Client.AgentID, client, tracker, ctxMgr, engine, fetchPeerMemories, chatProb, refFreq, temp, debounce)
+		tuiModel.SetSynthesisStatusChannel(synthesisStatuses)
+		tuiModel.SetSelfIdentityProvider(func() ([]memory.IdentityTrait, []memory.SelfReflection, error) {
+			traits, err := memoryStore.GetIdentityTraits()
+			if err != nil {
+				return nil, nil, fmt.Errorf("load identity traits: %w", err)
+			}
+			reflections, err := memoryStore.GetRecentSelfReflections(10)
+			if err != nil {
+				return nil, nil, fmt.Errorf("load self-reflections: %w", err)
+			}
+			return traits, reflections, nil
+		})
 		p := tea.NewProgram(tuiModel, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			log.Printf("[TUI Error] %v", err)

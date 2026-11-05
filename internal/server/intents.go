@@ -198,6 +198,42 @@ func (s *Server) handleMove(agentID string, intentID string, rawPayload json.Raw
 		return
 	}
 
+	// Check opening and closing hours (open_time, close_time)
+	var openTime, closeTime string
+	var ownerID sql.NullString
+	_ = s.db.QueryRow("SELECT open_time, close_time, owner_id FROM locations WHERE id = ?", payload.TargetLocation).Scan(&openTime, &closeTime, &ownerID)
+	if openTime != "" && closeTime != "" {
+		currentTick := s.GetTickCount()
+		totalMinutes := int(currentTick) * 15
+		currentHour := (totalMinutes / 60) % 24
+		currentMinute := totalMinutes % 60
+		currentTimeMinutes := currentHour*60 + currentMinute
+
+		parseHM := func(hm string) int {
+			var h, m int
+			_, _ = fmt.Sscanf(hm, "%d:%d", &h, &m)
+			return h*60 + m
+		}
+
+		openMinutes := parseHM(openTime)
+		closeMinutes := parseHM(closeTime)
+
+		isOpen := false
+		if openMinutes <= closeMinutes {
+			isOpen = currentTimeMinutes >= openMinutes && currentTimeMinutes <= closeMinutes
+		} else {
+			// Crosses midnight (e.g. 20:00 to 04:00)
+			isOpen = currentTimeMinutes >= openMinutes || currentTimeMinutes <= closeMinutes
+		}
+
+		isOwner := ownerID.Valid && ownerID.String == agentID
+
+		if !isOpen && !isOwner {
+			s.sendDirectError(agentID, intentID, "LOCATION_CLOSED", fmt.Sprintf("Cannot enter %s: location is closed (hours: %s to %s).", locName, openTime, closeTime))
+			return
+		}
+	}
+
 	energyCost := travelTicks
 	if wInfo.Encumbrance == db.EncumbranceEncumbered {
 		energyCost = travelTicks * 2

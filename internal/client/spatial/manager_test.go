@@ -96,6 +96,75 @@ func TestContextManager_PromptAssembly(t *testing.T) {
 	}
 }
 
+func TestContextManager_MemoryContinuityAndEmptyLocationSnapshot(t *testing.T) {
+	cm := NewContextManager(ContextManagerConfig{AgentID: "elda"})
+	cm.IngestTimeTick(TimeTickMessage{Tick: 14, InGameTime: "08:10", Weather: "Cloudy"})
+	if got := cm.CurrentTick(); got != 14 {
+		t.Fatalf("CurrentTick() = %d, want 14", got)
+	}
+
+	observed := make(map[string]string)
+	cm.SetOnLocationObserved(func(_, _, category, text string) {
+		observed[category] = text
+	})
+	payload := []byte(`{"type":"STATE_SYNC","status":"SUCCESS","character":{"id":"elda","name":"Elda"},"location":{"id":"market","name":"Market"}}`)
+	if err := cm.IngestDirectResponse(payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, category := range []string{"shop", "resources", "workstations", "recipes", "exits"} {
+		if observed[category] == "" {
+			t.Errorf("empty snapshot missing category %q: %#v", category, observed)
+		}
+	}
+	if !strings.Contains(observed["shop"], "No items") {
+		t.Errorf("empty shop snapshot = %q", observed["shop"])
+	}
+
+	cm.SetPersonalProjects([]PersonalProjectContext{{
+		Title: "Restore the market awning", Motivation: "Shade for neighbors",
+		Progress: "Found canvas", NextStep: "Ask Mira about stitching",
+	}})
+	prompt := cm.BuildPrompt([]PeerMemoryContext{{
+		PeerID: "mira", PeerName: "Mira", Summary: "We often help each other.",
+		Commitments: []string{"Ask about stitching"},
+	}}, nil)
+	for _, expected := range []string{"We often help each other.", "Ask about stitching", "Restore the market awning", "not duties"} {
+		if !strings.Contains(prompt, expected) {
+			t.Errorf("memory prompt missing %q", expected)
+		}
+	}
+}
+
+func TestContextManager_PromptShowsExactInventoryForVoluntaryDrop(t *testing.T) {
+	cm := NewContextManager(ContextManagerConfig{AgentID: "martha"})
+	payload := []byte(`{
+		"type":"STATE_SYNC",
+		"status":"SUCCESS",
+		"character":{
+			"id":"martha","name":"Martha","inventory":[
+				{"item_id":"ink_bottle","name":"Bottle of Ink","quantity":2},
+				{"item_id":"parchment","name":"Parchment","quantity":1}
+			]
+		},
+		"location":{"id":"office","name":"Office"}
+	}`)
+	if err := cm.IngestDirectResponse(payload); err != nil {
+		t.Fatal(err)
+	}
+
+	prompt := cm.BuildPrompt(nil, nil)
+	for _, expected := range []string{
+		"item_id: ink_bottle | name: Bottle of Ink | quantity: 2",
+		"item_id: parchment | name: Parchment | quantity: 1",
+		"DROP is always your choice, never required",
+		"a positive quantity no greater than the quantity you currently carry",
+	} {
+		if !strings.Contains(prompt, expected) {
+			t.Errorf("prompt missing DROP guidance %q", expected)
+		}
+	}
+}
+
 func TestContextManager_DynamicLocationChange(t *testing.T) {
 	cm := NewContextManager(ContextManagerConfig{
 		AgentID:         "eldon_millwright",

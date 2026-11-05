@@ -10,6 +10,7 @@ type LocationSeed struct {
 	ID                string
 	Name              string
 	Description       string
+	OwnerID           string
 	IsPublic          bool
 	IsIndoor          bool
 	VehicleAccessTier string // "ALL", "FOOT_AND_WHEELBARROW", "FOOT_ONLY"
@@ -30,7 +31,7 @@ var DefaultLocations = []LocationSeed{
 	{
 		ID:                "town_square",
 		Name:              "Town Square",
-		Description:       "The bustling paved heart of the village where citizens gather, announcements are posted, and paths diverge.",
+		Description:       "The bustling paved heart of the village where citizens gather to talk, announcements are posted, and paths diverge.",
 		IsPublic:          true,
 		IsIndoor:          false,
 		VehicleAccessTier: "ALL",
@@ -77,6 +78,7 @@ var DefaultLocations = []LocationSeed{
 		Description:       "The administrative center housing the Clerk's office, voting registry, and mayoral chambers.",
 		IsPublic:          false,
 		IsIndoor:          true,
+		OwnerID:           "eleanor_clerk",
 		VehicleAccessTier: "FOOT_AND_WHEELBARROW",
 		OpenTime:          "09:00",
 		CloseTime:         "17:00",
@@ -85,13 +87,14 @@ var DefaultLocations = []LocationSeed{
 	{
 		ID:                "tavern",
 		Name:              "The Boar's Tusk Tavern",
-		Description:       "Warm, smoky, and loud. The center of village social life, offering hot meals, ale, and lodging beds upstairs.",
+		Description:       "Warm, cozy, and boisterous. The center of village social life, offering hot meals, ale, and lodging beds upstairs.",
 		IsPublic:          false,
 		IsIndoor:          true,
+		OwnerID:           "martha_barkeep",
 		VehicleAccessTier: "FOOT_AND_WHEELBARROW",
 		OpenTime:          "12:00",
 		CloseTime:         "23:59",
-		RulesPrompt:       "All patrons must pay for lodging and food.",
+		RulesPrompt:       "Please buy a drink or meal per visit.",
 	},
 	{
 		ID:                "town_mill",
@@ -99,6 +102,7 @@ var DefaultLocations = []LocationSeed{
 		Description:       "A water-driven mill by the river where sacks of wheat are ground into flour by the resident millwright.",
 		IsPublic:          false,
 		IsIndoor:          true,
+		OwnerID:           "eldon_millwright",
 		VehicleAccessTier: "FOOT_AND_WHEELBARROW",
 		OpenTime:          "06:00",
 		CloseTime:         "18:00",
@@ -108,6 +112,7 @@ var DefaultLocations = []LocationSeed{
 		ID:                "blacksmith",
 		Name:              "Forge & Anvil Blacksmith",
 		Description:       "Ringing with the sound of hammers and glowing with forge fire, tools and hardware are crafted here.",
+		OwnerID:           "gideon_forge",
 		IsPublic:          false,
 		IsIndoor:          true,
 		VehicleAccessTier: "FOOT_AND_WHEELBARROW",
@@ -152,6 +157,7 @@ var DefaultLocations = []LocationSeed{
 		ID:                "stables",
 		Name:              "Village Stables",
 		Description:       "Straw-strewn stalls housing draft horses and carts used for hauling heavy goods across the valley.",
+		OwnerID:           "luke_farmer",
 		IsPublic:          false,
 		IsIndoor:          false,
 		VehicleAccessTier: "ALL",
@@ -193,6 +199,66 @@ var DefaultLocations = []LocationSeed{
 		CloseTime:         "23:59",
 		RulesPrompt:       "Cool riverbank waters. Clean clay and fresh water free to collect.",
 	},
+	{
+		ID:                "clerks_office",
+		Name:              "Clerk's Office",
+		Description:       "A secure private office suite attached to Town Hall; the office is piled with ledgers and municipal records. The residence is cozy and safe.",
+		OwnerID:           "eleanor_clerk",
+		IsPublic:          false,
+		IsIndoor:          true,
+		VehicleAccessTier: "FOOT_ONLY",
+		OpenTime:          "25:00",
+		CloseTime:         "25:00",
+		RulesPrompt:       "Private office and residence. Authorized personnel only.",
+	},
+	{
+		ID:                "marthas_room",
+		Name:              "Martha's Room",
+		Description:       "Martha's private quarters tucked away inside the tavern.",
+		OwnerID:           "martha_barkeep",
+		IsPublic:          false,
+		IsIndoor:          true,
+		VehicleAccessTier: "FOOT_ONLY",
+		OpenTime:          "25:00",
+		CloseTime:         "25:00",
+		RulesPrompt:       "Private quarters. Safe for Martha to store items or retreat from the noise of the tavern.",
+	},
+	{
+		ID:                "upstairs",
+		Name:              "Upstairs Lodging",
+		Description:       "Quiet sleeping rooms above the tavern for resting guests.",
+		OwnerID:           "martha_barkeep",
+		IsPublic:          false,
+		IsIndoor:          true,
+		VehicleAccessTier: "FOOT_ONLY",
+		OpenTime:          "20:00",
+		CloseTime:         "23:59",
+		RulesPrompt:       "Quiet rest area.",
+	},
+	{
+		ID:                "eldons_room",
+		Name:              "Eldon's Room",
+		Description:       "Eldon's private workshop and resting space behind the mill.",
+		OwnerID:           "eldon_millwright",
+		IsPublic:          false,
+		IsIndoor:          true,
+		VehicleAccessTier: "FOOT_AND_WHEELBARROW",
+		OpenTime:          "25:00",
+		CloseTime:         "25:00",
+		RulesPrompt:       "Private workspace for Eldon. A safe place to rest and store items.",
+	},
+	{
+		ID:                "gideons_room",
+		Name:              "Gideon's Room",
+		Description:       "Gideon's private workshop and resting space behind the shop.",
+		OwnerID:           "gideon_forge",
+		IsPublic:          false,
+		IsIndoor:          true,
+		VehicleAccessTier: "FOOT_AND_WHEELBARROW",
+		OpenTime:          "25:00",
+		CloseTime:         "25:00",
+		RulesPrompt:       "Private workspace for Gideon. A safe place to rest and store items.",
+	},
 }
 
 // DefaultLocationResources seeds ecological resource pools for foraging (RFC 007 Section 8 & 9)
@@ -209,11 +275,12 @@ var DefaultLocationResources = []ResourceSeed{
 // SeedLocations inserts default locations into the database if they do not exist.
 func SeedLocations(db *sql.DB) error {
 	query := `
-	INSERT INTO locations (id, name, description, is_public_property, is_indoor, vehicle_access_tier, open_time, close_time, rules_prompt)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO locations (id, name, description, owner_id, is_public_property, is_indoor, vehicle_access_tier, open_time, close_time, rules_prompt)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		name=excluded.name,
 		description=excluded.description,
+		owner_id=excluded.owner_id,
 		is_public_property=excluded.is_public_property,
 		is_indoor=excluded.is_indoor,
 		vehicle_access_tier=excluded.vehicle_access_tier,
@@ -237,7 +304,14 @@ func SeedLocations(db *sql.DB) error {
 		if loc.IsIndoor {
 			indoorVal = 1
 		}
-		_, err := stmt.Exec(loc.ID, loc.Name, loc.Description, pubVal, indoorVal, loc.VehicleAccessTier, loc.OpenTime, loc.CloseTime, loc.RulesPrompt)
+		var ownerParam interface{}
+		if loc.OwnerID != "" {
+			ownerParam = loc.OwnerID
+		} else {
+			ownerParam = nil
+		}
+
+		_, err := stmt.Exec(loc.ID, loc.Name, loc.Description, ownerParam, pubVal, indoorVal, loc.VehicleAccessTier, loc.OpenTime, loc.CloseTime, loc.RulesPrompt)
 		if err != nil {
 			return fmt.Errorf("failed to seed location %s: %w", loc.ID, err)
 		}
@@ -329,6 +403,30 @@ func SeedLocationConnections(db *sql.DB) error {
 	for _, conn := range outerConnections {
 		if _, err := stmt.Exec(conn.from, conn.to, conn.ticks); err != nil {
 			return fmt.Errorf("failed to seed outer connection %s -> %s (ticks %d): %w", conn.from, conn.to, conn.ticks, err)
+		}
+	}
+
+	// Private room connections (only accessible from their parent location)
+	privateConnections := []struct {
+		from  string
+		to    string
+		ticks int
+	}{
+		{"town_hall", "clerks_office", 1},
+		{"clerks_office", "town_hall", 1},
+		{"tavern", "marthas_room", 1},
+		{"marthas_room", "tavern", 1},
+		{"tavern", "upstairs", 1},
+		{"upstairs", "tavern", 1},
+		{"blacksmith", "gideons_room", 1},
+		{"gideons_room", "blacksmith", 1},
+		{"town_mill", "eldons_room", 1},
+		{"eldons_room", "town_mill", 1},
+	}
+
+	for _, conn := range privateConnections {
+		if _, err := stmt.Exec(conn.from, conn.to, conn.ticks); err != nil {
+			return fmt.Errorf("failed to seed private room connection %s -> %s: %w", conn.from, conn.to, err)
 		}
 	}
 

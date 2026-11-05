@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"agentmud/internal/client/dispatcher"
+	"agentmud/internal/client/memory"
 	"agentmud/internal/client/model"
 	"agentmud/internal/client/spatial"
 
@@ -30,15 +31,21 @@ type TUIModel struct {
 	engine            model.InferenceEngine
 	fetchPeerMemories func() []spatial.PeerMemoryContext
 
-	textInput   textinput.Model
-	viewport    viewport.Model
-	errMessage  string
-	infoMessage string
-	isThinking  bool
-	tab         int // 0: Sensory Log, 1: Inventory, 2: Relationships
-	width       int
-	height      int
-	quitting    bool
+	textInput            textinput.Model
+	viewport             viewport.Model
+	errMessage           string
+	infoMessage          string
+	backgroundStatus     string
+	isThinking           bool
+	synthesisStatus      <-chan string
+	selfIdentityProvider func() ([]memory.IdentityTrait, []memory.SelfReflection, error)
+	identityTraits       []memory.IdentityTrait
+	selfReflections      []memory.SelfReflection
+	identityLoadError    string
+	tab                  int // Sensory Log, Inventory, Relationships, Self Identity
+	width                int
+	height               int
+	quitting             bool
 
 	// Config references for /set tuning
 	chatProbability *float64
@@ -50,8 +57,22 @@ type TUIModel struct {
 type TickMsg time.Time
 type infoMsg string
 type errMsg struct{ err error }
+type synthesisStatusMsg string
+type selfIdentityMsg struct {
+	traits      []memory.IdentityTrait
+	reflections []memory.SelfReflection
+	err         error
+}
 
 func (e errMsg) Error() string { return e.err.Error() }
+
+func (m *TUIModel) SetSynthesisStatusChannel(statuses <-chan string) {
+	m.synthesisStatus = statuses
+}
+
+func (m *TUIModel) SetSelfIdentityProvider(provider func() ([]memory.IdentityTrait, []memory.SelfReflection, error)) {
+	m.selfIdentityProvider = provider
+}
 
 func NewTUIModel(ctx context.Context, agentID string, client mqtt.Client, tracker *dispatcher.CorrelationTracker, ctxMgr *spatial.ContextManager, engine model.InferenceEngine, fetchMemories func() []spatial.PeerMemoryContext, chatProb *float64, refFreq *int, temp *float64, debounce *int) TUIModel {
 	ti := textinput.New()
@@ -84,12 +105,16 @@ func NewTUIModel(ctx context.Context, agentID string, client mqtt.Client, tracke
 }
 
 func (m TUIModel) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		textinput.Blink,
 		tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
 			return TickMsg(t)
 		}),
-	)
+	}
+	if m.synthesisStatus != nil {
+		cmds = append(cmds, m.listenSynthesisStatus())
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -102,7 +127,10 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case tea.KeyTab:
-			m.tab = (m.tab + 1) % 3
+			m.tab = (m.tab + 1) % 4
+			if m.tab == 3 {
+				return m, m.loadSelfIdentity()
+			}
 			return m, nil
 		case tea.KeyEnter:
 			input := strings.TrimSpace(m.textInput.Value())
@@ -144,11 +172,51 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.isThinking = false
 		m.errMessage = msg.Error()
 		return m, nil
+
+	case synthesisStatusMsg:
+		m.backgroundStatus = string(msg)
+		if m.tab == 3 && strings.Contains(m.backgroundStatus, "reflecting on identity — complete") {
+			return m, tea.Batch(m.listenSynthesisStatus(), m.loadSelfIdentity())
+		}
+		return m, m.listenSynthesisStatus()
+
+	case selfIdentityMsg:
+		m.identityLoadError = ""
+		if msg.err != nil {
+			m.identityLoadError = msg.err.Error()
+		} else {
+			m.identityTraits = msg.traits
+			m.selfReflections = msg.reflections
+		}
+		return m, nil
 	}
 
 	m.textInput, cmd = m.textInput.Update(msg)
 	m.viewport, _ = m.viewport.Update(msg)
 	return m, cmd
+}
+
+func (m TUIModel) loadSelfIdentity() tea.Cmd {
+	if m.selfIdentityProvider == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		traits, reflections, err := m.selfIdentityProvider()
+		return selfIdentityMsg{traits: traits, reflections: reflections, err: err}
+	}
+}
+
+func (m TUIModel) listenSynthesisStatus() tea.Cmd {
+	if m.synthesisStatus == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		status, ok := <-m.synthesisStatus
+		if !ok {
+			return nil
+		}
+		return synthesisStatusMsg(status)
+	}
 }
 
 func (m *TUIModel) handleInput(input string) tea.Cmd {

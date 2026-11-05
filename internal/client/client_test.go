@@ -1,7 +1,10 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -218,5 +221,48 @@ func TestNewEngine(t *testing.T) {
 	_, err = NewEngine(cfg)
 	if err == nil {
 		t.Error("expected error for invalid provider, got nil")
+	}
+}
+
+func TestLogFileExpansionAndCreation(t *testing.T) {
+	tempDir := t.TempDir()
+	subLogDir := filepath.Join(tempDir, "nested", "agentmud")
+	logFilePath := filepath.Join(subLogDir, "test.log")
+
+	cfg := DefaultConfig()
+	cfg.Client.LogFile = logFilePath
+	cfg.Model.Provider = "mock"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately so RunClient exits quickly
+
+	_ = RunClient(ctx, cfg)
+
+	if _, err := os.Stat(logFilePath); os.IsNotExist(err) {
+		t.Errorf("expected log file to be created at %s, but it does not exist", logFilePath)
+	}
+}
+
+func TestLogFileTildeExpansion(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("skipping test; user home dir not available")
+	}
+
+	testLogRel := "~/.agentmud_test_log/martha_test.log"
+	expectedPath := filepath.Join(home, ".agentmud_test_log", "martha_test.log")
+	defer os.RemoveAll(filepath.Join(home, ".agentmud_test_log"))
+
+	cfg := DefaultConfig()
+	cfg.Client.LogFile = testLogRel
+	cfg.Model.Provider = "mock"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_ = RunClient(ctx, cfg)
+
+	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
+		t.Errorf("expected log file to be created at expanded tilde path %s, but it does not exist", expectedPath)
 	}
 }

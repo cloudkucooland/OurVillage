@@ -19,6 +19,7 @@ func TestOverburdenedMovementRejection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
+	srv.SetTickCount(48)
 
 	// Eldon starts at town_mill (unassisted capacity 20kg, overburden limit 30kg)
 	// Add 35 kg of coal (35 * 1.0kg) to Eldon's inventory
@@ -62,6 +63,7 @@ func TestEncumberedEnergyDecayOnMove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
+	srv.SetTickCount(48)
 
 	// Eldon starts with 100 energy
 	// Add 20 kg of coal: total weight = 5kg initial + 20kg coal = 25kg (ENCUMBERED: 20 < weight <= 30)
@@ -110,6 +112,7 @@ func TestVehicleAccessibilityOnMove(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
+	srv.SetTickCount(48)
 
 	// Gideon the Blacksmith starts with wheelbarrow equipped
 	// 1. Wheelbarrow attempting to enter deep_forest (FOOT_ONLY)
@@ -156,6 +159,7 @@ func TestGroundItemsDropAndPickupIntents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
+	srv.SetTickCount(48)
 
 	// Eldon starts at town_mill with 4 wheat
 	dropPayload, _ := json.Marshal(ItemActionPayload{ItemID: "wheat", Quantity: 2})
@@ -198,6 +202,7 @@ func TestTemporalForagingAndActionLock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
+	srv.SetTickCount(48)
 
 	// Move Eldon to deep_forest
 	_, _ = database.Exec("UPDATE characters SET current_location = 'deep_forest' WHERE id = 'eldon_millwright'")
@@ -275,6 +280,7 @@ func TestEarlyCancellationProratedReturns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
+	srv.SetTickCount(48)
 
 	// Move Eldon to prairie
 	_, _ = database.Exec("UPDATE characters SET current_location = 'prairie' WHERE id = 'eldon_millwright'")
@@ -319,6 +325,7 @@ func TestEquipAndUnequipIntents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
+	srv.SetTickCount(48)
 
 	// Give Eldon a leather_backpack
 	_, _ = database.Exec("INSERT INTO inventories (character_id, item_id, quantity) VALUES ('eldon_millwright', 'leather_backpack', 1)")

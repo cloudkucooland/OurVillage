@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -109,6 +110,24 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) StartTUI() error {
+	logPath := os.Getenv("AGENTMUD_LOG")
+	if logPath == "" {
+		logPath = "agentmud-server.log"
+	}
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return fmt.Errorf("open server log file %q: %w", logPath, err)
+	}
+	defer logFile.Close()
+	previousLogOutput := log.Writer()
+	defer log.SetOutput(previousLogOutput)
+
+	logChannel := tui.NewLogChannel()
+	log.SetOutput(io.MultiWriter(logFile, tui.NewLogWriter(logChannel)))
+
+	tuiModel := tui.NewModel(s.db, admin.NewAdminCommandExecutor(s.db, s.SetWeather), s)
+	tuiModel.SetLogChannel(logChannel)
+
 	// Start MQTT server in background
 	go func() {
 		err := s.mqttServer.Serve()
@@ -120,7 +139,6 @@ func (s *Server) StartTUI() error {
 	// Start Master Clock & Tick Engine
 	go s.runClock()
 
-	tuiModel := tui.NewModel(s.db, admin.NewAdminCommandExecutor(s.db, s.SetWeather), s)
 	p := tea.NewProgram(tuiModel, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		log.Printf("[TUI Error] %v", err)

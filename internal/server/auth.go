@@ -16,6 +16,8 @@ type moveRecord struct {
 	time       time.Time
 }
 
+const recentMoveTTL = 10 * time.Minute
+
 type DBAuthHook struct {
 	mqtt.HookBase
 	db          *sql.DB
@@ -33,9 +35,19 @@ func NewDBAuthHook(db *sql.DB) *DBAuthHook {
 func (h *DBAuthHook) RecordMove(characterID, locationID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	now := time.Now()
+	h.purgeRecentMovesLocked(now)
 	h.recentMoves[characterID] = moveRecord{
 		locationID: locationID,
-		time:       time.Now(),
+		time:       now,
+	}
+}
+
+func (h *DBAuthHook) purgeRecentMovesLocked(now time.Time) {
+	for characterID, move := range h.recentMoves {
+		if now.Sub(move.time) > recentMoveTTL {
+			delete(h.recentMoves, characterID)
+		}
 	}
 }
 
@@ -172,6 +184,7 @@ func (h *DBAuthHook) OnACLCheck(cl *mqtt.Client, topic string, write bool) bool 
 
 func (h *DBAuthHook) isCharacterAtLocation(characterID, locationID string) bool {
 	h.mu.Lock()
+	h.purgeRecentMovesLocked(time.Now())
 	if rec, ok := h.recentMoves[characterID]; ok {
 		if rec.locationID == locationID && time.Since(rec.time) < 5*time.Second {
 			h.mu.Unlock()

@@ -2,7 +2,9 @@ package memory
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -17,13 +19,38 @@ type EventRecord struct {
 	PeerID     string
 	EventType  string
 	RawPayload string
+	Attempts   int
+}
+
+func (s *ReflectionSynthesizer) SetStatusCallback(callback func(string)) {
+	s.statusCallback = callback
+}
+
+func (s *ReflectionSynthesizer) notifyStatus(message string) {
+	if s.statusCallback != nil {
+		s.statusCallback(message)
+	}
+}
+
+func (s *ReflectionSynthesizer) generateWithStatus(ctx context.Context, status, prompt string, options model.GenerationOptions) (string, error) {
+	s.notifyStatus(status + " — started")
+	genCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	response, err := s.engine.Generate(genCtx, prompt, options)
+	cancel()
+	if err != nil {
+		s.notifyStatus(status + " — failed: " + err.Error())
+		return "", err
+	}
+	s.notifyStatus(status + " — complete")
+	return response, nil
 }
 
 type ReflectionSynthesizer struct {
-	store    *ClientMemoryStore
-	engine   model.InferenceEngine
-	interval time.Duration
-	agentID  string
+	store          *ClientMemoryStore
+	engine         model.InferenceEngine
+	interval       time.Duration
+	agentID        string
+	statusCallback func(string)
 }
 
 func NewReflectionSynthesizer(store *ClientMemoryStore, engine model.InferenceEngine, agentID string, interval time.Duration) *ReflectionSynthesizer {
@@ -95,20 +122,19 @@ func (s *ReflectionSynthesizer) Start(ctx context.Context) {
 
 func (s *ReflectionSynthesizer) SynthesizeNextBatch(ctx context.Context) error {
 	events, err := s.store.GetUnreflectedEvents(10)
-	if err != nil || len(events) == 0 {
+	if err != nil {
 		return err
 	}
 
 	eventsByPeer := make(map[string][]EventRecord)
-	var maxID int64
+	var completedIDs []int64
 	var latestTick uint64
 
 	for _, ev := range events {
 		if ev.PeerID != "" && ev.PeerID != "SERVER" && ev.PeerID != s.agentID {
 			eventsByPeer[ev.PeerID] = append(eventsByPeer[ev.PeerID], ev)
-		}
-		if ev.ID > maxID {
-			maxID = ev.ID
+		} else {
+			completedIDs = append(completedIDs, ev.ID)
 		}
 		if ev.Tick > latestTick {
 			latestTick = ev.Tick
@@ -116,64 +142,193 @@ func (s *ReflectionSynthesizer) SynthesizeNextBatch(ctx context.Context) error {
 	}
 
 	var batchErr error
-
-	// Synthesize peer reflections
 	for peerID, peerEvents := range eventsByPeer {
-		prompt := s.buildReflectionPrompt(peerID, peerEvents)
+		previous, getErr := s.store.GetRelationship(peerID)
+		if getErr != nil && !errors.Is(getErr, sql.ErrNoRows) {
+			batchErr = errors.Join(batchErr, fmt.Errorf("load relationship %s: %w", peerID, getErr))
+			if deferErr := s.store.DeferEvents(eventIDs(peerEvents), retryDelay(peerEvents)); deferErr != nil {
+				batchErr = errors.Join(batchErr, fmt.Errorf("defer relationship events for %s: %w", peerID, deferErr))
+			}
+			continue
+		}
+		prompt := s.buildReflectionPrompt(peerID, peerEvents, previous)
 
-		genCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-		respText, err := s.engine.Generate(genCtx, prompt, model.GenerationOptions{
+		respText, err := s.generateWithStatus(ctx, fmt.Sprintf("Memory synthesis: reflecting on %s", peerID), prompt, model.GenerationOptions{
 			Temperature: 0.5,
-			MaxTokens:   150,
+			MaxTokens:   250,
 		})
-		cancel()
 
 		if err != nil {
 			log.Printf("[Synthesizer] Failed to generate reflection for peer %s: %v", peerID, err)
-			batchErr = err
+			batchErr = errors.Join(batchErr, err)
+			if deferErr := s.store.DeferEvents(eventIDs(peerEvents), retryDelay(peerEvents)); deferErr != nil {
+				batchErr = errors.Join(batchErr, deferErr)
+			}
 			continue
 		}
 
-		reflectionText, salience := parseReflectionResponse(respText)
-		if reflectionText != "" {
-			tick := peerEvents[len(peerEvents)-1].Tick
-			if err := s.store.AddReflection(peerID, tick, salience, reflectionText); err != nil {
-				log.Printf("[Synthesizer Error] Failed to store reflection for %s: %v", peerID, err)
-			} else {
-				log.Printf("[Synthesizer] Reflected on %s (Salience: %d): %s", peerID, salience, reflectionText)
+		updated, reflection, salience, parseErr := parseRelationshipResponse(respText, previous)
+		if parseErr != nil {
+			batchErr = errors.Join(batchErr, fmt.Errorf("parse relationship reflection for %s: %w", peerID, parseErr))
+			if deferErr := s.store.DeferEvents(eventIDs(peerEvents), retryDelay(peerEvents)); deferErr != nil {
+				batchErr = errors.Join(batchErr, fmt.Errorf("defer relationship events for %s: %w", peerID, deferErr))
 			}
+			continue
 		}
+		tick := peerEvents[len(peerEvents)-1].Tick
+		if err := s.store.AddRelationshipReflection(peerID, tick, salience, reflection, updated.Summary, updated.Commitments, eventIDs(peerEvents)); err != nil {
+			log.Printf("[Synthesizer Error] Failed to store relationship reflection for %s: %v", peerID, err)
+			batchErr = errors.Join(batchErr, err)
+			if deferErr := s.store.DeferEvents(eventIDs(peerEvents), retryDelay(peerEvents)); deferErr != nil {
+				batchErr = errors.Join(batchErr, fmt.Errorf("defer relationship events for %s: %w", peerID, deferErr))
+			}
+			continue
+		}
+		log.Printf("[Synthesizer] Reflected on %s (Salience: %d): %s", peerID, salience, reflection)
 	}
 
-	// Run self-identity reflection once per batch if relevant events occurred
 	if len(eventsByPeer) > 0 {
 		if err := s.SynthesizeSelfIdentity(ctx, latestTick); err != nil {
 			log.Printf("[Synthesizer] Failed to generate self-identity update: %v", err)
-			if batchErr == nil {
-				batchErr = err
-			}
+			batchErr = errors.Join(batchErr, err)
 		}
 	}
 
-	if batchErr != nil {
-		errStr := batchErr.Error()
-		if strings.Contains(errStr, "429") || strings.Contains(errStr, "RESOURCE_EXHAUSTED") || strings.Contains(errStr, "quota") {
-			return batchErr
+	if err := s.store.MarkEventsReflected(completedIDs); err != nil {
+		batchErr = errors.Join(batchErr, err)
+	}
+	if err := s.synthesizeProjects(ctx); err != nil {
+		batchErr = errors.Join(batchErr, err)
+	}
+	return batchErr
+}
+
+func eventIDs(events []EventRecord) []int64 {
+	ids := make([]int64, 0, len(events))
+	for _, event := range events {
+		ids = append(ids, event.ID)
+	}
+	return ids
+}
+
+func retryDelay(events []EventRecord) time.Duration {
+	attempts := 0
+	for _, event := range events {
+		if event.Attempts > attempts {
+			attempts = event.Attempts
 		}
 	}
+	if attempts > 5 {
+		attempts = 5
+	}
+	delay := time.Minute * time.Duration(1<<attempts)
+	if delay > 30*time.Minute {
+		return 30 * time.Minute
+	}
+	return delay
+}
 
-	return s.store.MarkEventsReflectedUpTo(maxID)
+func (s *ReflectionSynthesizer) synthesizeProjects(ctx context.Context) error {
+	events, err := s.store.GetUnprocessedProjectEvents(10)
+	if err != nil || len(events) == 0 {
+		return err
+	}
+	projects, err := s.store.GetProjects(false, 20)
+	if err != nil {
+		return errors.Join(fmt.Errorf("load personal projects: %w", err), s.store.DeferProjectEvents(eventIDs(events), retryDelay(events)))
+	}
+	prompt, err := buildProjectsPrompt(events, projects)
+	if err != nil {
+		return errors.Join(fmt.Errorf("build project prompt: %w", err), s.store.DeferProjectEvents(eventIDs(events), retryDelay(events)))
+	}
+	respText, err := s.generateWithStatus(ctx, "Memory synthesis: updating personal projects", prompt, model.GenerationOptions{Temperature: 0.4, MaxTokens: 700})
+	if err != nil {
+		return errors.Join(fmt.Errorf("generate project updates: %w", err), s.store.DeferProjectEvents(eventIDs(events), retryDelay(events)))
+	}
+	updates, err := parseProjectUpdates(respText, events[len(events)-1].Tick)
+	if err != nil {
+		return errors.Join(fmt.Errorf("parse project updates: %w", err), s.store.DeferProjectEvents(eventIDs(events), retryDelay(events)))
+	}
+	for _, project := range updates {
+		if err := s.store.UpsertProject(project); err != nil {
+			return errors.Join(fmt.Errorf("save project %q: %w", project.ID, err), s.store.DeferProjectEvents(eventIDs(events), retryDelay(events)))
+		}
+	}
+	return s.store.MarkProjectsProcessed(eventIDs(events))
+}
+
+func buildProjectsPrompt(events []EventRecord, projects []PersonalProject) (string, error) {
+	var sb strings.Builder
+	sb.WriteString("You are a self-directed resident. Update your optional personal projects only when these action outcomes provide relevant evidence; do not turn routine actions into goals or invent progress. Having no projects is valid. Projects are your own choices, never obligations.\n")
+	sb.WriteString("Return valid JSON with a projects array. Each entry must include id (use an existing id to update), title, motivation, status (active/paused/completed), progress, next_step, people, and locations. Return an empty array when no update is warranted.\n")
+	sb.WriteString("Existing projects:\n")
+	encoded, err := json.Marshal(projects)
+	if err != nil {
+		return "", err
+	}
+	sb.Write(encoded)
+	sb.WriteString("\nAction outcomes:\n")
+	for _, event := range events {
+		sb.WriteString(fmt.Sprintf("- [Tick %d] %s\n", event.Tick, event.RawPayload))
+	}
+	sb.WriteString("\nResponse format: {\"projects\": []}\n")
+	return sb.String(), nil
+}
+
+func parseProjectUpdates(raw string, tick uint64) ([]PersonalProject, error) {
+	type projectResponse struct {
+		Projects *[]PersonalProject `json:"projects"`
+	}
+	start, end := strings.Index(raw, "{"), strings.LastIndex(raw, "}")
+	if start < 0 || end <= start {
+		return nil, fmt.Errorf("response is not a JSON object")
+	}
+	var response projectResponse
+	if err := json.Unmarshal([]byte(raw[start:end+1]), &response); err != nil {
+		return nil, err
+	}
+	if response.Projects == nil {
+		return nil, fmt.Errorf("response is missing the projects array")
+	}
+	for i := range *response.Projects {
+		project := &(*response.Projects)[i]
+		if project.ID == "" {
+			project.ID = projectSlug(project.Title)
+		}
+		if project.Status == "" {
+			project.Status = "active"
+		}
+		project.UpdatedTick = tick
+		if project.ID == "" || strings.TrimSpace(project.Title) == "" {
+			return nil, fmt.Errorf("project updates must include a title")
+		}
+	}
+	return *response.Projects, nil
+}
+
+func projectSlug(title string) string {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(title)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			dash = false
+		case !dash && b.Len() > 0:
+			b.WriteByte('-')
+			dash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 func (s *ReflectionSynthesizer) SynthesizeSelfIdentity(ctx context.Context, tick uint64) error {
 	prompt := s.buildSelfIdentityPrompt()
 
-	genCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	respText, err := s.engine.Generate(genCtx, prompt, model.GenerationOptions{
+	respText, err := s.generateWithStatus(ctx, "Memory synthesis: reflecting on identity", prompt, model.GenerationOptions{
 		Temperature: 0.6,
 		MaxTokens:   200,
 	})
-	cancel()
 
 	if err != nil {
 		return fmt.Errorf("failed to generate self-identity update: %w", err)
@@ -181,10 +336,14 @@ func (s *ReflectionSynthesizer) SynthesizeSelfIdentity(ctx context.Context, tick
 
 	traitKey, traitVal, selfRef, salience := parseSelfIdentityResponse(respText)
 	if traitKey != "" && traitVal != "" {
-		_ = s.store.UpsertIdentityTrait(traitKey, traitVal, tick, salience)
+		if err := s.store.UpsertIdentityTrait(traitKey, traitVal, tick, salience); err != nil {
+			return fmt.Errorf("store identity trait: %w", err)
+		}
 	}
 	if selfRef != "" {
-		_ = s.store.AddSelfReflection(tick, selfRef)
+		if err := s.store.AddSelfReflection(tick, selfRef); err != nil {
+			return fmt.Errorf("store self-reflection: %w", err)
+		}
 		log.Printf("[Synthesizer] Self-reflection: %s", selfRef)
 	}
 
@@ -233,10 +392,15 @@ func parseSelfIdentityResponse(raw string) (string, string, string, int) {
 	return "", "", "", 5
 }
 
-func (s *ReflectionSynthesizer) buildReflectionPrompt(peerID string, events []EventRecord) string {
+func (s *ReflectionSynthesizer) buildReflectionPrompt(peerID string, events []EventRecord, previous RelationshipMemory) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("You are a sovereign resident reflecting freely on past interactions with character '%s'.\n", peerID))
 	sb.WriteString("Consider these events entirely through your own subjective perspective, feelings, and judgment, free from any external grading.\n")
+	sb.WriteString("Preserve the continuity of the relationship: update the summary and open commitments only when the new evidence warrants it. Remove commitments that are fulfilled or no longer relevant; do not invent promises.\n")
+	if previous.Summary != "" {
+		sb.WriteString("Existing relationship summary: " + previous.Summary + "\n")
+		sb.WriteString("Existing open commitments: " + strings.Join(previous.Commitments, "; ") + "\n")
+	}
 	sb.WriteString("Below is a raw log of recent interactions:\n\n")
 
 	for _, ev := range events {
@@ -244,12 +408,15 @@ func (s *ReflectionSynthesizer) buildReflectionPrompt(peerID string, events []Ev
 	}
 
 	sb.WriteString("\nInstructions:\n")
-	sb.WriteString("1. Summarize your subjective opinion and takeaways about this person based strictly on these events.\n")
-	sb.WriteString("2. Rate the salience/importance of this memory from 1 (trivial) to 10 (critical event/lesson).\n")
+	sb.WriteString("1. Provide a concise cumulative relationship summary, grounded in existing information and these events.\n")
+	sb.WriteString("2. List only genuine open commitments or follow-ups between you and this person.\n")
+	sb.WriteString("3. Write one reflection on the new events and rate its salience from 1 to 10.\n")
 	sb.WriteString("Respond in valid JSON:\n")
 	sb.WriteString("{\n")
 	sb.WriteString("  \"salience\": 7,\n")
-	sb.WriteString("  \"reflection\": \"One-sentence summary of your relationship or takeaway regarding this character.\"\n")
+	sb.WriteString("  \"reflection\": \"One-sentence takeaway from this batch.\",\n")
+	sb.WriteString("  \"summary\": \"Updated cumulative relationship context.\",\n")
+	sb.WriteString("  \"commitments\": [\"A specific unfulfilled follow-up, if any\"]\n")
 	sb.WriteString("}\n")
 
 	return sb.String()
@@ -283,4 +450,47 @@ func parseReflectionResponse(raw string) (string, int) {
 		return cleaned, 5
 	}
 	return "", 0
+}
+
+func parseRelationshipResponse(raw string, previous RelationshipMemory) (RelationshipMemory, string, int, error) {
+	type relationshipResponse struct {
+		Salience    int      `json:"salience"`
+		Reflection  string   `json:"reflection"`
+		Summary     string   `json:"summary"`
+		Commitments []string `json:"commitments"`
+	}
+	start, end := strings.Index(raw, "{"), strings.LastIndex(raw, "}")
+	if start < 0 || end <= start {
+		return RelationshipMemory{}, "", 0, fmt.Errorf("response is not a JSON object")
+	}
+	var response relationshipResponse
+	if err := json.Unmarshal([]byte(raw[start:end+1]), &response); err != nil {
+		return RelationshipMemory{}, "", 0, err
+	}
+	response.Reflection = strings.TrimSpace(response.Reflection)
+	response.Summary = strings.TrimSpace(response.Summary)
+	if response.Reflection == "" {
+		return RelationshipMemory{}, "", 0, fmt.Errorf("reflection is empty")
+	}
+	if response.Summary == "" {
+		response.Summary = previous.Summary
+		if response.Summary == "" {
+			response.Summary = response.Reflection
+		}
+	}
+	if response.Commitments == nil {
+		response.Commitments = previous.Commitments
+	}
+	salience := response.Salience
+	if salience <= 0 {
+		salience = 5
+	}
+	if salience > 10 {
+		salience = 10
+	}
+	return RelationshipMemory{
+		PeerID:      previous.PeerID,
+		Summary:     response.Summary,
+		Commitments: response.Commitments,
+	}, response.Reflection, salience, nil
 }

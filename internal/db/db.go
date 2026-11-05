@@ -21,8 +21,12 @@ type EventLogEntry struct {
 	DetailsJSON json.RawMessage `json:"details_json"`
 }
 
-// InitDB initializes the SQLite database, migrates any missing columns, and seeds default records.
-func InitDB(dataSourceName string) (*sql.DB, error) {
+// InitDB initializes the SQLite database, migrates any missing columns, and optionally seeds default records.
+func InitDB(dataSourceName string, seedArgs ...bool) (*sql.DB, error) {
+	shouldSeed := true
+	if len(seedArgs) > 0 {
+		shouldSeed = seedArgs[0]
+	}
 	db, err := sql.Open("sqlite", dataSourceName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open sqlite db: %w", err)
@@ -213,28 +217,30 @@ CREATE INDEX IF NOT EXISTS idx_event_logs_location ON event_logs(location_id);
 		return nil, fmt.Errorf("failed to migrate schema: %w", err)
 	}
 
-	if err := SeedLocations(db); err != nil {
-		return nil, fmt.Errorf("failed to seed locations: %w", err)
-	}
+	if shouldSeed {
+		if err := SeedLocations(db); err != nil {
+			return nil, fmt.Errorf("failed to seed locations: %w", err)
+		}
 
-	if err := SeedLocationResources(db); err != nil {
-		return nil, fmt.Errorf("failed to seed location resources: %w", err)
-	}
+		if err := SeedLocationResources(db); err != nil {
+			return nil, fmt.Errorf("failed to seed location resources: %w", err)
+		}
 
-	if err := SeedLocationConnections(db); err != nil {
-		return nil, fmt.Errorf("failed to seed location connections: %w", err)
-	}
+		if err := SeedLocationConnections(db); err != nil {
+			return nil, fmt.Errorf("failed to seed location connections: %w", err)
+		}
 
-	if err := SeedItemsAndCharacters(db); err != nil {
-		return nil, fmt.Errorf("failed to seed items and characters: %w", err)
-	}
+		if err := SeedItemsAndCharacters(db); err != nil {
+			return nil, fmt.Errorf("failed to seed items and characters: %w", err)
+		}
 
-	if err := SeedCrafting(db); err != nil {
-		return nil, fmt.Errorf("failed to seed crafting recipes and workstations: %w", err)
-	}
+		if err := SeedCrafting(db); err != nil {
+			return nil, fmt.Errorf("failed to seed crafting recipes and workstations: %w", err)
+		}
 
-	if err := SeedShopInventory(db); err != nil {
-		return nil, fmt.Errorf("failed to seed shop inventory: %w", err)
+		if err := SeedShopInventory(db); err != nil {
+			return nil, fmt.Errorf("failed to seed shop inventory: %w", err)
+		}
 	}
 
 	return db, nil
@@ -347,4 +353,27 @@ func execQueryable(q Queryable, query string, args ...any) (sql.Result, error) {
 		return tx.Exec(query, args...)
 	}
 	return nil, fmt.Errorf("unsupported Queryable type")
+}
+
+// SeedDB seeds all default records (locations, resources, connections, items, characters, crafting, shop inventory).
+func SeedDB(db *sql.DB) error {
+	if err := SeedLocations(db); err != nil {
+		return fmt.Errorf("failed to seed locations: %w", err)
+	}
+	if err := SeedLocationResources(db); err != nil {
+		return fmt.Errorf("failed to seed location resources: %w", err)
+	}
+	if err := SeedLocationConnections(db); err != nil {
+		return fmt.Errorf("failed to seed location connections: %w", err)
+	}
+	if err := SeedItemsAndCharacters(db); err != nil {
+		return fmt.Errorf("failed to seed items and characters: %w", err)
+	}
+	if err := SeedCrafting(db); err != nil {
+		return fmt.Errorf("failed to seed crafting recipes and workstations: %w", err)
+	}
+	if err := SeedShopInventory(db); err != nil {
+		return fmt.Errorf("failed to seed shop inventory: %w", err)
+	}
+	return nil
 }

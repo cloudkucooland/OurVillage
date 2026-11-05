@@ -1,8 +1,12 @@
 package memory
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func TestClientMemoryStore_InitDB(t *testing.T) {
@@ -136,6 +140,7 @@ func TestClientMemoryStore_IdentityAndSelfReflections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to init store: %v", err)
 	}
+
 	defer store.Close()
 
 	// Test identity traits upsert & retrieve
@@ -183,5 +188,130 @@ func TestClientMemoryStore_IdentityAndSelfReflections(t *testing.T) {
 	}
 	if selfRefs[0].Tick != 210 {
 		t.Errorf("Expected most recent tick 210, got %d", selfRefs[0].Tick)
+	}
+}
+
+func TestClientMemoryStore_EventRetryAndExactCompletion(t *testing.T) {
+	store, err := NewClientMemoryStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for i := 1; i <= 3; i++ {
+		if err := store.AddEvent(uint64(i), "peer", "CHAT", "event"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events, err := store.GetUnreflectedEvents(10)
+	if err != nil || len(events) != 3 {
+		t.Fatalf("initial events = %d, err = %v; want 3", len(events), err)
+	}
+	if err := store.DeferEvents([]int64{events[0].ID}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkEventsReflected([]int64{events[1].ID}); err != nil {
+		t.Fatal(err)
+	}
+	events, err = store.GetUnreflectedEvents(10)
+	if err != nil || len(events) != 1 || events[0].Tick != 3 {
+		t.Fatalf("eligible events = %#v, err = %v; want only third event", events, err)
+	}
+}
+
+func TestClientMemoryStore_ProjectAndRelationshipPersistence(t *testing.T) {
+	store, err := NewClientMemoryStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	project := PersonalProject{
+		ID: "community-mill", Title: "Repair the mill", Motivation: "Keep flour available",
+		Status: "active", Progress: "Found timber", NextStep: "Ask Mira about planks",
+		People: []string{"mira"}, Locations: []string{"town_mill"}, UpdatedTick: 42,
+	}
+	if err := store.UpsertProject(project); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.GetProjects(true, 10)
+	if err != nil || len(projects) != 1 || projects[0].NextStep != project.NextStep ||
+		projects[0].Locations[0] != "town_mill" {
+		t.Fatalf("projects = %#v, err = %v", projects, err)
+	}
+
+	if err := store.AddEvent(43, "mira", "CHAT", "Mira offered advice."); err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.GetUnreflectedEvents(5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddRelationshipReflection("mira", 43, 7, "Mira offered advice.", "We share an interest in restoring the mill.", []string{"Ask Mira about planks"}, []int64{events[0].ID}); err != nil {
+		t.Fatal(err)
+	}
+	relationship, err := store.GetRelationship("mira")
+	if err != nil || relationship.Summary == "" || len(relationship.Commitments) != 1 {
+		t.Fatalf("relationship = %#v, err = %v", relationship, err)
+	}
+	reflections, err := store.GetReflectionsForPeer("mira", 5)
+	if err != nil || len(reflections) != 1 {
+		t.Fatalf("reflections = %#v, err = %v", reflections, err)
+	}
+}
+
+func TestClientMemoryStore_LocationSnapshotsReplaceAndFilter(t *testing.T) {
+	store, err := NewClientMemoryStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.UpsertLocationMemory("market", "Market", "shop", "Sells bread.", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertLocationMemory("mill", "Mill", "resources", "Wheat.", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertLocationMemory("market", "Market", "shop", "No items currently listed.", 3); err != nil {
+		t.Fatal(err)
+	}
+	memories, err := store.GetLocationMemoriesForLocations([]string{"market"}, 20)
+	if err != nil || len(memories) != 1 || memories[0].MemoryText != "No items currently listed." {
+		t.Fatalf("market memories = %#v, err = %v", memories, err)
+	}
+	var count int
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM client_location_memories WHERE location_id = 'market' AND memory_category = 'shop'").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("snapshot count = %d, err = %v; want 1", count, err)
+	}
+}
+
+func TestClientMemoryStore_LegacyEventSchemaMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE client_event_history (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, tick INTEGER NOT NULL,
+			peer_id TEXT NOT NULL, event_type TEXT NOT NULL, raw_payload TEXT NOT NULL,
+			reflection_processed BOOLEAN DEFAULT 0, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+		)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewClientMemoryStore(path)
+	if err != nil {
+		t.Fatalf("opening legacy schema: %v", err)
+	}
+	defer store.Close()
+	if err := store.AddEvent(9, "peer", "CHAT", "legacy-compatible"); err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.GetUnreflectedEvents(10)
+	if err != nil || len(events) != 1 || events[0].Tick != 9 {
+		t.Fatalf("migrated events = %#v, err = %v", events, err)
 	}
 }

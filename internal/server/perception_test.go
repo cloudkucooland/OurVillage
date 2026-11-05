@@ -21,6 +21,7 @@ func TestLookIntentAndMoveStateSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create server: %v", err)
 	}
+	srv.SetTickCount(48)
 
 	directChan := make(chan []byte, 10)
 	_ = srv.mqttServer.Subscribe("world/agents/eldon_millwright/direct", 0, func(_ *mqtt.Client, _ packets.Subscription, pk packets.Packet) {
@@ -123,6 +124,7 @@ func TestTransferNotification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create server: %v", err)
 	}
+	srv.SetTickCount(48)
 
 	_, _ = database.Exec("UPDATE characters SET is_online = 1, current_location = 'town_mill' WHERE id IN ('eldon_millwright', 'martha_barkeep')")
 

@@ -18,14 +18,21 @@ func main() {
 	if os.Getenv("AGENTMUD_TUI") == "true" || os.Getenv("AGENTMUD_TUI") == "1" {
 		useTUI = true
 	}
+	doSeed := false
+	if os.Getenv("AGENTMUD_SEED") == "true" || os.Getenv("AGENTMUD_SEED") == "1" {
+		doSeed = true
+	}
 	for _, arg := range os.Args {
 		if arg == "--tui" {
 			useTUI = true
 		}
+		if arg == "--seed" {
+			doSeed = true
+		}
 	}
 
 	log.Printf("Initializing OurVillage database at %s...", dbPath)
-	database, err := db.InitDB(dbPath)
+	database, err := db.InitDB(dbPath, doSeed)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}

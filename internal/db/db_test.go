@@ -32,8 +32,8 @@ func TestInitDBAndSeed(t *testing.T) {
 		}
 	}
 
-	if locCount != 15 {
-		t.Errorf("Expected 15 seeded locations, got %d", locCount)
+	if locCount != 20 {
+		t.Errorf("Expected 20 seeded locations, got %d", locCount)
 	}
 	if !foundTownSquare {
 		t.Errorf("Expected to find town_square location")
@@ -110,5 +110,35 @@ func TestSpatialGraphRouting(t *testing.T) {
 	ok, _, err = CanTravelLocation(database, "town_mill", "deep_forest")
 	if err != nil || ok {
 		t.Errorf("Expected no direct connection town_mill -> deep_forest, got ok=%v", ok)
+	}
+}
+
+func TestInitDBWithoutSeed(t *testing.T) {
+	database, err := InitDB(":memory:", false)
+	if err != nil {
+		t.Fatalf("Failed to initialize in-memory DB without seed: %v", err)
+	}
+	defer database.Close()
+
+	var locCount int
+	err = database.QueryRow("SELECT COUNT(*) FROM locations").Scan(&locCount)
+	if err != nil {
+		t.Fatalf("Failed to count locations: %v", err)
+	}
+	if locCount != 0 {
+		t.Errorf("Expected 0 locations when seeding is disabled, got %d", locCount)
+	}
+
+	// Now seed manually
+	if err := SeedDB(database); err != nil {
+		t.Fatalf("Failed to seed database manually: %v", err)
+	}
+
+	err = database.QueryRow("SELECT COUNT(*) FROM locations").Scan(&locCount)
+	if err != nil {
+		t.Fatalf("Failed to count locations after seeding: %v", err)
+	}
+	if locCount != 20 {
+		t.Errorf("Expected 20 locations after manual seeding, got %d", locCount)
 	}
 }
