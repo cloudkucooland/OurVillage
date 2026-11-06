@@ -2,7 +2,7 @@ RFC 015: Client Engine Architecture & Model Provider Layer Spec
 Status: Draft / Proposed
 Target Stack: Pure Go, ebitengine/purego, github.com/develerltd/go-llama-pure, Mochi-MQTT, RKLLM
 1. Executive Summary & Hardware Heterogeneity
-RFC 015 formalizes the client architecture for agentmud-client (the autonomous "Agent Mind" daemon) [cite: OurVillage, RFC 000: Project Master Specification & Architecture Philosophy]. While the Agentville server deterministically governs physical reality, inventories, and room isolation over SQLite and Mochi-MQTT, each client process runs an independent cognitive loop responsible for dialogue generation, local memory management, and autonomous intent dispatch [cite: OurVillage, RFC 000: Project Master Specification & Architecture Philosophy].
+RFC 015 formalizes the client architecture for agentmud-client (the autonomous "Agent Mind" daemon) [cite: OurVillage, RFC 000: Project Master Specification & Architecture Philosophy]. While the OurVillage server deterministically governs physical reality, inventories, and room isolation over SQLite and Mochi-MQTT, each client process runs an independent cognitive loop responsible for dialogue generation, local memory management, and autonomous intent dispatch [cite: OurVillage, RFC 000: Project Master Specification & Architecture Philosophy].
 The client architecture supports heterogeneous edge hardware (Raspberry Pi 4/5 ARM64, Rockchip RK3588 NPUs, x86_64 workstations) and remote API providers (OpenAI, Gemini, Claude, Ollama) via a pluggable Model Inference Layer abstraction [cite: OurVillage, RFC 004: Agent Harness & Context Window Manager Spec].
 2. Model Layer Abstraction Interface
 All inference providers implement a standardized, non-blocking Go interface:

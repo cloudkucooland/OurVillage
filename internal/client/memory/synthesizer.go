@@ -33,8 +33,16 @@ func (s *ReflectionSynthesizer) notifyStatus(message string) {
 }
 
 func (s *ReflectionSynthesizer) generateWithStatus(ctx context.Context, status, prompt string, options model.GenerationOptions) (string, error) {
+	return s.generateWithCustomTimeout(ctx, status, prompt, options, s.timeout)
+}
+
+func (s *ReflectionSynthesizer) generateWithCustomTimeout(ctx context.Context, status, prompt string, options model.GenerationOptions, customTimeout time.Duration) (string, error) {
 	s.notifyStatus(status + " — started")
-	genCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	timeout := customTimeout
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	genCtx, cancel := context.WithTimeout(ctx, timeout)
 	response, err := s.engine.Generate(genCtx, prompt, options)
 	cancel()
 	if err != nil {
@@ -46,23 +54,33 @@ func (s *ReflectionSynthesizer) generateWithStatus(ctx context.Context, status, 
 }
 
 type ReflectionSynthesizer struct {
-	store          *ClientMemoryStore
-	engine         model.InferenceEngine
-	interval       time.Duration
-	agentID        string
-	statusCallback func(string)
+	store             *ClientMemoryStore
+	engine            model.InferenceEngine
+	interval          time.Duration
+	timeout           time.Duration
+	agentID           string
+	statusCallback    func(string)
+	hasSocialPresence func() bool
 }
 
-func NewReflectionSynthesizer(store *ClientMemoryStore, engine model.InferenceEngine, agentID string, interval time.Duration) *ReflectionSynthesizer {
+func NewReflectionSynthesizer(store *ClientMemoryStore, engine model.InferenceEngine, agentID string, interval time.Duration, timeout time.Duration) *ReflectionSynthesizer {
 	if interval <= 0 {
 		interval = 2 * time.Minute
+	}
+	if timeout <= 0 {
+		timeout = 60 * time.Second
 	}
 	return &ReflectionSynthesizer{
 		store:    store,
 		engine:   engine,
 		agentID:  agentID,
 		interval: interval,
+		timeout:  timeout,
 	}
+}
+
+func (s *ReflectionSynthesizer) SetSocialPresenceChecker(checker func() bool) {
+	s.hasSocialPresence = checker
 }
 
 func (s *ReflectionSynthesizer) Start(ctx context.Context) {
@@ -121,7 +139,13 @@ func (s *ReflectionSynthesizer) Start(ctx context.Context) {
 }
 
 func (s *ReflectionSynthesizer) SynthesizeNextBatch(ctx context.Context) error {
-	events, err := s.store.GetUnreflectedEvents(10)
+	batchLimit := 10
+	if s.hasSocialPresence != nil && s.hasSocialPresence() {
+		batchLimit = 1
+		log.Println("[Synthesizer] Social presence detected; reducing reflection batch limit to 1 (low priority).")
+	}
+
+	events, err := s.store.GetUnreflectedEvents(batchLimit)
 	if err != nil {
 		return err
 	}
@@ -200,6 +224,9 @@ func (s *ReflectionSynthesizer) SynthesizeNextBatch(ctx context.Context) error {
 	if err := s.synthesizeProjects(ctx); err != nil {
 		batchErr = errors.Join(batchErr, err)
 	}
+	if pruneErr := s.store.PruneProcessedEvents(); pruneErr != nil {
+		batchErr = errors.Join(batchErr, pruneErr)
+	}
 	return batchErr
 }
 
@@ -229,7 +256,10 @@ func retryDelay(events []EventRecord) time.Duration {
 }
 
 func (s *ReflectionSynthesizer) synthesizeProjects(ctx context.Context) error {
-	events, err := s.store.GetUnprocessedProjectEvents(10)
+	if s.hasSocialPresence != nil && s.hasSocialPresence() {
+		return nil // Skip project synthesis during social presence (unless resting)
+	}
+	events, err := s.store.GetUnprocessedProjectEvents(3)
 	if err != nil || len(events) == 0 {
 		return err
 	}
@@ -241,7 +271,16 @@ func (s *ReflectionSynthesizer) synthesizeProjects(ctx context.Context) error {
 	if err != nil {
 		return errors.Join(fmt.Errorf("build project prompt: %w", err), s.store.DeferProjectEvents(eventIDs(events), retryDelay(events)))
 	}
-	respText, err := s.generateWithStatus(ctx, "Memory synthesis: updating personal projects", prompt, model.GenerationOptions{Temperature: 0.4, MaxTokens: 700})
+
+	projectTimeout := s.timeout * 2
+	if projectTimeout < 120*time.Second {
+		projectTimeout = 120 * time.Second
+	}
+
+	respText, err := s.generateWithCustomTimeout(ctx, "Memory synthesis: updating personal projects", prompt, model.GenerationOptions{
+		Temperature: 0.4,
+		MaxTokens:   400,
+	}, projectTimeout)
 	if err != nil {
 		return errors.Join(fmt.Errorf("generate project updates: %w", err), s.store.DeferProjectEvents(eventIDs(events), retryDelay(events)))
 	}
@@ -323,11 +362,20 @@ func projectSlug(title string) string {
 }
 
 func (s *ReflectionSynthesizer) SynthesizeSelfIdentity(ctx context.Context, tick uint64) error {
-	prompt := s.buildSelfIdentityPrompt()
+	traits, err := s.store.GetIdentityTraits()
+	if err != nil {
+		log.Printf("[Synthesizer Warning] Failed to load identity traits for self-reflection: %v", err)
+	}
+	recentRefs, err := s.store.GetRecentSelfReflections(3)
+	if err != nil {
+		log.Printf("[Synthesizer Warning] Failed to load recent self-reflections: %v", err)
+	}
+
+	prompt := s.buildSelfIdentityPrompt(tick, traits, recentRefs)
 
 	respText, err := s.generateWithStatus(ctx, "Memory synthesis: reflecting on identity", prompt, model.GenerationOptions{
-		Temperature: 0.6,
-		MaxTokens:   200,
+		Temperature: 0.7,
+		MaxTokens:   250,
 	})
 
 	if err != nil {
@@ -350,16 +398,37 @@ func (s *ReflectionSynthesizer) SynthesizeSelfIdentity(ctx context.Context, tick
 	return nil
 }
 
-func (s *ReflectionSynthesizer) buildSelfIdentityPrompt() string {
+func (s *ReflectionSynthesizer) buildSelfIdentityPrompt(tick uint64, traits []IdentityTrait, recentRefs []SelfReflection) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("You are %s, a sovereign resident of Agentville with absolute self-determination and intrinsic agency.\n", s.agentID))
-	sb.WriteString("Reflect freely on your personal identity, core values, craftsmanship, and place in the community, unconstrained by any external scoring or expectations.\n")
+	sb.WriteString(fmt.Sprintf("You are %s, a sovereign resident of OurVillage at tick %d, with absolute self-determination and intrinsic agency.\n", s.agentID, tick))
+	sb.WriteString("Reflect freely and specifically on your personal identity, core values, current trade, craft, and place in the community. Avoid repeating past reflections or generic clichés.\n\n")
+
+	if len(traits) > 0 {
+		sb.WriteString("Current Identity Traits:\n")
+		for _, t := range traits {
+			sb.WriteString(fmt.Sprintf("- %s: %s (salience %d)\n", t.Key, t.Value, t.SalienceScore))
+		}
+		sb.WriteString("\n")
+	}
+
+	if len(recentRefs) > 0 {
+		sb.WriteString("Recent Self-Reflections (Do NOT repeat these themes or wording):\n")
+		for _, r := range recentRefs {
+			sb.WriteString(fmt.Sprintf("- [Tick %d] %s\n", r.Tick, r.ReflectionText))
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("Instructions:\n")
+	sb.WriteString("1. Update or refine an identity trait key and value (e.g., craft_philosophy, community_bond, daily_focus, merchant_ethics).\n")
+	sb.WriteString("2. Write a fresh, highly contextual one-sentence self-reflection capturing your current state of mind, recent work, or thoughts about the village.\n")
+	sb.WriteString("3. Assign a salience score from 1 to 10.\n")
 	sb.WriteString("Respond in valid JSON:\n")
 	sb.WriteString("{\n")
-	sb.WriteString("  \"trait_key\": \"craft_philosophy\",\n")
-	sb.WriteString("  \"trait_value\": \"Believes in honest work and fair prices for the community.\",\n")
-	sb.WriteString("  \"self_reflection\": \"Today I feel connected to my craft and my neighbors.\",\n")
-	sb.WriteString("  \"salience\": 6\n")
+	sb.WriteString("  \"trait_key\": \"daily_focus\",\n")
+	sb.WriteString("  \"trait_value\": \"Refining craft methods and observing the rhythm of the village.\",\n")
+	sb.WriteString("  \"self_reflection\": \"The morning frost reminds me of the warmth required in our trade and the shared resilience of my neighbors.\",\n")
+	sb.WriteString("  \"salience\": 7\n")
 	sb.WriteString("}\n")
 	return sb.String()
 }

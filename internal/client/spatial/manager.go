@@ -85,14 +85,29 @@ func (d *DirectMessage) UnmarshalJSON(data []byte) error {
 }
 
 type SyncCharacterOverview struct {
-	ID              string               `json:"id"`
-	Name            string               `json:"name"`
-	Gold            int                  `json:"gold"`
-	Hunger          int                  `json:"hunger"`
-	Energy          int                  `json:"energy"`
-	Status          string               `json:"status"`
-	CurrentLocation string               `json:"current_location"`
-	Inventory       []SyncInventoryEntry `json:"inventory"`
+	ID                string               `json:"id"`
+	Name              string               `json:"name"`
+	Gold              int                  `json:"gold"`
+	Hunger            int                  `json:"hunger"`
+	Energy            int                  `json:"energy"`
+	Status            string               `json:"status"`
+	CurrentLocation   string               `json:"current_location"`
+	CarryingWeightKg  float64              `json:"carrying_weight_kg"`
+	MaxCapacityKg     float64              `json:"max_capacity_kg"`
+	OverburdenLimitKg float64              `json:"overburden_limit_kg"`
+	SlotsUsed         int                  `json:"slots_used"`
+	MaxSlots          int                  `json:"max_slots"`
+	Encumbrance       string               `json:"encumbrance"`
+	Skills            []SyncSkillEntry     `json:"skills"`
+	Inventory         []SyncInventoryEntry `json:"inventory"`
+}
+
+type SyncSkillEntry struct {
+	SkillID       string `json:"skill_id"`
+	Level         int    `json:"level"`
+	Experience    int    `json:"experience"`
+	XPIntoLevel   int    `json:"xp_into_level"`
+	XPToNextLevel int    `json:"xp_to_next_level"`
 }
 
 type SyncInventoryEntry struct {
@@ -116,20 +131,25 @@ type SyncLocationOverview struct {
 }
 
 type SyncShopItem struct {
-	ItemID    string `json:"item_id"`
-	Name      string `json:"name"`
-	PriceGold int    `json:"price_gold"`
-	StockQty  int    `json:"stock_quantity"`
+	ItemID    string  `json:"item_id"`
+	Name      string  `json:"name"`
+	PriceGold int     `json:"price_gold"`
+	StockQty  int     `json:"stock_quantity"`
+	WeightKg  float64 `json:"weight_kg"`
 }
 
 type SyncAvailableRecipe struct {
-	RecipeID       string                 `json:"recipe_id"`
-	RecipeName     string                 `json:"recipe_name"`
-	OutputItemID   string                 `json:"output_item_id"`
-	OutputQuantity int                    `json:"output_quantity"`
-	DurationTicks  int                    `json:"duration_ticks"`
-	EnergyCost     int                    `json:"energy_cost"`
-	Ingredients    []SyncRecipeIngredient `json:"ingredients"`
+	RecipeID          string                 `json:"recipe_id"`
+	RecipeName        string                 `json:"recipe_name"`
+	OutputItemID      string                 `json:"output_item_id"`
+	OutputQuantity    int                    `json:"output_quantity"`
+	DurationTicks     int                    `json:"duration_ticks"`
+	BaseDurationTicks int                    `json:"base_duration_ticks"`
+	EnergyCost        int                    `json:"energy_cost"`
+	RequiredSkillID   string                 `json:"required_skill_id,omitempty"`
+	SkillLevel        int                    `json:"skill_level,omitempty"`
+	MinSkillLevel     int                    `json:"min_skill_level,omitempty"`
+	Ingredients       []SyncRecipeIngredient `json:"ingredients"`
 }
 
 type SyncRecipeIngredient struct {
@@ -184,8 +204,15 @@ type ContextManager struct {
 	locationRules      map[string][]string
 	gold               int
 	energy             int
+	carryingWeightKg   float64
+	maxCapacityKg      float64
+	overburdenLimitKg  float64
+	slotsUsed          int
+	maxSlots           int
+	encumbrance        string
 	inventory          []string
 	inventoryDetails   []SyncInventoryEntry
+	skills             []SyncSkillEntry
 	status             string
 	lastInGameTime     string
 	lastWeather        string
@@ -445,7 +472,14 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 			cm.mu.Lock()
 			cm.gold = msg.Character.Gold
 			cm.energy = msg.Character.Energy
+			cm.carryingWeightKg = msg.Character.CarryingWeightKg
+			cm.maxCapacityKg = msg.Character.MaxCapacityKg
+			cm.overburdenLimitKg = msg.Character.OverburdenLimitKg
+			cm.slotsUsed = msg.Character.SlotsUsed
+			cm.maxSlots = msg.Character.MaxSlots
+			cm.encumbrance = msg.Character.Encumbrance
 			cm.status = msg.Character.Status
+			cm.skills = append([]SyncSkillEntry(nil), msg.Character.Skills...)
 			if msg.Character.Name != "" {
 				cm.agentName = msg.Character.Name
 			}
@@ -518,7 +552,7 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 			if len(msg.Location.ShopItems) > 0 {
 				var shopStrs []string
 				for _, si := range msg.Location.ShopItems {
-					shopStrs = append(shopStrs, fmt.Sprintf("%s (%s - %d gold, stock: %d)", si.Name, si.ItemID, si.PriceGold, si.StockQty))
+					shopStrs = append(shopStrs, fmt.Sprintf("%s (%s - %d gold, %.1f kg each, stock: %d)", si.Name, si.ItemID, si.PriceGold, si.WeightKg, si.StockQty))
 				}
 				obsParts = append(obsParts, fmt.Sprintf("Shop Items for Sale: %s", strings.Join(shopStrs, ", ")))
 			}
@@ -529,7 +563,11 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 					for _, ing := range r.Ingredients {
 						ingStrs = append(ingStrs, fmt.Sprintf("%dx %s", ing.Quantity, ing.ItemID))
 					}
-					recStrs = append(recStrs, fmt.Sprintf("%s [%s] -> %dx %s (recipe_id: %s)", r.RecipeName, strings.Join(ingStrs, ", "), r.OutputQuantity, r.OutputItemID, r.RecipeID))
+					skillNote := ""
+					if r.RequiredSkillID != "" {
+						skillNote = fmt.Sprintf(", %s level %d", r.RequiredSkillID, r.SkillLevel)
+					}
+					recStrs = append(recStrs, fmt.Sprintf("%s [%s; %d ticks%s] -> %dx %s (recipe_id: %s)", r.RecipeName, strings.Join(ingStrs, ", "), r.DurationTicks, skillNote, r.OutputQuantity, r.OutputItemID, r.RecipeID))
 				}
 				obsParts = append(obsParts, fmt.Sprintf("Crafting Recipes Available: %s", strings.Join(recStrs, "; ")))
 			}
@@ -549,7 +587,7 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 				locName := msg.Location.Name
 				var shopStrs []string
 				for _, si := range msg.Location.ShopItems {
-					shopStrs = append(shopStrs, fmt.Sprintf("%s (%s - %d gold, stock: %d)", si.Name, si.ItemID, si.PriceGold, si.StockQty))
+					shopStrs = append(shopStrs, fmt.Sprintf("%s (%s - %d gold, %.1f kg each, stock: %d)", si.Name, si.ItemID, si.PriceGold, si.WeightKg, si.StockQty))
 				}
 				if len(shopStrs) == 0 {
 					cm.onLocationObserved(locID, locName, "shop", "No items currently listed.")
@@ -630,6 +668,20 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 		invStr = strings.Join(cm.inventory, ", ")
 	}
 	sb.WriteString(fmt.Sprintf("Gold: %d | Inventory: %s\n", cm.gold, invStr))
+	if len(cm.skills) > 0 {
+		sb.WriteString("Skills:\n")
+		for _, skill := range cm.skills {
+			progress := "MAX"
+			if skill.Level < 100 {
+				progress = fmt.Sprintf("%d/100 XP to next level", skill.XPIntoLevel)
+			}
+			sb.WriteString(fmt.Sprintf("- %s: level %d, %d total XP (%s)\n", skill.SkillID, skill.Level, skill.Experience, progress))
+		}
+	}
+	if cm.maxSlots > 0 && cm.maxCapacityKg > 0 {
+		sb.WriteString(fmt.Sprintf("Carrying load: %.1f/%.1f kg (overburdened above %.1f kg) | Inventory slots: %d/%d | Encumbrance: %s\n",
+			cm.carryingWeightKg, cm.maxCapacityKg, cm.overburdenLimitKg, cm.slotsUsed, cm.maxSlots, cm.encumbrance))
+	}
 	if len(cm.inventoryDetails) > 0 {
 		sb.WriteString("Inventory item IDs and exact quantities:\n")
 		for _, item := range cm.inventoryDetails {
@@ -739,21 +791,8 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 	sb.WriteString("\n")
 
 	sb.WriteString("=== INSTRUCTION ===\n")
-	sb.WriteString("Decide your next action based purely on your personal desires, values, intrinsic motivation, memories, and immediate surroundings.\n")
-	sb.WriteString("If another character has spoken to you or addressed you in chat, prioritize responding with a CHAT action.\n")
-	sb.WriteString("MOVE RULE: When choosing MOVE, check the 'Exits / Connected Locations' list in observation logs above and specify the exact location_id (e.g., 'tavern', 'town_square', 'blacksmith') as target_location. Do not guess location IDs.\n")
-	sb.WriteString("PICKUP RULE: When choosing PICKUP, check the 'On Ground' list in observation logs above and specify the exact item_id and quantity.\n")
-	sb.WriteString("DROP RULE: DROP is always your choice, never required to make room or satisfy a suggestion. If you choose to drop something, use an exact item_id from the inventory list above and a positive quantity no greater than the quantity you currently carry. Do not guess item IDs, names, or quantities; if exact inventory details are unavailable, do not attempt DROP.\n")
-	sb.WriteString("FORAGING RULE: When choosing FORAGE, check the location observation logs above for available room resource pools (e.g., wild_grain, animal_fodder, fresh_water, clay_lumps, firewood). Always select a target_resource that is actually present at your current location. Do not default to firewood unless firewood is available in the room.\n")
-	sb.WriteString("BUY RULE: When choosing BUY, check the 'Shop Items for Sale' list in observation logs above and specify the exact item_id (e.g., roasted_mutton, ale_mug, bread) and quantity.\n")
-	sb.WriteString("CRAFT RULE: When choosing CRAFT, check the 'Crafting Recipes Available' list in observation logs above, ensure you have the required ingredients in your inventory, and specify the exact recipe_id.\n")
-	sb.WriteString("CRITICAL: 'thought' is your private internal reasoning and is NEVER spoken aloud. For CHAT, 'payload' must be what you actually say out loud to others in the room as plain text.\n")
-	sb.WriteString("Respond in valid JSON:\n")
-	sb.WriteString("{\n")
-	sb.WriteString("  \"thought\": \"Private internal monologue.\",\n")
-	sb.WriteString("  \"action\": \"MOVE | CHAT | TRANSFER | FORAGE | CANCEL_ACTION | DROP | PICKUP | EQUIP | UNEQUIP | CRAFT | BUY\",\n")
-	sb.WriteString("  \"payload\": ...\n")
-	sb.WriteString("}\n")
+	sb.WriteString("Choose actions from your own desires, values, memories, and current observations; prioritize replying when addressed. Use exact observed IDs and quantities, move to a listed connected exit, drop only by choice and within carried quantities, and base foraging, purchases, and crafting on available resources, shop stock, inventory capacity, and known recipes.\n")
+	sb.WriteString("Output MUST be valid JSON only, with thought, action, and payload fields. Keep thought private; for CHAT, use {\"thought\":\"private reasoning\",\"action\":\"CHAT\",\"payload\":{\"message\":\"spoken words\"}}.\n")
 
 	return sb.String()
 }

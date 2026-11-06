@@ -40,7 +40,7 @@ func NewCloudGeminiEngine(cfg GeminiEngineConfig) *CloudGeminiEngine {
 
 	modelName := strings.TrimSpace(cfg.ModelName)
 	if modelName == "" {
-		modelName = "gemini-1.5-flash"
+		modelName = "gemini-3.5-flash-lite"
 	}
 
 	timeoutSec := cfg.TimeoutSeconds

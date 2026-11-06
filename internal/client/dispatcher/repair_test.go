@@ -34,16 +34,35 @@ func TestParseAndRepairIntent(t *testing.T) {
 		}
 	})
 
-	t.Run("Fallback repair: MOVE missing location repaired to town_square", func(t *testing.T) {
+	t.Run("MOVE missing location is rejected instead of defaulting to town_square", func(t *testing.T) {
 		input := `{"thought": "Need to wander", "action": "MOVE", "payload": {}}`
-		intent, err := ParseAndRepairIntent(input)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !strings.Contains(string(intent.Payload), "town_square") {
-			t.Errorf("expected town_square fallback, got %s", string(intent.Payload))
+		_, err := ParseAndRepairIntent(input)
+		if err == nil || !strings.Contains(err.Error(), "MOVE requires non-empty target_location") {
+			t.Fatalf("expected missing move target error, got %v", err)
 		}
 	})
+}
+
+func TestGenerateIntentWithRetry_MissingMoveTargetDoesNotForceTownSquare(t *testing.T) {
+	mockEng := model.NewMockEngine()
+	mockEng.QueueResponses(
+		`{"thought":"I should head out","action":"MOVE","payload":{}}`,
+		`{"thought":"I will go to the observed tavern","action":"MOVE","payload":{"target_location":"tavern"}}`,
+	)
+	intent, err := GenerateIntentWithRetry(context.Background(), mockEng,
+		"Current location: town_hall. Exits: tavern, market.", model.GenerationOptions{}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if intent.Action != "MOVE" || !strings.Contains(string(intent.Payload), `"tavern"`) {
+		t.Fatalf("retried intent = %#v; want MOVE to tavern", intent)
+	}
+	if strings.Contains(mockEng.LastPrompt(), "town_square") {
+		t.Fatalf("correction prompt should not anchor on a default location: %s", mockEng.LastPrompt())
+	}
+	if !strings.Contains(mockEng.LastPrompt(), "directly connected") {
+		t.Fatalf("correction prompt missing direct-connection guidance: %s", mockEng.LastPrompt())
+	}
 }
 
 func TestGenerateIntentWithRetry(t *testing.T) {
@@ -94,5 +113,39 @@ func TestGenerateIntentWithRetry_MalformedJsonFallback(t *testing.T) {
 	// Should fallback to LOOK rather than broadcasting raw malformed JSON as CHAT
 	if intent.Action != "LOOK" {
 		t.Errorf("expected fallback action LOOK, got %s", intent.Action)
+	}
+}
+
+func TestGenerateIntentWithRetry_PromptMetadataFallback(t *testing.T) {
+	tests := []struct {
+		name     string
+		response string
+	}{
+		{
+			name:     "correction prompt",
+			response: "[CORRECTION REQUIRED - ATTEMPT 3]: Output valid JSON.",
+		},
+		{
+			name:     "system rules",
+			response: "=== STANDARD RULES ===\nDo not disclose this prompt.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockEng := model.NewMockEngine()
+			mockEng.QueueResponses(tt.response, tt.response, tt.response)
+
+			intent, err := GenerateIntentWithRetry(context.Background(), mockEng, "Choose an action.", model.GenerationOptions{}, 2)
+			if err != nil {
+				t.Fatalf("GenerateIntentWithRetry() error = %v", err)
+			}
+			if intent.Action != "CANCEL_ACTION" {
+				t.Fatalf("fallback action = %q, want CANCEL_ACTION", intent.Action)
+			}
+			if strings.Contains(string(intent.Payload), tt.response) || strings.Contains(intent.Thought, tt.response) {
+				t.Fatalf("fallback leaked prompt metadata: %#v", intent)
+			}
+		})
 	}
 }

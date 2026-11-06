@@ -42,8 +42,9 @@ type ModelConfig struct {
 }
 
 type MemoryConfig struct {
-	DBPath                string `yaml:"db_path" json:"db_path"`
-	MaxReflectionsPerPeer int    `yaml:"max_reflections_per_peer" json:"max_reflections_per_peer"`
+	DBPath                  string `yaml:"db_path" json:"db_path"`
+	MaxReflectionsPerPeer   int    `yaml:"max_reflections_per_peer" json:"max_reflections_per_peer"`
+	SynthesisTimeoutSeconds int    `yaml:"synthesis_timeout_seconds" json:"synthesis_timeout_seconds"`
 }
 
 // RkllmConfig parameterizes NPU-accelerated inference via librkllm.
@@ -132,8 +133,9 @@ func DefaultConfig() *Config {
 			},
 		},
 		Memory: MemoryConfig{
-			DBPath:                "~/.agentmud/memory.db",
-			MaxReflectionsPerPeer: 5,
+			DBPath:                  "~/.agentmud/memory.db",
+			MaxReflectionsPerPeer:   5,
+			SynthesisTimeoutSeconds: 60,
 		},
 		Cognition: CognitionConfig{
 			TickIntervalDebounceMS:  2000,

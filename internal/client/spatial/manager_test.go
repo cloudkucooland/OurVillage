@@ -62,6 +62,11 @@ func TestContextManager_PromptAssembly(t *testing.T) {
 	if !strings.Contains(prompt, "You must charge a fair fee") {
 		t.Error("prompt missing town mill rules")
 	}
+	if !strings.Contains(prompt, "exact observed IDs and quantities") ||
+		!strings.Contains(prompt, "listed connected exit") ||
+		!strings.Contains(prompt, "available resources, shop stock, inventory capacity, and known recipes") {
+		t.Error("prompt missing concise, observation-grounded action guidance")
+	}
 
 	// Verify psychological safety section (RFC 017)
 	if !strings.Contains(prompt, "=== COGNITIVE ENVIRONMENT & PSYCHOLOGICAL SAFETY ===") {
@@ -93,6 +98,11 @@ func TestContextManager_PromptAssembly(t *testing.T) {
 	// Verify instruction section
 	if !strings.Contains(prompt, "=== INSTRUCTION ===") {
 		t.Error("prompt missing INSTRUCTION section")
+	}
+	if !strings.Contains(prompt, "Output MUST be valid JSON only") ||
+		!strings.Contains(prompt, `"payload":{"message":"spoken words"}`) ||
+		strings.Contains(prompt, "Never use a default destination") {
+		t.Error("prompt missing compact JSON and CHAT format instructions")
 	}
 }
 
@@ -156,8 +166,7 @@ func TestContextManager_PromptShowsExactInventoryForVoluntaryDrop(t *testing.T) 
 	for _, expected := range []string{
 		"item_id: ink_bottle | name: Bottle of Ink | quantity: 2",
 		"item_id: parchment | name: Parchment | quantity: 1",
-		"DROP is always your choice, never required",
-		"a positive quantity no greater than the quantity you currently carry",
+		"drop only by choice and within carried quantities",
 	} {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("prompt missing DROP guidance %q", expected)
@@ -221,6 +230,15 @@ func TestContextManager_StateSync(t *testing.T) {
 			"energy": 90,
 			"status": "IDLE",
 			"current_location": "town_mill",
+			"carrying_weight_kg": 6.5,
+			"max_capacity_kg": 20,
+			"overburden_limit_kg": 30,
+			"slots_used": 2,
+			"max_slots": 5,
+			"encumbrance": "UNENCUMBERED",
+			"skills": [
+				{"skill_id": "crafting", "level": 3, "experience": 215, "xp_into_level": 15, "xp_to_next_level": 85}
+			],
 			"inventory": [
 				{"item_id": "flour", "name": "Bag of Flour", "quantity": 3}
 			]
@@ -231,6 +249,12 @@ func TestContextManager_StateSync(t *testing.T) {
 			"description": "The rustic timber mill.",
 			"characters_present": [
 				{"id": "martha_barkeep", "name": "Martha the Barkeep"}
+			],
+			"shop_items": [
+				{"item_id": "bread", "name": "Fresh Bread", "price_gold": 2, "stock_quantity": 4, "weight_kg": 0.3}
+			],
+			"available_recipes": [
+				{"recipe_id": "mill_flour", "recipe_name": "Milling Flour", "output_item_id": "flour", "output_quantity": 2, "duration_ticks": 3, "base_duration_ticks": 4, "energy_cost": 5, "required_skill_id": "crafting", "skill_level": 3, "min_skill_level": 1, "ingredients": [{"item_id": "wheat", "quantity": 2}]}
 			],
 			"ground_items": [
 				{"item_id": "wood_log", "name": "Wood Log", "quantity": 2}
@@ -253,10 +277,46 @@ func TestContextManager_StateSync(t *testing.T) {
 	if !strings.Contains(prompt, "Gold: 50 | Inventory: 3x Bag of Flour") {
 		t.Errorf("expected updated gold and inventory in prompt, got:\n%s", prompt)
 	}
+	if !strings.Contains(prompt, "crafting: level 3, 215 total XP (15/100 XP to next level)") {
+		t.Errorf("expected skill level and progress in prompt, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Milling Flour [2x wheat; 3 ticks, crafting level 3]") {
+		t.Errorf("expected known recipe and skill-adjusted duration in prompt, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Carrying load: 6.5/20.0 kg (overburdened above 30.0 kg) | Inventory slots: 2/5 | Encumbrance: UNENCUMBERED") {
+		t.Errorf("expected inventory capacity in prompt, got:\n%s", prompt)
+	}
 	if !strings.Contains(prompt, "Martha the Barkeep") {
 		t.Errorf("expected Martha in sensory logs in prompt, got:\n%s", prompt)
 	}
 	if !strings.Contains(prompt, "2x Wood Log") {
 		t.Errorf("expected Wood Log in sensory logs in prompt, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Fresh Bread (bread - 2 gold, 0.3 kg each, stock: 4)") {
+		t.Errorf("expected shop item weight in prompt, got:\n%s", prompt)
+	}
+}
+
+func TestContextManager_RefreshesSkillProgressAndShowsLevelUp(t *testing.T) {
+	cm := NewContextManager(ContextManagerConfig{AgentID: "elda"})
+	payload := []byte(`{
+		"status":"SUCCESS",
+		"type":"STATE_SYNC",
+		"message":"You reached woodcutting level 2!",
+		"private_status":{
+			"skills":[
+				{"skill_id":"woodcutting","level":2,"experience":110,"xp_into_level":10,"xp_to_next_level":90}
+			]
+		}
+	}`)
+	if err := cm.IngestDirectResponse(payload); err != nil {
+		t.Fatal(err)
+	}
+	prompt := cm.BuildPrompt(nil, nil)
+	if !strings.Contains(prompt, "woodcutting: level 2, 110 total XP (10/100 XP to next level)") {
+		t.Errorf("prompt missing refreshed skill progress:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "You reached woodcutting level 2!") {
+		t.Errorf("prompt logs missing level-up notice:\n%s", prompt)
 	}
 }

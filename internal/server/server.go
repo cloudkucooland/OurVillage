@@ -294,16 +294,23 @@ func (s *Server) resolveCompletedActions(currentTick uint64, weather string) {
 
 			// Broadcast direct agent response on completion (RFC 007 Section 10.5)
 			respMap := map[string]interface{}{
-				"intent_id":       a.intentID,
-				"status":          "SUCCESS",
-				"ticks_spent":     res.TicksSpent,
-				"energy_deducted": res.EnergyDeducted,
-				"skill_xp_gained": res.SkillXPGained,
-				"yield":           res.Yield,
-				"total_weight_kg": res.TotalWeightKg,
-				"max_capacity_kg": res.MaxCapacityKg,
-				"narrative_log":   res.NarrativeLog,
+				"intent_id":        a.intentID,
+				"status":           "SUCCESS",
+				"ticks_spent":      res.TicksSpent,
+				"energy_deducted":  res.EnergyDeducted,
+				"skill_id":         res.SkillID,
+				"skill_xp_gained":  res.SkillXPGained,
+				"skill_level":      res.SkillLevel,
+				"skill_experience": res.SkillExperience,
+				"yield":            res.Yield,
+				"total_weight_kg":  res.TotalWeightKg,
+				"max_capacity_kg":  res.MaxCapacityKg,
+				"narrative_log":    res.NarrativeLog,
 			}
+			if res.SkillLevel > res.PreviousLevel {
+				respMap["message"] = fmt.Sprintf("You reached %s level %d!", res.SkillID, res.SkillLevel)
+			}
+			s.includeCharacterSync(a.charID, respMap)
 
 			if respBytes, err := json.Marshal(respMap); err == nil {
 				directTopic := fmt.Sprintf("world/agents/%s/direct", a.charID)
@@ -311,7 +318,7 @@ func (s *Server) resolveCompletedActions(currentTick uint64, weather string) {
 			}
 
 		case "CRAFTING":
-			res, err := db.ResolveCrafting(s.db, a.charID, a.target)
+			res, err := db.ResolveCrafting(s.db, a.charID, a.target, int(a.endTick-a.startTick))
 			if err != nil {
 				log.Printf("Failed to resolve crafting for %s: %v", a.charID, err)
 				continue
@@ -324,18 +331,25 @@ func (s *Server) resolveCompletedActions(currentTick uint64, weather string) {
 
 			// Broadcast direct agent response on completion (RFC 008)
 			respMap := map[string]interface{}{
-				"intent_id":       a.intentID,
-				"status":          "SUCCESS",
-				"action":          "CRAFT",
-				"recipe_id":       res.RecipeID,
-				"ticks_spent":     res.TicksSpent,
-				"energy_deducted": res.EnergyDeducted,
-				"skill_xp_gained": res.SkillXPGained,
-				"yield":           res.Yield,
-				"total_weight_kg": res.TotalWeightKg,
-				"max_capacity_kg": res.MaxCapacityKg,
-				"narrative_log":   res.NarrativeLog,
+				"intent_id":        a.intentID,
+				"status":           "SUCCESS",
+				"action":           "CRAFT",
+				"recipe_id":        res.RecipeID,
+				"ticks_spent":      res.TicksSpent,
+				"energy_deducted":  res.EnergyDeducted,
+				"skill_id":         res.SkillID,
+				"skill_xp_gained":  res.SkillXPGained,
+				"skill_level":      res.SkillLevel,
+				"skill_experience": res.SkillExperience,
+				"yield":            res.Yield,
+				"total_weight_kg":  res.TotalWeightKg,
+				"max_capacity_kg":  res.MaxCapacityKg,
+				"narrative_log":    res.NarrativeLog,
 			}
+			if res.SkillLevel > res.PreviousLevel {
+				respMap["message"] = fmt.Sprintf("You reached %s level %d!", res.SkillID, res.SkillLevel)
+			}
+			s.includeCharacterSync(a.charID, respMap)
 
 			if respBytes, err := json.Marshal(respMap); err == nil {
 				directTopic := fmt.Sprintf("world/agents/%s/direct", a.charID)
@@ -343,14 +357,14 @@ func (s *Server) resolveCompletedActions(currentTick uint64, weather string) {
 			}
 
 		case "RESTING":
-			_, err = s.db.Exec("UPDATE characters SET energy = MIN(100, energy + 50) WHERE id = ?", a.charID)
+			_, err = s.db.Exec("UPDATE characters SET energy = MIN(100, energy + 50), health = MIN(100, health + 15) WHERE id = ?", a.charID)
 			if err != nil {
-				log.Printf("Failed to resolve resting energy for %s: %v", a.charID, err)
+				log.Printf("Failed to resolve resting energy and health for %s: %v", a.charID, err)
 				continue
 			}
 
-			var newEnergy int
-			_ = s.db.QueryRow("SELECT energy FROM characters WHERE id = ?", a.charID).Scan(&newEnergy)
+			var newEnergy, newHealth int
+			_ = s.db.QueryRow("SELECT energy, health FROM characters WHERE id = ?", a.charID).Scan(&newEnergy, &newHealth)
 
 			sysTopic := fmt.Sprintf("world/locations/%s/system", a.locID)
 			sysMsg := fmt.Sprintf("%s has finished resting and feels refreshed.", a.charID)
@@ -361,7 +375,8 @@ func (s *Server) resolveCompletedActions(currentTick uint64, weather string) {
 				"status":        "SUCCESS",
 				"action":        "REST",
 				"energy":        newEnergy,
-				"narrative_log": fmt.Sprintf("You finished resting and recovered energy (Energy: %d/100).", newEnergy),
+				"health":        newHealth,
+				"narrative_log": fmt.Sprintf("You finished resting and recovered vitality (Energy: %d/100, Health: %d/100).", newEnergy, newHealth),
 			}
 
 			if respBytes, err := json.Marshal(respMap); err == nil {
@@ -381,4 +396,14 @@ func (s *Server) resolveCompletedActions(currentTick uint64, weather string) {
 			log.Printf("Failed to clear action state for character %s: %v", a.charID, err)
 		}
 	}
+}
+
+func (s *Server) includeCharacterSync(characterID string, response map[string]interface{}) {
+	perception, err := db.GetCharacterPerception(s.db, characterID)
+	if err != nil {
+		log.Printf("Failed to refresh character skills for %s: %v", characterID, err)
+		return
+	}
+	response["type"] = "STATE_SYNC"
+	response["private_status"] = perception.Character
 }

@@ -511,6 +511,14 @@ func (s *Server) handleForage(agentID string, intentID string, rawPayload json.R
 		return
 	}
 
+	skillID := db.GetSkillForResource(payload.TargetResource)
+	skillLevel, _, err := db.GetSkill(s.db, agentID, skillID)
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "DB_ERROR", fmt.Sprintf("Failed to load %s skill: %v", skillID, err))
+		return
+	}
+	payload.DurationTicks = db.ScaleDurationForSkill(payload.DurationTicks, skillLevel)
+
 	currentTick := s.GetTickCount()
 	endTick := currentTick + uint64(payload.DurationTicks)
 
@@ -564,16 +572,23 @@ func (s *Server) handleCancelAction(agentID string, intentID string, rawPayload 
 		_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s stopped foraging early.", agentID)), false, 0)
 
 		respMap := map[string]interface{}{
-			"intent_id":       intentID,
-			"status":          "SUCCESS",
-			"ticks_spent":     res.TicksSpent,
-			"energy_deducted": res.EnergyDeducted,
-			"skill_xp_gained": res.SkillXPGained,
-			"yield":           res.Yield,
-			"total_weight_kg": res.TotalWeightKg,
-			"max_capacity_kg": res.MaxCapacityKg,
-			"narrative_log":   res.NarrativeLog,
+			"intent_id":        intentID,
+			"status":           "SUCCESS",
+			"ticks_spent":      res.TicksSpent,
+			"energy_deducted":  res.EnergyDeducted,
+			"skill_id":         res.SkillID,
+			"skill_xp_gained":  res.SkillXPGained,
+			"skill_level":      res.SkillLevel,
+			"skill_experience": res.SkillExperience,
+			"yield":            res.Yield,
+			"total_weight_kg":  res.TotalWeightKg,
+			"max_capacity_kg":  res.MaxCapacityKg,
+			"narrative_log":    res.NarrativeLog,
 		}
+		if res.SkillLevel > res.PreviousLevel {
+			respMap["message"] = fmt.Sprintf("You reached %s level %d!", res.SkillID, res.SkillLevel)
+		}
+		s.includeCharacterSync(agentID, respMap)
 
 		respBytes, err := json.Marshal(respMap)
 		if err == nil {
@@ -803,6 +818,17 @@ func (s *Server) handleCraft(agentID string, intentID string, rawPayload json.Ra
 		return
 	}
 
+	skillID := recipe.RequiredSkillID
+	if skillID == "" {
+		skillID = "crafting"
+	}
+	skillLevel, _, err := db.GetSkill(s.db, agentID, skillID)
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "DB_ERROR", fmt.Sprintf("Failed to load %s skill: %v", skillID, err))
+		return
+	}
+	effectiveDuration := db.ScaleDurationForSkill(recipe.DurationTicks, skillLevel)
+
 	currentTick := s.GetTickCount()
 	err = db.StartCrafting(s.db, agentID, payload.RecipeID, intentID, currentTick)
 	if err != nil {
@@ -811,9 +837,9 @@ func (s *Server) handleCraft(agentID string, intentID string, rawPayload json.Ra
 	}
 
 	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
-	_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s has started crafting %s (%d ticks).", agentID, recipe.Name, recipe.DurationTicks)), false, 0)
+	_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s has started crafting %s (%d ticks).", agentID, recipe.Name, effectiveDuration)), false, 0)
 
-	s.sendDirectResponse(agentID, intentID, "SUCCESS", fmt.Sprintf("Started crafting %s (%d ticks)", recipe.Name, recipe.DurationTicks))
+	s.sendDirectResponse(agentID, intentID, "SUCCESS", fmt.Sprintf("Started crafting %s (%d ticks)", recipe.Name, effectiveDuration))
 }
 
 func (s *Server) sendDirectError(agentID string, intentID string, errCode string, message string) {
@@ -998,16 +1024,16 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 	}
 
 	var isConsumable bool
-	var hungerRestore int
+	var hungerRestore, healthRestore int
 	var itemName string
-	err = s.db.QueryRow("SELECT is_consumable, hunger_restore, name FROM items WHERE id = ?", payload.ItemID).Scan(&isConsumable, &hungerRestore, &itemName)
+	err = s.db.QueryRow("SELECT is_consumable, hunger_restore, COALESCE(health_restore, 0), name FROM items WHERE id = ?", payload.ItemID).Scan(&isConsumable, &hungerRestore, &healthRestore, &itemName)
 	if err != nil {
 		s.sendDirectError(agentID, intentID, "ITEM_NOT_FOUND", fmt.Sprintf("Item %s does not exist", payload.ItemID))
 		return
 	}
 
-	if !isConsumable || hungerRestore <= 0 {
-		s.sendDirectError(agentID, intentID, "NOT_CONSUMABLE", fmt.Sprintf("%s is not edible", itemName))
+	if !isConsumable || (hungerRestore <= 0 && healthRestore <= 0) {
+		s.sendDirectError(agentID, intentID, "NOT_CONSUMABLE", fmt.Sprintf("%s cannot be consumed", itemName))
 		return
 	}
 
@@ -1040,7 +1066,14 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 		newHunger = 100
 	}
 
-	_, err = tx.Exec("UPDATE characters SET hunger = ? WHERE id = ?", newHunger, agentID)
+	var currentHealth int
+	_ = tx.QueryRow("SELECT health FROM characters WHERE id = ?", agentID).Scan(&currentHealth)
+	newHealth := currentHealth + (healthRestore * payload.Quantity)
+	if newHealth > 100 {
+		newHealth = 100
+	}
+
+	_, err = tx.Exec("UPDATE characters SET hunger = ?, health = ? WHERE id = ?", newHunger, newHealth, agentID)
 	if err != nil {
 		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
 		return
@@ -1051,7 +1084,9 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 		"item_id":         payload.ItemID,
 		"quantity":        payload.Quantity,
 		"hunger_restored": hungerRestore * payload.Quantity,
+		"health_restored": healthRestore * payload.Quantity,
 		"new_hunger":      newHunger,
+		"new_health":      newHealth,
 	})
 	if _, err := db.RecordEventLog(tx, currentTick, "EAT", agentID, "", currentLocation, string(eventPayload)); err != nil {
 		log.Printf("Failed to record eat event log: %v", err)
@@ -1063,7 +1098,7 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 	}
 
 	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
-	sysMsg := fmt.Sprintf("%s consumed %s and restored hunger.", agentID, itemName)
+	sysMsg := fmt.Sprintf("%s consumed %s and restored vitality.", agentID, itemName)
 	_ = s.mqttServer.Publish(sysTopic, []byte(sysMsg), false, 0)
 
 	respMap := map[string]interface{}{
@@ -1073,6 +1108,7 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 		"item_id":       payload.ItemID,
 		"quantity":      payload.Quantity,
 		"hunger":        newHunger,
+		"health":        newHealth,
 		"narrative_log": fmt.Sprintf("You ate %s and satisfied your hunger (Hunger: %d/100).", itemName, newHunger),
 	}
 	if respBytes, err := json.Marshal(respMap); err == nil {

@@ -61,15 +61,7 @@ func ParseAndRepairIntent(rawText string) (Intent, error) {
 		}
 	}
 
-	// B. If MOVE target is missing or malformed, default to town_square
-	if intent.Action == "MOVE" {
-		intent.Payload, _ = json.Marshal(map[string]string{"target_location": "town_square"})
-		if fixed, fixErr := ValidateIntent(intent); fixErr == nil {
-			return fixed, nil
-		}
-	}
-
-	// C. If payload is missing for FORAGE, default to firewood
+	// B. If payload is missing for FORAGE, default to firewood
 	if intent.Action == "FORAGE" {
 		intent.Payload, _ = json.Marshal(map[string]interface{}{"target_resource": "firewood", "duration_ticks": 60})
 		if fixed, fixErr := ValidateIntent(intent); fixErr == nil {
@@ -116,10 +108,14 @@ func GenerateIntentWithRetry(
 
 		lastErr = err
 		// Append corrective instruction for the next retry attempt
-		currentPrompt = fmt.Sprintf(
-			"%s\n\n[CORRECTION REQUIRED - ATTEMPT %d]: Your previous output failed validation: %s. Respond ONLY with valid JSON having 'thought', 'action', and 'payload'.",
-			prompt, attempt+1, err.Error(),
+		correction := fmt.Sprintf(
+			"Your previous output failed validation: %s. Respond ONLY with valid JSON having 'thought', 'action', and 'payload'.",
+			err.Error(),
 		)
+		if intent.Action == "MOVE" {
+			correction += " For MOVE, choose a target_location ID explicitly listed among the exits in your current observation; movement is only to a directly connected location. Never use a default destination, guess an ID, or target your current location. If no move is appropriate, choose another action."
+		}
+		currentPrompt = fmt.Sprintf("%s\n\n[CORRECTION REQUIRED - ATTEMPT %d]: %s", prompt, attempt+1, correction)
 	}
 
 	// Ultimate fallback for SLMs when retries are exhausted:
@@ -127,6 +123,16 @@ func GenerateIntentWithRetry(
 	// If it was a JSON/intent generation attempt, fallback to a safe action like LOOK rather than leaking raw JSON into chat.
 	trimmed := strings.TrimSpace(lastRawOutput)
 	if trimmed != "" {
+		if containsPromptMetadata(trimmed) {
+			fallbackIntent := Intent{
+				IntentID: GenerateIntentID(),
+				Thought:  "Failed to generate valid intent JSON",
+				Action:   "CANCEL_ACTION",
+				Payload:  json.RawMessage("{}"),
+			}
+			return ValidateIntent(fallbackIntent)
+		}
+
 		isJsonAttempt := strings.Contains(trimmed, "{") || strings.Contains(trimmed, "\"action\"") || strings.Contains(trimmed, "\"thought\"") || strings.Contains(trimmed, "```")
 
 		var fallbackIntent Intent
@@ -152,4 +158,18 @@ func GenerateIntentWithRetry(
 	}
 
 	return Intent{}, fmt.Errorf("intent generation failed after %d attempts: %w", maxRetries+1, lastErr)
+}
+
+func containsPromptMetadata(text string) bool {
+	upper := strings.ToUpper(text)
+	for _, marker := range []string{
+		"[CORRECTION REQUIRED",
+		"=== STANDARD RULES ===",
+		"=== INSTRUCTION ===",
+	} {
+		if strings.Contains(upper, marker) {
+			return true
+		}
+	}
+	return false
 }

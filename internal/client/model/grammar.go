@@ -14,7 +14,7 @@ func DefaultAgentIntentGrammar() string {
 action-type ::= "\"MOVE\"" | "\"CHAT\"" | "\"TRANSFER\"" | "\"GIVE\"" | "\"FORAGE\"" | "\"COLLECT\"" | "\"CANCEL_ACTION\"" | "\"DROP\"" | "\"PICKUP\"" | "\"EQUIP\"" | "\"UNEQUIP\"" | "\"CRAFT\"" | "\"LOOK\"" | "\"STATUS\"" | "\"BUY\"" | "\"RESTOCK\"" | "\"EAT\"" | "\"REST\""
 payload ::= move-payload | chat-payload | transfer-payload | forage-payload | empty-payload | item-payload | craft-payload | buy-payload | restock-payload
 move-payload ::= "{" ws "\"target_location\"" ws ":" ws string ws "}"
-chat-payload ::= string | "{" ws "\"message\"" ws ":" ws string ws "}"
+chat-payload ::= "{" ws "\"message\"" ws ":" ws string ws "}"
 transfer-payload ::= "{" ws "\"recipient_id\"" ws ":" ws string ws "," ws "\"amount\"" ws ":" ws integer ws ("," ws "\"item_id\"" ws ":" ws string ws "," ws "\"quantity\"" ws ":" ws integer ws)? "}"
 forage-payload ::= "{" ws "\"target_resource\"" ws ":" ws string ws ("," ws "\"duration_ticks\"" ws ":" ws integer ws)? "}"
 empty-payload ::= "{" ws "}"

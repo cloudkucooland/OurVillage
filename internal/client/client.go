@@ -162,7 +162,12 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		engine,
 		cfg.Client.AgentID,
 		time.Duration(cfg.Cognition.ReflectionIntervalTicks)*time.Second,
+		time.Duration(cfg.Memory.SynthesisTimeoutSeconds)*time.Second,
 	)
+	synthesizer.SetSocialPresenceChecker(func() bool {
+		isResting := strings.EqualFold(ctxMgr.Status(), "RESTING")
+		return ctxMgr.RoomPopulation() > 0 && !isResting
+	})
 	var synthesisStatuses chan string
 	if cfg.Client.TUI {
 		synthesisStatuses = make(chan string, 8)
@@ -626,6 +631,9 @@ func RunClient(ctx context.Context, cfg *Config) error {
 				return nil, nil, fmt.Errorf("load self-reflections: %w", err)
 			}
 			return traits, reflections, nil
+		})
+		tuiModel.SetProjectProvider(func() ([]memory.PersonalProject, error) {
+			return memoryStore.GetProjects(false, 20)
 		})
 		p := tea.NewProgram(tuiModel, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {

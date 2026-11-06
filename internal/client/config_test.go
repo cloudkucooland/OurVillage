@@ -60,6 +60,11 @@ cognition:
   tick_interval_debounce_ms: 3500
   chat_response_probability: 0.95
   idle_threshold_ticks: 15
+
+memory:
+  db_path: "~/.agentmud/memory_custom.db"
+  max_reflections_per_peer: 8
+  synthesis_timeout_seconds: 180
 `
 
 	if err := os.WriteFile(configPath, []byte(yamlData), 0644); err != nil {
@@ -106,6 +111,15 @@ cognition:
 	}
 	if cfg.Cognition.IdleThresholdTicks != 15 {
 		t.Errorf("expected idle threshold 15, got %d", cfg.Cognition.IdleThresholdTicks)
+	}
+	if cfg.Memory.DBPath != "~/.agentmud/memory_custom.db" {
+		t.Errorf("expected ~/.agentmud/memory_custom.db, got %s", cfg.Memory.DBPath)
+	}
+	if cfg.Memory.MaxReflectionsPerPeer != 8 {
+		t.Errorf("expected max reflections 8, got %d", cfg.Memory.MaxReflectionsPerPeer)
+	}
+	if cfg.Memory.SynthesisTimeoutSeconds != 180 {
+		t.Errorf("expected synthesis timeout 180, got %d", cfg.Memory.SynthesisTimeoutSeconds)
 	}
 }
 

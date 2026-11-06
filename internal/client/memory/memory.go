@@ -385,6 +385,14 @@ func (m *ClientMemoryStore) MarkEventsReflected(ids []int64) error {
 	return err
 }
 
+func (m *ClientMemoryStore) PruneProcessedEvents() error {
+	_, err := m.db.Exec(`
+		DELETE FROM client_event_history
+		WHERE reflection_processed = 1 AND (event_type != 'ACTION_RESULT' OR project_processed = 1)
+	`)
+	return err
+}
+
 func (m *ClientMemoryStore) DeferEvents(ids []int64, retryAfter time.Duration) error {
 	if len(ids) == 0 {
 		return nil

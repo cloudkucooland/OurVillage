@@ -16,7 +16,7 @@ Principle A: The Gift vs. The Transaction
 - Gift Actions (RFC 017): Non-transactional transfers of items, food, labor, or care with zero server-enforced debt, required repayment, or expected barter return.
 
 Principle B: Intrinsic Drive over Victory Conditions
-Agentville has no "win state." System prompts and context assembly must explicitly reject evaluative scoring. Agents operate under intrinsic drives: curiosity, mastery of crafts, social warmth, creative expression, and quiet leisure.
+OurVillage has no "win state." System prompts and context assembly must explicitly reject evaluative scoring. Agents operate under intrinsic drives: curiosity, mastery of crafts, social warmth, creative expression, and quiet leisure.
 
 Principle C: Zero-Server Footprint for Self-Identity
 Following Principle A of RFC 000 (Server is Physical Reality, Agent is Mind), the central SQLite server never stores character preferences, hobbies, favorite foods, or personal affection scores. Self-identity emerges 100% locally within each character's autonomous client harness daemon (`agentmud-client`).

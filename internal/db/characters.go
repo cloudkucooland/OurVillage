@@ -13,6 +13,7 @@ type ItemSeed struct {
 	WeightKg      float64
 	IsConsumable  bool
 	HungerRestore int
+	HealthRestore int
 	IsContainer   bool
 	CapacityKg    float64
 	SlotLimit     int
@@ -79,6 +80,8 @@ var DefaultItems = []ItemSeed{
 	{ID: "spiced_elderflower_syrup", Name: "Spiced Elderflower Syrup", Description: "Sweet, aromatic cordial brewed from elderflowers, honey, and river spices.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 15},
 	{ID: "mint_tea", Name: "Mug of Mint Tea", Description: "A warm, soothing herbal infusion of wild mint and fresh water.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 10},
 	{ID: "elderflower_wine", Name: "Jug of Elderflower Wine", Description: "Delicate floral fruit wine with hints of honey and elder blossoms.", WeightKg: 1.0, IsConsumable: true, HungerRestore: 15},
+	{ID: "willowbark_tea", Name: "Willowbark Tea", Description: "A bitter herbal infusion used to reduce fevers and heal body wear.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 5, HealthRestore: 20},
+	{ID: "charcoal_draught", Name: "Activated Charcoal Draught", Description: "A medicinal draught to neutralize toxins and restore vitality.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 5, HealthRestore: 25},
 }
 
 var DefaultCharacters = []CharacterSeed{
@@ -158,14 +161,15 @@ var DefaultCharacters = []CharacterSeed{
 func SeedItemsAndCharacters(db *sql.DB) error {
 	// Seed Items
 	itemQuery := `
-	INSERT INTO items (id, name, description, weight_kg, is_consumable, hunger_restore, is_container, capacity_kg, slot_limit)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO items (id, name, description, weight_kg, is_consumable, hunger_restore, health_restore, is_container, capacity_kg, slot_limit)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		name=excluded.name,
 		description=excluded.description,
 		weight_kg=excluded.weight_kg,
 		is_consumable=excluded.is_consumable,
 		hunger_restore=excluded.hunger_restore,
+		health_restore=excluded.health_restore,
 		is_container=excluded.is_container,
 		capacity_kg=excluded.capacity_kg,
 		slot_limit=excluded.slot_limit;
@@ -185,7 +189,7 @@ func SeedItemsAndCharacters(db *sql.DB) error {
 		if item.IsContainer {
 			containerVal = 1
 		}
-		_, err := itemStmt.Exec(item.ID, item.Name, item.Description, item.WeightKg, consumableVal, item.HungerRestore, containerVal, item.CapacityKg, item.SlotLimit)
+		_, err := itemStmt.Exec(item.ID, item.Name, item.Description, item.WeightKg, consumableVal, item.HungerRestore, item.HealthRestore, containerVal, item.CapacityKg, item.SlotLimit)
 		if err != nil {
 			return fmt.Errorf("failed to seed item %s: %w", item.ID, err)
 		}
@@ -255,7 +259,9 @@ func SeedItemsAndCharacters(db *sql.DB) error {
 
 		// Initialize default skills at level 1
 		for _, skillID := range []string{"foraging", "woodcutting", "herbalism", "crafting"} {
-			_, _ = skillStmt.Exec(char.ID, skillID, 1, 0)
+			if _, err := skillStmt.Exec(char.ID, skillID, 1, 0); err != nil {
+				return fmt.Errorf("failed to seed %s skill for character %s: %w", skillID, char.ID, err)
+			}
 		}
 	}
 

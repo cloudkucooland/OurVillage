@@ -17,19 +17,32 @@ type PerceptionData struct {
 
 // CharacterOverview captures character attributes, encumbrance, and inventory.
 type CharacterOverview struct {
-	ID                string               `json:"id"`
-	Name              string               `json:"name"`
-	Occupation        string               `json:"occupation"`
-	Gold              int                  `json:"gold"`
-	Hunger            int                  `json:"hunger"`
-	Energy            int                  `json:"energy"`
-	Status            string               `json:"status"`
-	CurrentLocation   string               `json:"current_location"`
-	EquippedContainer string               `json:"equipped_container,omitempty"`
-	CarryingWeightKg  float64              `json:"carrying_weight_kg"`
-	Encumbrance       EncumbranceState     `json:"encumbrance"`
-	MaxLimitKg        float64              `json:"max_limit_kg"`
-	Inventory         []InventoryItemEntry `json:"inventory"`
+	ID                string                `json:"id"`
+	Name              string                `json:"name"`
+	Occupation        string                `json:"occupation"`
+	Gold              int                   `json:"gold"`
+	Hunger            int                   `json:"hunger"`
+	Energy            int                   `json:"energy"`
+	Status            string                `json:"status"`
+	CurrentLocation   string                `json:"current_location"`
+	EquippedContainer string                `json:"equipped_container,omitempty"`
+	CarryingWeightKg  float64               `json:"carrying_weight_kg"`
+	MaxCapacityKg     float64               `json:"max_capacity_kg"`
+	OverburdenLimitKg float64               `json:"overburden_limit_kg"`
+	SlotsUsed         int                   `json:"slots_used"`
+	MaxSlots          int                   `json:"max_slots"`
+	Encumbrance       EncumbranceState      `json:"encumbrance"`
+	MaxLimitKg        float64               `json:"max_limit_kg"`
+	Skills            []CharacterSkillEntry `json:"skills"`
+	Inventory         []InventoryItemEntry  `json:"inventory"`
+}
+
+type CharacterSkillEntry struct {
+	SkillID       string `json:"skill_id"`
+	Level         int    `json:"level"`
+	Experience    int    `json:"experience"`
+	XPIntoLevel   int    `json:"xp_into_level"`
+	XPToNextLevel int    `json:"xp_to_next_level"`
 }
 
 // InventoryItemEntry captures an inventory item with mass.
@@ -58,21 +71,26 @@ type LocationOverview struct {
 
 // AvailableRecipeEntry captures crafting recipes available at location workstations.
 type AvailableRecipeEntry struct {
-	RecipeID       string             `json:"recipe_id"`
-	RecipeName     string             `json:"recipe_name"`
-	OutputItemID   string             `json:"output_item_id"`
-	OutputQuantity int                `json:"output_quantity"`
-	DurationTicks  int                `json:"duration_ticks"`
-	EnergyCost     int                `json:"energy_cost"`
-	Ingredients    []RecipeIngredient `json:"ingredients"`
+	RecipeID          string             `json:"recipe_id"`
+	RecipeName        string             `json:"recipe_name"`
+	OutputItemID      string             `json:"output_item_id"`
+	OutputQuantity    int                `json:"output_quantity"`
+	DurationTicks     int                `json:"duration_ticks"`
+	BaseDurationTicks int                `json:"base_duration_ticks"`
+	EnergyCost        int                `json:"energy_cost"`
+	RequiredSkillID   string             `json:"required_skill_id,omitempty"`
+	SkillLevel        int                `json:"skill_level,omitempty"`
+	MinSkillLevel     int                `json:"min_skill_level,omitempty"`
+	Ingredients       []RecipeIngredient `json:"ingredients"`
 }
 
 // ShopItemEntry captures items available for purchase at a location storefront.
 type ShopItemEntry struct {
-	ItemID    string `json:"item_id"`
-	Name      string `json:"name"`
-	PriceGold int    `json:"price_gold"`
-	StockQty  int    `json:"stock_quantity"`
+	ItemID    string  `json:"item_id"`
+	Name      string  `json:"name"`
+	PriceGold int     `json:"price_gold"`
+	StockQty  int     `json:"stock_quantity"`
+	WeightKg  float64 `json:"weight_kg"`
 }
 
 // ConnectedLocationEntry captures adjacent graph nodes and travel ticks.
@@ -149,8 +167,36 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 		return nil, fmt.Errorf("failed to evaluate weight info: %w", err)
 	}
 	char.CarryingWeightKg = weightInfo.TotalWeightKg
+	char.MaxCapacityKg = weightInfo.MaxCapacityKg
+	char.OverburdenLimitKg = weightInfo.OverburdenLimitKg
+	char.SlotsUsed = weightInfo.SlotsUsed
+	char.MaxSlots = weightInfo.MaxSlots
 	char.Encumbrance = weightInfo.Encumbrance
 	char.MaxLimitKg = weightInfo.OverburdenLimitKg
+
+	skillRows, err := database.Query(`
+		SELECT skill_id, level, experience FROM character_skills
+		WHERE character_id = ? ORDER BY skill_id
+	`, characterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query character skills: %w", err)
+	}
+	defer skillRows.Close()
+	char.Skills = make([]CharacterSkillEntry, 0)
+	for skillRows.Next() {
+		var skill CharacterSkillEntry
+		if err := skillRows.Scan(&skill.SkillID, &skill.Level, &skill.Experience); err != nil {
+			return nil, fmt.Errorf("failed to scan character skill: %w", err)
+		}
+		if skill.Level < 100 {
+			skill.XPIntoLevel = skill.Experience % 100
+			skill.XPToNextLevel = 100 - skill.XPIntoLevel
+		}
+		char.Skills = append(char.Skills, skill)
+	}
+	if err := skillRows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read character skills: %w", err)
+	}
 
 	// 3. Query Inventory Items
 	invRows, err := database.Query(`
@@ -306,7 +352,7 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 
 	// 9. Query Shop Items at Location
 	shopRows, err := database.Query(`
-		SELECT si.item_id, itm.name, si.price_gold, si.stock_quantity
+		SELECT si.item_id, itm.name, si.price_gold, si.stock_quantity, itm.weight_kg
 		FROM location_shop_items si
 		JOIN items itm ON si.item_id = itm.id
 		WHERE si.location_id = ? AND si.stock_quantity > 0
@@ -317,26 +363,31 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 		loc.ShopItems = make([]ShopItemEntry, 0)
 		for shopRows.Next() {
 			var si ShopItemEntry
-			if err := shopRows.Scan(&si.ItemID, &si.Name, &si.PriceGold, &si.StockQty); err == nil {
+			if err := shopRows.Scan(&si.ItemID, &si.Name, &si.PriceGold, &si.StockQty, &si.WeightKg); err == nil {
 				loc.ShopItems = append(loc.ShopItems, si)
 			}
 		}
 	}
 
-	// 10. Query Available Crafting Recipes at Location Workstations or Universal
+	// 10. Query known recipes that meet skill requirements and are usable at this location.
 	recRows, err := database.Query(`
-		SELECT r.id, r.name, r.output_item_id, r.output_quantity, r.duration_ticks, r.energy_cost
+		SELECT r.id, r.name, r.output_item_id, r.output_quantity, r.duration_ticks, r.energy_cost,
+		       COALESCE(r.required_skill_id, ''), COALESCE(cs.level, 1), COALESCE(r.min_skill_level, 1)
 		FROM recipes r
+		JOIN character_known_recipes kr ON kr.recipe_id = r.id AND kr.character_id = ?
 		LEFT JOIN workstations w ON r.required_station = w.id
-		WHERE r.required_station IS NULL OR r.required_station = '' OR w.location_id = ?
+		LEFT JOIN character_skills cs ON cs.character_id = kr.character_id AND cs.skill_id = r.required_skill_id
+		WHERE (r.required_station IS NULL OR r.required_station = '' OR w.location_id = ?)
+		  AND (r.required_skill_id IS NULL OR r.required_skill_id = '' OR COALESCE(cs.level, 1) >= COALESCE(r.min_skill_level, 1))
 		ORDER BY r.name ASC
-	`, char.CurrentLocation)
+	`, characterID, char.CurrentLocation)
 	if err == nil {
 		defer recRows.Close()
 		loc.AvailableRecipes = make([]AvailableRecipeEntry, 0)
 		for recRows.Next() {
 			var rec AvailableRecipeEntry
-			if err := recRows.Scan(&rec.RecipeID, &rec.RecipeName, &rec.OutputItemID, &rec.OutputQuantity, &rec.DurationTicks, &rec.EnergyCost); err == nil {
+			if err := recRows.Scan(&rec.RecipeID, &rec.RecipeName, &rec.OutputItemID, &rec.OutputQuantity, &rec.BaseDurationTicks, &rec.EnergyCost, &rec.RequiredSkillID, &rec.SkillLevel, &rec.MinSkillLevel); err == nil {
+				rec.DurationTicks = ScaleDurationForSkill(rec.BaseDurationTicks, rec.SkillLevel)
 				ingRows, err := database.Query("SELECT item_id, quantity FROM recipe_ingredients WHERE recipe_id = ?", rec.RecipeID)
 				if err == nil {
 					defer ingRows.Close()
@@ -364,12 +415,15 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 func GetPublicCharacterDescription(db *sql.DB, characterID string) (*CharacterPublicPerception, error) {
 	var name, occupation, status string
 	var energy, hunger, health int
-	var equippedContainer sql.NullString
+	var equippedName string
 
 	err := db.QueryRow(`
-		SELECT name, occupation, status, energy, hunger, health, equipped_container_id 
-		FROM characters WHERE id = ?
-	`, characterID).Scan(&name, &occupation, &status, &energy, &hunger, &health, &equippedContainer)
+		SELECT c.name, c.occupation, c.status, c.energy, c.hunger, c.health,
+			COALESCE(i.name, c.equipped_container_id, '')
+		FROM characters c
+		LEFT JOIN items i ON i.id = c.equipped_container_id
+		WHERE c.id = ?
+	`, characterID).Scan(&name, &occupation, &status, &energy, &hunger, &health, &equippedName)
 	if err != nil {
 		return nil, fmt.Errorf("character %q not found for public description: %w", characterID, err)
 	}
@@ -400,8 +454,8 @@ func GetPublicCharacterDescription(db *sql.DB, characterID string) (*CharacterPu
 	}
 
 	equippedStr := "unassisted (no container)"
-	if equippedContainer.Valid && equippedContainer.String != "" {
-		equippedStr = equippedContainer.String
+	if equippedName != "" {
+		equippedStr = equippedName
 	}
 
 	return &CharacterPublicPerception{

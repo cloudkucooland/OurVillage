@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -12,6 +13,7 @@ func TestDefaultAgentIntentGrammar(t *testing.T) {
 	if err := ValidateGBNF(grammar); err != nil {
 		t.Fatalf("DefaultAgentIntentGrammar failed validation: %v", err)
 	}
+	assertObjectChatPayload(t, grammar)
 }
 
 func TestLoadGrammarFile(t *testing.T) {
@@ -28,6 +30,15 @@ func TestLoadGrammarFile(t *testing.T) {
 	}
 	if content == "" {
 		t.Fatal("grammar file content is empty")
+	}
+	assertObjectChatPayload(t, content)
+}
+
+func assertObjectChatPayload(t *testing.T, grammar string) {
+	t.Helper()
+	const chatPayloadRule = `chat-payload ::= "{" ws "\"message\"" ws ":" ws string ws "}"`
+	if !strings.Contains(grammar, chatPayloadRule) {
+		t.Fatalf("chat payload grammar must require a message object; missing %q", chatPayloadRule)
 	}
 }
 

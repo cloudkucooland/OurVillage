@@ -259,6 +259,25 @@ func TestSkillsProgression(t *testing.T) {
 	}
 }
 
+func TestScaleDurationForSkill(t *testing.T) {
+	tests := []struct {
+		baseTicks int
+		level     int
+		want      int
+	}{
+		{baseTicks: 60, level: 1, want: 60},
+		{baseTicks: 4, level: 10, want: 3},
+		{baseTicks: 60, level: 100, want: 44},
+		{baseTicks: 1, level: 100, want: 1},
+		{baseTicks: 0, level: 10, want: 1},
+	}
+	for _, tt := range tests {
+		if got := ScaleDurationForSkill(tt.baseTicks, tt.level); got != tt.want {
+			t.Errorf("ScaleDurationForSkill(%d, %d) = %d, want %d", tt.baseTicks, tt.level, got, tt.want)
+		}
+	}
+}
+
 func TestResolveForaging(t *testing.T) {
 	database, err := InitDB(":memory:")
 	if err != nil {
@@ -296,5 +315,34 @@ func TestResolveForaging(t *testing.T) {
 	err = database.QueryRow("SELECT status FROM characters WHERE id = 'eldon_millwright'").Scan(&status)
 	if err != nil || status != "IDLE" {
 		t.Errorf("Expected character status IDLE, got %s (err: %v)", status, err)
+	}
+}
+
+func TestResolveForagingReturnsSkillLevelUpAndPersistenceErrors(t *testing.T) {
+	database, err := InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	if _, _, err := AddSkillXP(database, "eldon_millwright", "woodcutting", 95); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("UPDATE characters SET current_location = 'deep_forest' WHERE id = 'eldon_millwright'"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := ResolveForaging(database, "eldon_millwright", "deep_forest", "firewood", 60, "clear", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.PreviousLevel != 1 || result.SkillLevel != 2 || result.SkillExperience != 110 {
+		t.Errorf("foraging skill progress = %d -> %d (%d XP), want 1 -> 2 (110 XP)", result.PreviousLevel, result.SkillLevel, result.SkillExperience)
+	}
+
+	if _, err := database.Exec("DROP TABLE character_skills"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveForaging(database, "eldon_millwright", "deep_forest", "firewood", 60, "clear", false); err == nil {
+		t.Fatal("expected skill persistence failure to fail foraging resolution")
 	}
 }

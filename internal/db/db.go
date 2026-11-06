@@ -166,6 +166,14 @@ CREATE TABLE IF NOT EXISTS character_skills (
     PRIMARY KEY (character_id, skill_id)
 );
 
+CREATE TABLE IF NOT EXISTS character_known_recipes (
+    character_id TEXT NOT NULL,
+    recipe_id TEXT NOT NULL,
+    PRIMARY KEY (character_id, recipe_id),
+    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+    FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+);
+
 -- Items Table (Mass, Container & Consumable Properties - RFC 007)
 CREATE TABLE IF NOT EXISTS items (
     id TEXT PRIMARY KEY,
@@ -238,6 +246,10 @@ CREATE INDEX IF NOT EXISTS idx_event_logs_location ON event_logs(location_id);
 			return nil, fmt.Errorf("failed to seed crafting recipes and workstations: %w", err)
 		}
 
+		if err := InitializeAllCharacterProgression(db); err != nil {
+			return nil, fmt.Errorf("initialize character progression: %w", err)
+		}
+
 		if err := SeedShopInventory(db); err != nil {
 			return nil, fmt.Errorf("failed to seed shop inventory: %w", err)
 		}
@@ -266,6 +278,7 @@ func migrateSchema(db *sql.DB) error {
 		{"items", "is_container", "BOOLEAN DEFAULT 0"},
 		{"items", "capacity_kg", "REAL DEFAULT 0.0"},
 		{"items", "slot_limit", "INTEGER DEFAULT 0"},
+		{"items", "health_restore", "INTEGER DEFAULT 0"},
 	}
 
 	for _, col := range columnsToAdd {

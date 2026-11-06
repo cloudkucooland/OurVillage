@@ -288,6 +288,16 @@ func TestAdminCommands(t *testing.T) {
 	if len(password) < 40 || strings.ContainsAny(password, "+/=") {
 		t.Errorf("expected a URL-safe generated password, got %q", password)
 	}
+	var knownRecipeCount, skillCount int
+	if err := database.QueryRow("SELECT COUNT(*) FROM character_known_recipes WHERE character_id = 'test_character'").Scan(&knownRecipeCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow("SELECT COUNT(*) FROM character_skills WHERE character_id = 'test_character'").Scan(&skillCount); err != nil {
+		t.Fatal(err)
+	}
+	if knownRecipeCount == 0 || skillCount != 4 {
+		t.Errorf("created character progression not initialized: known recipes=%d skills=%d", knownRecipeCount, skillCount)
+	}
 	if _, err := adm.CreateCharacter("bad_character", "Bad Character", "Tester", "missing_location", "Persona"); err == nil {
 		t.Error("expected character creation at a missing location to fail")
 	}

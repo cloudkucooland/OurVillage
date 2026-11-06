@@ -1,6 +1,7 @@
 package db
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -76,6 +77,22 @@ func TestCanCraftRecipeValidation(t *testing.T) {
 	if !ok {
 		t.Errorf("Expected basket weaving to be allowed anywhere with ingredients, failed with: %s", reason)
 	}
+
+	// Recipe knowledge is personal, and known recipes can still require more skill.
+	ok, reason, err = CanCraftRecipe(database, "eldon_millwright", "brew_berry_wine")
+	if err != nil {
+		t.Fatalf("Error checking unknown recipe: %v", err)
+	}
+	if ok || !strings.Contains(reason, "does not know") {
+		t.Errorf("expected Eldon not to know brew_berry_wine, got ok=%v reason=%q", ok, reason)
+	}
+	ok, reason, err = CanCraftRecipe(database, "martha_barkeep", "brew_elderflower_wine")
+	if err != nil {
+		t.Fatalf("Error checking skill-gated recipe: %v", err)
+	}
+	if ok || !strings.Contains(reason, "level 3 required") {
+		t.Errorf("expected level requirement for elderflower wine, got ok=%v reason=%q", ok, reason)
+	}
 }
 
 func TestStartAndResolveCrafting(t *testing.T) {
@@ -140,6 +157,31 @@ func TestStartAndResolveCrafting(t *testing.T) {
 	}
 }
 
+func TestStartCraftingUsesSkillAdjustedDuration(t *testing.T) {
+	database, err := InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	if _, err := database.Exec(`
+		UPDATE character_skills SET level = 10, experience = 900
+		WHERE character_id = 'eldon_millwright' AND skill_id = 'crafting'
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := StartCrafting(database, "eldon_millwright", "mill_flour", "intent_fast_craft", 100); err != nil {
+		t.Fatal(err)
+	}
+	var endTick uint64
+	if err := database.QueryRow("SELECT action_end_tick FROM characters WHERE id = 'eldon_millwright'").Scan(&endTick); err != nil {
+		t.Fatal(err)
+	}
+	if endTick != 103 {
+		t.Errorf("skill level 10 should reduce 4-tick recipe to 3 ticks, end tick = %d", endTick)
+	}
+}
+
 func TestCancelCraftingRefund(t *testing.T) {
 	database, err := InitDB(":memory:")
 	if err != nil {
@@ -176,5 +218,27 @@ func TestCancelCraftingRefund(t *testing.T) {
 	_ = database.QueryRow("SELECT status FROM characters WHERE id = 'eldon_millwright'").Scan(&status)
 	if status != "IDLE" {
 		t.Errorf("Expected status IDLE, got %s", status)
+	}
+}
+
+func TestResolveCraftingReturnsSkillPersistenceErrors(t *testing.T) {
+	database, err := InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	if _, err := database.Exec("DROP TABLE character_skills"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveCrafting(database, "eldon_millwright", "mill_flour"); err == nil {
+		t.Fatal("expected skill persistence failure to fail crafting resolution")
+	}
+	var energy int
+	if err := database.QueryRow("SELECT energy FROM characters WHERE id = 'eldon_millwright'").Scan(&energy); err != nil {
+		t.Fatal(err)
+	}
+	if energy != 100 {
+		t.Errorf("crafting should not deduct energy when skill progression fails, got %d", energy)
 	}
 }

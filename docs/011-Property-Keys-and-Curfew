@@ -3,7 +3,7 @@ Status: Proposed / Future Development
 Target Stack: Pure Go, Mochi-MQTT, SQLite
 
 1. Executive Summary
-Agentville balances individual property rights with civic order. RFC 011 defines physical door locks, key delegation, trespassing violations, and municipal curfew enforcement (night watch sweeps).
+OurVillage balances individual property rights with civic order. RFC 011 defines physical door locks, key delegation, trespassing violations, and municipal curfew enforcement (night watch sweeps).
 
 2. Locks & Key Access Control
 Locations can have their doors toggled between `UNLOCKED` and `LOCKED`:

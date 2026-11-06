@@ -3,7 +3,7 @@ Status: Proposed / Future Development
 Target Stack: Pure Go, Mochi-MQTT, SQLite, RKLLM
 
 1. Executive Summary & Design Invariants
-RFC 008 defines the deterministic multi-stage crafting engine for Agentville. Raw materials obtained from foraging or farming cannot be consumed or traded as finished goods without processing at designated spatial workstations. This enforces economic interdependence between primary producers, crafters, and consumers.
+RFC 008 defines the deterministic multi-stage crafting engine for OurVillage. Raw materials obtained from foraging or farming cannot be consumed or traded as finished goods without processing at designated spatial workstations. This enforces economic interdependence between primary producers, crafters, and consumers.
 
 2. Crafting Workstations & Location Requisites
 Crafting is strictly bound to physical locations that feature the necessary tools and machinery:

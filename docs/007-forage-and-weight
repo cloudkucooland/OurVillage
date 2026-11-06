@@ -3,7 +3,7 @@ Status: Draft / Proposed
 Target Stack: Pure Go, Mochi-MQTT, SQLite, RKLLM
 
 1. Executive Summary & Weight Invariants
-RFC 007 establishes the physical resource foraging engine, metric mass (kg) carrying capacity, skill-based progression, and spatial inventory constraints for Agentville. Item transport and physical limits are strictly enforced by the server. Carrying limits directly dictate energy expenditure, movement permissions, and trade logistics.
+RFC 007 establishes the physical resource foraging engine, metric mass (kg) carrying capacity, skill-based progression, and spatial inventory constraints for OurVillage. Item transport and physical limits are strictly enforced by the server. Carrying limits directly dictate energy expenditure, movement permissions, and trade logistics.
 
 2. Carrying Capacity & Container Gear
 Base unassisted carrying capacity is 20.0 kg. Exceeding capacity imposes server-enforced encumbrance penalties:

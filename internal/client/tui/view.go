@@ -67,7 +67,7 @@ func (m TUIModel) View() string {
 	header := headerBoxStyle.Render(titleStyle.Render("AgentMUD Client TUI") + "\n" + headerText)
 
 	// 2. Tabs
-	tabs := []string{"Sensory Log", "Inventory", "Relationships", "Self Identity"}
+	tabs := []string{"Sensory Log", "Inventory", "Relationships", "Self Identity", "Projects"}
 	var renderedTabs []string
 	for i, t := range tabs {
 		if i == m.tab {
@@ -148,6 +148,35 @@ func (m TUIModel) View() string {
 		} else {
 			for _, reflection := range m.selfReflections {
 				lines = append(lines, fmt.Sprintf("- [Tick %d] %s", reflection.Tick, reflection.ReflectionText))
+			}
+		}
+		contentBody = strings.Join(lines, "\n")
+	case 4:
+		var lines []string
+		lines = append(lines, "=== PERSONAL PROJECTS ===")
+		if m.projectLoadError != "" {
+			lines = append(lines, "Unable to load personal projects: "+m.projectLoadError)
+		} else if len(m.personalProjects) == 0 {
+			lines = append(lines, "[No personal projects recorded yet]")
+		} else {
+			for _, proj := range m.personalProjects {
+				lines = append(lines, fmt.Sprintf("• [%s] %s (%s)", proj.Status, proj.Title, proj.ID))
+				if proj.Motivation != "" {
+					lines = append(lines, fmt.Sprintf("  - Motivation: %s", proj.Motivation))
+				}
+				if proj.Progress != "" {
+					lines = append(lines, fmt.Sprintf("  - Progress: %s", proj.Progress))
+				}
+				if proj.NextStep != "" {
+					lines = append(lines, fmt.Sprintf("  - Next Step: %s", proj.NextStep))
+				}
+				if len(proj.People) > 0 {
+					lines = append(lines, fmt.Sprintf("  - People: %s", strings.Join(proj.People, ", ")))
+				}
+				if len(proj.Locations) > 0 {
+					lines = append(lines, fmt.Sprintf("  - Locations: %s", strings.Join(proj.Locations, ", ")))
+				}
+				lines = append(lines, "")
 			}
 		}
 		contentBody = strings.Join(lines, "\n")

@@ -12,7 +12,7 @@ func TestCloudGeminiEngine_Generate(t *testing.T) {
 		if r.Method != "POST" {
 			t.Errorf("expected POST request, got %s", r.Method)
 		}
-		if r.URL.Path != "/v1beta/models/gemini-1.5-flash:generateContent" {
+		if r.URL.Path != "/v1beta/models/gemini-3.5-flash-lite:generateContent" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		if r.URL.Query().Get("key") != "test-gemini-key" {
@@ -38,9 +38,8 @@ func TestCloudGeminiEngine_Generate(t *testing.T) {
 	defer server.Close()
 
 	engine := NewCloudGeminiEngine(GeminiEngineConfig{
-		APIBase:   server.URL,
-		APIKey:    "test-gemini-key",
-		ModelName: "gemini-1.5-flash",
+		APIBase: server.URL,
+		APIKey:  "test-gemini-key",
 	})
 
 	if engine.Name() != "cloud-gemini" {

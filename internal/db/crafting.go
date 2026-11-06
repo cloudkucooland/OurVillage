@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 )
 
 type Workstation struct {
@@ -39,15 +40,19 @@ type CraftYieldItem struct {
 }
 
 type CraftResolutionResult struct {
-	RecipeID       string           `json:"recipe_id"`
-	RecipeName     string           `json:"recipe_name"`
-	TicksSpent     int              `json:"ticks_spent"`
-	EnergyDeducted int              `json:"energy_deducted"`
-	SkillXPGained  int              `json:"skill_xp_gained"`
-	Yield          []CraftYieldItem `json:"yield"`
-	TotalWeightKg  float64          `json:"total_weight_kg"`
-	MaxCapacityKg  float64          `json:"max_capacity_kg"`
-	NarrativeLog   string           `json:"narrative_log"`
+	RecipeID        string           `json:"recipe_id"`
+	RecipeName      string           `json:"recipe_name"`
+	TicksSpent      int              `json:"ticks_spent"`
+	EnergyDeducted  int              `json:"energy_deducted"`
+	SkillID         string           `json:"skill_id"`
+	SkillXPGained   int              `json:"skill_xp_gained"`
+	SkillLevel      int              `json:"skill_level"`
+	PreviousLevel   int              `json:"previous_skill_level"`
+	SkillExperience int              `json:"skill_experience"`
+	Yield           []CraftYieldItem `json:"yield"`
+	TotalWeightKg   float64          `json:"total_weight_kg"`
+	MaxCapacityKg   float64          `json:"max_capacity_kg"`
+	NarrativeLog    string           `json:"narrative_log"`
 }
 
 var DefaultWorkstations = []Workstation{
@@ -113,7 +118,7 @@ var DefaultRecipes = []Recipe{
 		DurationTicks:   12,
 		EnergyCost:      10,
 		RequiredSkillID: "crafting",
-		MinSkillLevel:   1,
+		MinSkillLevel:   2,
 		Ingredients: []RecipeIngredient{
 			{ItemID: "iron_ingot", Quantity: 1},
 			{ItemID: "firewood", Quantity: 1},
@@ -171,7 +176,7 @@ var DefaultRecipes = []Recipe{
 		DurationTicks:   12,
 		EnergyCost:      5,
 		RequiredSkillID: "crafting",
-		MinSkillLevel:   1,
+		MinSkillLevel:   2,
 		Ingredients: []RecipeIngredient{
 			{ItemID: "elderflowers", Quantity: 3},
 			{ItemID: "honey_jar", Quantity: 1},
@@ -202,7 +207,7 @@ var DefaultRecipes = []Recipe{
 		DurationTicks:   15,
 		EnergyCost:      6,
 		RequiredSkillID: "crafting",
-		MinSkillLevel:   1,
+		MinSkillLevel:   3,
 		Ingredients: []RecipeIngredient{
 			{ItemID: "elderflowers", Quantity: 4},
 			{ItemID: "honey_jar", Quantity: 1},
@@ -290,6 +295,77 @@ func SeedCrafting(db *sql.DB) error {
 	return nil
 }
 
+// InitializeCharacterProgression gives a character baseline skills and occupation-appropriate recipe knowledge.
+func InitializeCharacterProgression(q Queryable, characterID, occupation string) error {
+	for _, skillID := range []string{"foraging", "woodcutting", "herbalism", "crafting"} {
+		if _, err := execQueryable(q, `
+			INSERT INTO character_skills (character_id, skill_id, level, experience)
+			VALUES (?, ?, 1, 0)
+			ON CONFLICT(character_id, skill_id) DO NOTHING
+		`, characterID, skillID); err != nil {
+			return fmt.Errorf("seed %s skill: %w", skillID, err)
+		}
+	}
+
+	recipes := []string{"weave_basket"}
+	role := strings.ToLower(occupation)
+	switch {
+	case strings.Contains(role, "millwright"):
+		recipes = append(recipes, "mill_flour")
+	case strings.Contains(role, "barkeep"):
+		recipes = append(recipes, "brew_berry_wine", "brew_elderflower_wine", "brew_mint_tea")
+	case strings.Contains(role, "blacksmith"), strings.Contains(role, "smith"):
+		recipes = append(recipes, "smelt_iron", "forge_hammer")
+	case strings.Contains(role, "farmer"):
+		recipes = append(recipes, "mill_flour", "bake_bread")
+	case strings.Contains(role, "herbalist"), strings.Contains(role, "apothecary"):
+		recipes = append(recipes, "brew_elderflower_syrup", "brew_mint_tea")
+	}
+
+	for _, recipeID := range recipes {
+		if _, err := execQueryable(q, `
+			INSERT INTO character_known_recipes (character_id, recipe_id) VALUES (?, ?)
+			ON CONFLICT(character_id, recipe_id) DO NOTHING
+		`, characterID, recipeID); err != nil {
+			return fmt.Errorf("seed recipe knowledge for %s: %w", recipeID, err)
+		}
+	}
+	return nil
+}
+
+func InitializeAllCharacterProgression(database *sql.DB) error {
+	rows, err := database.Query("SELECT id, occupation FROM characters ORDER BY id")
+	if err != nil {
+		return fmt.Errorf("query characters for progression initialization: %w", err)
+	}
+	type character struct {
+		id         string
+		occupation string
+	}
+	var characters []character
+	for rows.Next() {
+		var c character
+		if err := rows.Scan(&c.id, &c.occupation); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan character for progression initialization: %w", err)
+		}
+		characters = append(characters, c)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("read characters for progression initialization: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close progression character query: %w", err)
+	}
+	for _, c := range characters {
+		if err := InitializeCharacterProgression(database, c.id, c.occupation); err != nil {
+			return fmt.Errorf("initialize progression for %s: %w", c.id, err)
+		}
+	}
+	return nil
+}
+
 // GetRecipe fetches a recipe and its required ingredients by ID.
 func GetRecipe(db *sql.DB, recipeID string) (*Recipe, error) {
 	var r Recipe
@@ -336,6 +412,15 @@ func CanCraftRecipe(db *sql.DB, characterID, recipeID string) (bool, string, err
 		return false, err.Error(), nil
 	}
 
+	var known int
+	err = db.QueryRow("SELECT 1 FROM character_known_recipes WHERE character_id = ? AND recipe_id = ?", characterID, recipeID).Scan(&known)
+	if err == sql.ErrNoRows {
+		return false, fmt.Sprintf("character does not know recipe '%s'", recipeID), nil
+	}
+	if err != nil {
+		return false, "failed to check recipe knowledge", err
+	}
+
 	// 1. Character Status and Energy check
 	var status, charLocation string
 	var energy int
@@ -365,8 +450,11 @@ func CanCraftRecipe(db *sql.DB, characterID, recipeID string) (bool, string, err
 	}
 
 	// 3. Skill Level check
-	if recipe.RequiredSkillID != "" && recipe.MinSkillLevel > 1 {
-		skillLvl, _, _ := GetSkill(db, characterID, recipe.RequiredSkillID)
+	if recipe.RequiredSkillID != "" && recipe.MinSkillLevel > 0 {
+		skillLvl, _, err := GetSkill(db, characterID, recipe.RequiredSkillID)
+		if err != nil {
+			return false, fmt.Sprintf("failed to load %s skill", recipe.RequiredSkillID), err
+		}
 		if skillLvl < recipe.MinSkillLevel {
 			return false, fmt.Sprintf("skill '%s' level %d required (currently level %d)", recipe.RequiredSkillID, recipe.MinSkillLevel, skillLvl), nil
 		}
@@ -429,7 +517,16 @@ func StartCrafting(db *sql.DB, characterID, recipeID, intentID string, startTick
 	}
 
 	// Action Lock character: status = 'CRAFTING'
-	endTick := startTick + uint64(recipe.DurationTicks)
+	skillID := recipe.RequiredSkillID
+	if skillID == "" {
+		skillID = "crafting"
+	}
+	skillLevel, _, err := GetSkill(tx, characterID, skillID)
+	if err != nil {
+		return fmt.Errorf("failed to load %s skill: %w", skillID, err)
+	}
+	duration := ScaleDurationForSkill(recipe.DurationTicks, skillLevel)
+	endTick := startTick + uint64(duration)
 	_, err = tx.Exec(`
 		UPDATE characters 
 		SET status = 'CRAFTING', action_start_tick = ?, action_end_tick = ?, action_target = ?, action_intent_id = ?
@@ -491,7 +588,7 @@ func CancelCrafting(db *sql.DB, characterID string) error {
 }
 
 // ResolveCrafting completes the recipe, awards output items, deducts energy, grants skill XP, and resets status.
-func ResolveCrafting(db *sql.DB, characterID, recipeID string) (*CraftResolutionResult, error) {
+func ResolveCrafting(db *sql.DB, characterID, recipeID string, elapsedTicks ...int) (*CraftResolutionResult, error) {
 	recipe, err := GetRecipe(db, recipeID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get recipe: %w", err)
@@ -519,19 +616,26 @@ func ResolveCrafting(db *sql.DB, characterID, recipeID string) (*CraftResolution
 		locName = charLoc
 	}
 
-	// 3. Deduct Energy
-	_, _ = db.Exec("UPDATE characters SET energy = MAX(0, energy - ?) WHERE id = ?", recipe.EnergyCost, characterID)
-
-	// 4. Award Skill XP
+	// 3. Award Skill XP
 	skillID := recipe.RequiredSkillID
 	if skillID == "" {
 		skillID = "crafting"
+	}
+	previousLevel, _, err := GetSkill(db, characterID, skillID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load %s skill: %w", skillID, err)
 	}
 	xpGained := recipe.DurationTicks / 2
 	if xpGained < 5 {
 		xpGained = 5
 	}
-	_, _, _ = AddSkillXP(db, characterID, skillID, xpGained)
+	skillLevel, skillExperience, err := AddSkillXP(db, characterID, skillID, xpGained)
+	if err != nil {
+		return nil, fmt.Errorf("failed to award %s skill experience: %w", skillID, err)
+	}
+
+	// 4. Deduct Energy
+	_, _ = db.Exec("UPDATE characters SET energy = MAX(0, energy - ?) WHERE id = ?", recipe.EnergyCost, characterID)
 
 	// 5. Add output items to inventory (or ground if overburdened)
 	wInfo, _ := GetCharacterWeightInfo(db, characterID)
@@ -580,14 +684,22 @@ func ResolveCrafting(db *sql.DB, characterID, recipeID string) (*CraftResolution
 		maxCap = finalWInfo.MaxCapacityKg
 	}
 
+	ticksSpent := ScaleDurationForSkill(recipe.DurationTicks, previousLevel)
+	if len(elapsedTicks) > 0 && elapsedTicks[0] > 0 {
+		ticksSpent = elapsedTicks[0]
+	}
 	narrativeLog := fmt.Sprintf("You crafted %dx %s at %s.", recipe.OutputQuantity, outputName, locName)
 
 	return &CraftResolutionResult{
-		RecipeID:       recipe.ID,
-		RecipeName:     recipe.Name,
-		TicksSpent:     recipe.DurationTicks,
-		EnergyDeducted: recipe.EnergyCost,
-		SkillXPGained:  xpGained,
+		RecipeID:        recipe.ID,
+		RecipeName:      recipe.Name,
+		TicksSpent:      ticksSpent,
+		EnergyDeducted:  recipe.EnergyCost,
+		SkillID:         skillID,
+		SkillXPGained:   xpGained,
+		SkillLevel:      skillLevel,
+		PreviousLevel:   previousLevel,
+		SkillExperience: skillExperience,
 		Yield: []CraftYieldItem{
 			{
 				ItemID:   recipe.OutputItemID,

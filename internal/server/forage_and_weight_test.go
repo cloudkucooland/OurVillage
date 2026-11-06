@@ -4,8 +4,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"agentmud/internal/db"
+	mqtt "github.com/mochi-mqtt/server/v2"
+	"github.com/mochi-mqtt/server/v2/packets"
 )
 
 func TestOverburdenedMovementRejection(t *testing.T) {
@@ -203,6 +206,18 @@ func TestTemporalForagingAndActionLock(t *testing.T) {
 		t.Fatalf("Failed to create server: %v", err)
 	}
 	srv.SetTickCount(48)
+	if _, err := database.Exec(`
+		UPDATE character_skills SET experience = 95
+		WHERE character_id = 'eldon_millwright' AND skill_id = 'woodcutting'
+	`); err != nil {
+		t.Fatal(err)
+	}
+	directMessages := make(chan []byte, 4)
+	if err := srv.mqttServer.Subscribe("world/agents/eldon_millwright/direct", 0, func(_ *mqtt.Client, _ packets.Subscription, pk packets.Packet) {
+		directMessages <- pk.Payload
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Move Eldon to deep_forest
 	_, _ = database.Exec("UPDATE characters SET current_location = 'deep_forest' WHERE id = 'eldon_millwright'")
@@ -213,6 +228,11 @@ func TestTemporalForagingAndActionLock(t *testing.T) {
 		DurationTicks:  60,
 	})
 	srv.handleForage("eldon_millwright", "req_forage_1001", foragePayload)
+	select {
+	case <-directMessages:
+	case <-time.After(time.Second):
+		t.Fatal("expected forage start response")
+	}
 
 	// Check character state transitioned to FORAGING
 	var status string
@@ -249,6 +269,31 @@ func TestTemporalForagingAndActionLock(t *testing.T) {
 	// 3. Fast-forward clock to action_end_tick and process tick
 	srv.SetTickCount(endTick)
 	srv.ProcessTick()
+	deadline := time.After(time.Second)
+	levelUpReceived := false
+	for !levelUpReceived {
+		select {
+		case response := <-directMessages:
+			var direct struct {
+				Message       string `json:"message"`
+				PrivateStatus struct {
+					Skills []db.CharacterSkillEntry `json:"skills"`
+				} `json:"private_status"`
+			}
+			if err := json.Unmarshal(response, &direct); err != nil {
+				t.Fatal(err)
+			}
+			if direct.Message != "You reached woodcutting level 2!" {
+				continue
+			}
+			if len(direct.PrivateStatus.Skills) == 0 {
+				t.Error("completion response did not refresh private skill state")
+			}
+			levelUpReceived = true
+		case <-deadline:
+			t.Fatal("expected forage level-up completion response")
+		}
+	}
 
 	// 4. Verify resolution
 	err = database.QueryRow("SELECT status FROM characters WHERE id = 'eldon_millwright'").Scan(&status)
@@ -346,5 +391,38 @@ func TestEquipAndUnequipIntents(t *testing.T) {
 	_ = database.QueryRow("SELECT equipped_container_id FROM characters WHERE id = 'eldon_millwright'").Scan(&equipped)
 	if equipped.Valid && equipped.String != "" {
 		t.Errorf("Expected container to be unequipped, got %v", equipped)
+	}
+}
+
+func TestForagingDurationUsesSkillLevel(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	srv, err := NewServer(database, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("UPDATE characters SET current_location = 'deep_forest' WHERE id = 'eldon_millwright'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`
+		UPDATE character_skills SET level = 10, experience = 900
+		WHERE character_id = 'eldon_millwright' AND skill_id = 'woodcutting'
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, _ := json.Marshal(ForagePayload{TargetResource: "firewood", DurationTicks: 60})
+	srv.handleForage("eldon_millwright", "req_forage_skill", payload)
+	var startTick, endTick uint64
+	if err := database.QueryRow(`
+		SELECT action_start_tick, action_end_tick FROM characters WHERE id = 'eldon_millwright'
+	`).Scan(&startTick, &endTick); err != nil {
+		t.Fatal(err)
+	}
+	if endTick-startTick != 51 {
+		t.Errorf("skill level 10 should reduce 60-tick forage to 51 ticks, got %d", endTick-startTick)
 	}
 }

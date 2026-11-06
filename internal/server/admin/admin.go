@@ -8,6 +8,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"agentmud/internal/db"
 )
 
 type AdminCommandExecutor struct {
@@ -340,12 +342,24 @@ func (a *AdminCommandExecutor) CreateCharacter(characterID, name, occupation, lo
 		return "", fmt.Errorf("generate character password: %w", err)
 	}
 	password := base64.RawURLEncoding.EncodeToString(secret)
-	_, err := a.db.Exec(`
+	tx, err := a.db.Begin()
+	if err != nil {
+		return "", fmt.Errorf("begin character creation: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 		INSERT INTO characters (id, name, persona_prompt, occupation, current_location, controller_type, mqtt_password)
 		VALUES (?, ?, ?, ?, ?, 'agent', ?)
 	`, characterID, name, persona, occupation, locationID, password)
 	if err != nil {
 		return "", fmt.Errorf("create character %q: %w", characterID, err)
+	}
+	if err := db.InitializeCharacterProgression(tx, characterID, occupation); err != nil {
+		return "", fmt.Errorf("initialize progression for character %q: %w", characterID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit character creation: %w", err)
 	}
 	return password, nil
 }

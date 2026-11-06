@@ -103,3 +103,55 @@ func TestRestIntentAndCompletion(t *testing.T) {
 		t.Errorf("Expected 90 energy after resting, got %d", energy)
 	}
 }
+
+func TestHerbalMedicineConsumableAndRestHealthRecovery(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to init in-memory DB: %v", err)
+	}
+	defer database.Close()
+
+	srv, err := NewServer(database, "")
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+
+	// Reduce Eldon's health to 60
+	_, err = database.Exec("UPDATE characters SET health = 60 WHERE id = 'eldon_millwright'")
+	if err != nil {
+		t.Fatalf("Failed to set health: %v", err)
+	}
+	_, err = database.Exec("INSERT INTO inventories (character_id, item_id, quantity) VALUES ('eldon_millwright', 'willowbark_tea', 1)")
+	if err != nil {
+		t.Fatalf("Failed to insert willowbark_tea: %v", err)
+	}
+
+	// Test consuming willowbark_tea (restores 20 health)
+	teaPayload, _ := json.Marshal(ItemActionPayload{ItemID: "willowbark_tea", Quantity: 1})
+	srv.handleEat("eldon_millwright", "req_eat_tea", teaPayload)
+
+	var health int
+	_ = database.QueryRow("SELECT health FROM characters WHERE id = 'eldon_millwright'").Scan(&health)
+	if health != 80 { // 60 + 20
+		t.Errorf("Expected health to be 80 after drinking willowbark tea, got %d", health)
+	}
+
+	// Test resting health recovery (+15 health)
+	_, err = database.Exec("UPDATE characters SET energy = 50, health = 70 WHERE id = 'eldon_millwright'")
+	if err != nil {
+		t.Fatalf("Failed to reset stats: %v", err)
+	}
+
+	restPayload, _ := json.Marshal(map[string]int{"duration_ticks": 10})
+	srv.handleRest("eldon_millwright", "req_rest_health", restPayload)
+
+	var startTick, endTick uint64
+	_ = database.QueryRow("SELECT action_start_tick, action_end_tick FROM characters WHERE id = 'eldon_millwright'").Scan(&startTick, &endTick)
+	srv.SetTickCount(endTick)
+	srv.ProcessTick()
+
+	_ = database.QueryRow("SELECT health FROM characters WHERE id = 'eldon_millwright'").Scan(&health)
+	if health != 85 { // 70 + 15
+		t.Errorf("Expected health to be 85 after resting, got %d", health)
+	}
+}

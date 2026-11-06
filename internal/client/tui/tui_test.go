@@ -92,3 +92,42 @@ func TestSelfIdentityTabLoadsAndDisplaysPersistedMemory(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectsTabLoadsAndDisplaysProjects(t *testing.T) {
+	ctxMgr := spatial.NewContextManager(spatial.ContextManagerConfig{AgentID: "elda"})
+	model := NewTUIModel(context.Background(), "elda", nil, nil, ctxMgr, nil, nil, nil, nil, nil, nil)
+	model.SetProjectProvider(func() ([]memory.PersonalProject, error) {
+		return []memory.PersonalProject{{
+			ID:         "restore-mill",
+			Title:      "Restore the Old Mill",
+			Motivation: "Ensure grinding capacity for the village",
+			Status:     "active",
+			Progress:   "Gathered timber",
+			NextStep:   "Repair the water wheel",
+			People:     []string{"mira"},
+			Locations:  []string{"mill"},
+		}}, nil
+	})
+
+	var updated tea.Model
+	var cmd tea.Cmd
+	for i := 0; i < 4; i++ {
+		updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyTab})
+		model = updated.(TUIModel)
+	}
+	if model.tab != 4 {
+		t.Fatalf("tab after four switches = %d, want projects", model.tab)
+	}
+	if cmd == nil {
+		t.Fatal("selecting Projects did not request project data")
+	}
+	loaded := cmd()
+	updated, _ = model.Update(loaded)
+	model = updated.(TUIModel)
+	view := model.View()
+	for _, expected := range []string{"Projects", "Restore the Old Mill", "restore-mill", "Gathered timber", "Repair the water wheel"} {
+		if !strings.Contains(view, expected) {
+			t.Errorf("Projects view missing %q", expected)
+		}
+	}
+}

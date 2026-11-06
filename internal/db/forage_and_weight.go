@@ -87,7 +87,11 @@ type ForageYieldItem struct {
 type ForageResolutionResult struct {
 	TicksSpent      int               `json:"ticks_spent"`
 	EnergyDeducted  int               `json:"energy_deducted"`
+	SkillID         string            `json:"skill_id"`
 	SkillXPGained   int               `json:"skill_xp_gained"`
+	SkillLevel      int               `json:"skill_level"`
+	PreviousLevel   int               `json:"previous_skill_level"`
+	SkillExperience int               `json:"skill_experience"`
 	Yield           []ForageYieldItem `json:"yield"`
 	TotalWeightKg   float64           `json:"total_weight_kg"`
 	MaxCapacityKg   float64           `json:"max_capacity_kg"`
@@ -398,7 +402,9 @@ func GetSkill(q Queryable, characterID, skillID string) (int, int, error) {
 	var level, exp int
 	err := q.QueryRow("SELECT level, experience FROM character_skills WHERE character_id = ? AND skill_id = ?", characterID, skillID).Scan(&level, &exp)
 	if err == sql.ErrNoRows {
-		_, _ = execQueryable(q, "INSERT INTO character_skills (character_id, skill_id, level, experience) VALUES (?, ?, 1, 0)", characterID, skillID)
+		if _, err := execQueryable(q, "INSERT INTO character_skills (character_id, skill_id, level, experience) VALUES (?, ?, 1, 0)", characterID, skillID); err != nil {
+			return 1, 0, fmt.Errorf("failed to initialize character skill: %w", err)
+		}
 		return 1, 0, nil
 	} else if err != nil {
 		return 1, 0, fmt.Errorf("failed to query character skill: %w", err)
@@ -434,6 +440,22 @@ func AddSkillXP(q Queryable, characterID, skillID string, xpGained int) (int, in
 	}
 
 	return newLevel, newExp, nil
+}
+
+// ScaleDurationForSkill reduces action time with diminishing returns, capped at a 30% reduction.
+func ScaleDurationForSkill(baseTicks, skillLevel int) int {
+	if baseTicks <= 1 {
+		return max(baseTicks, 1)
+	}
+	if skillLevel < 1 {
+		skillLevel = 1
+	}
+	reduction := 0.30 * float64(skillLevel-1) / float64(skillLevel+9)
+	scaled := int(math.Round(float64(baseTicks) * (1 - reduction)))
+	if scaled < 1 {
+		return 1
+	}
+	return scaled
 }
 
 // GetSkillForResource maps a target resource to its associated skill domain.
@@ -582,7 +604,7 @@ func ResolveForaging(
 	skillID := GetSkillForResource(targetResource)
 	skillLevel, _, err := GetSkill(tx, characterID, skillID)
 	if err != nil {
-		skillLevel = 1
+		return nil, fmt.Errorf("failed to load %s skill: %w", skillID, err)
 	}
 
 	var currentStock, maxStock int
@@ -663,7 +685,10 @@ func ResolveForaging(
 	if xpGained < 1 && ticksSpent > 0 {
 		xpGained = 1
 	}
-	newSkillLevel, _, _ := AddSkillXP(tx, characterID, skillID, xpGained)
+	newSkillLevel, newSkillExperience, err := AddSkillXP(tx, characterID, skillID, xpGained)
+	if err != nil {
+		return nil, fmt.Errorf("failed to award %s skill experience: %w", skillID, err)
+	}
 
 	initialWeightInfo, _ := GetCharacterWeightInfo(tx, characterID)
 	baseEnergy := (float64(ticksSpent) / 60.0) * (10.0 - (float64(skillLevel) * 0.05))
@@ -769,7 +794,11 @@ func ResolveForaging(
 	return &ForageResolutionResult{
 		TicksSpent:      ticksSpent,
 		EnergyDeducted:  energyDeducted,
+		SkillID:         skillID,
 		SkillXPGained:   xpGained,
+		SkillLevel:      newSkillLevel,
+		PreviousLevel:   skillLevel,
+		SkillExperience: newSkillExperience,
 		Yield:           yieldItems,
 		TotalWeightKg:   finalWeight,
 		MaxCapacityKg:   maxCap,

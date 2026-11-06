@@ -42,7 +42,10 @@ type TUIModel struct {
 	identityTraits       []memory.IdentityTrait
 	selfReflections      []memory.SelfReflection
 	identityLoadError    string
-	tab                  int // Sensory Log, Inventory, Relationships, Self Identity
+	projectProvider      func() ([]memory.PersonalProject, error)
+	personalProjects     []memory.PersonalProject
+	projectLoadError     string
+	tab                  int // Sensory Log, Inventory, Relationships, Self Identity, Projects
 	width                int
 	height               int
 	quitting             bool
@@ -64,6 +67,11 @@ type selfIdentityMsg struct {
 	err         error
 }
 
+type projectsMsg struct {
+	projects []memory.PersonalProject
+	err      error
+}
+
 func (e errMsg) Error() string { return e.err.Error() }
 
 func (m *TUIModel) SetSynthesisStatusChannel(statuses <-chan string) {
@@ -72,6 +80,10 @@ func (m *TUIModel) SetSynthesisStatusChannel(statuses <-chan string) {
 
 func (m *TUIModel) SetSelfIdentityProvider(provider func() ([]memory.IdentityTrait, []memory.SelfReflection, error)) {
 	m.selfIdentityProvider = provider
+}
+
+func (m *TUIModel) SetProjectProvider(provider func() ([]memory.PersonalProject, error)) {
+	m.projectProvider = provider
 }
 
 func NewTUIModel(ctx context.Context, agentID string, client mqtt.Client, tracker *dispatcher.CorrelationTracker, ctxMgr *spatial.ContextManager, engine model.InferenceEngine, fetchMemories func() []spatial.PeerMemoryContext, chatProb *float64, refFreq *int, temp *float64, debounce *int) TUIModel {
@@ -127,9 +139,11 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case tea.KeyTab:
-			m.tab = (m.tab + 1) % 4
+			m.tab = (m.tab + 1) % 5
 			if m.tab == 3 {
 				return m, m.loadSelfIdentity()
+			} else if m.tab == 4 {
+				return m, m.loadProjects()
 			}
 			return m, nil
 		case tea.KeyEnter:
@@ -178,6 +192,9 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.tab == 3 && strings.Contains(m.backgroundStatus, "reflecting on identity — complete") {
 			return m, tea.Batch(m.listenSynthesisStatus(), m.loadSelfIdentity())
 		}
+		if m.tab == 4 && strings.Contains(m.backgroundStatus, "updating personal projects — complete") {
+			return m, tea.Batch(m.listenSynthesisStatus(), m.loadProjects())
+		}
 		return m, m.listenSynthesisStatus()
 
 	case selfIdentityMsg:
@@ -187,6 +204,15 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.identityTraits = msg.traits
 			m.selfReflections = msg.reflections
+		}
+		return m, nil
+
+	case projectsMsg:
+		m.projectLoadError = ""
+		if msg.err != nil {
+			m.projectLoadError = msg.err.Error()
+		} else {
+			m.personalProjects = msg.projects
 		}
 		return m, nil
 	}
@@ -203,6 +229,16 @@ func (m TUIModel) loadSelfIdentity() tea.Cmd {
 	return func() tea.Msg {
 		traits, reflections, err := m.selfIdentityProvider()
 		return selfIdentityMsg{traits: traits, reflections: reflections, err: err}
+	}
+}
+
+func (m TUIModel) loadProjects() tea.Cmd {
+	if m.projectProvider == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		projects, err := m.projectProvider()
+		return projectsMsg{projects: projects, err: err}
 	}
 }
 
