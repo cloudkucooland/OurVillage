@@ -63,6 +63,8 @@ type RestockPayload struct {
 	PriceGold int    `json:"price_gold"`
 }
 
+const minimumRestDurationTicks = 10
+
 type DirectResponse struct {
 	IntentID  string `json:"intent_id"`
 	Status    string `json:"status"`
@@ -1011,8 +1013,7 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 	}
 
 	var status, currentLocation string
-	var currentHunger int
-	err := s.db.QueryRow("SELECT status, current_location, hunger FROM characters WHERE id = ?", agentID).Scan(&status, &currentLocation, &currentHunger)
+	err := s.db.QueryRow("SELECT status, current_location FROM characters WHERE id = ?", agentID).Scan(&status, &currentLocation)
 	if err != nil {
 		s.sendDirectError(agentID, intentID, "CHARACTER_NOT_FOUND", "Character not found")
 		return
@@ -1037,13 +1038,6 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 		return
 	}
 
-	var invQty int
-	err = s.db.QueryRow("SELECT quantity FROM inventories WHERE character_id = ? AND item_id = ?", agentID, payload.ItemID).Scan(&invQty)
-	if err != nil || invQty < payload.Quantity {
-		s.sendDirectError(agentID, intentID, "INSUFFICIENT_ITEMS", fmt.Sprintf("Not enough %s in inventory (have %d, need %d)", payload.ItemID, invQty, payload.Quantity))
-		return
-	}
-
 	tx, err := s.db.Begin()
 	if err != nil {
 		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
@@ -1051,27 +1045,43 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 	}
 	defer tx.Rollback()
 
-	if invQty == payload.Quantity {
-		_, err = tx.Exec("DELETE FROM inventories WHERE character_id = ? AND item_id = ?", agentID, payload.ItemID)
-	} else {
-		_, err = tx.Exec("UPDATE inventories SET quantity = quantity - ? WHERE character_id = ? AND item_id = ?", payload.Quantity, agentID, payload.ItemID)
-	}
+	result, err := tx.Exec(
+		"UPDATE inventories SET quantity = quantity - ? WHERE character_id = ? AND item_id = ? AND quantity >= ?",
+		payload.Quantity, agentID, payload.ItemID, payload.Quantity,
+	)
 	if err != nil {
 		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
 		return
 	}
-
-	newHunger := currentHunger + (hungerRestore * payload.Quantity)
-	if newHunger > 100 {
-		newHunger = 100
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
+		return
+	}
+	if rowsAffected == 0 {
+		var invQty int
+		err = tx.QueryRow("SELECT quantity FROM inventories WHERE character_id = ? AND item_id = ?", agentID, payload.ItemID).Scan(&invQty)
+		if err != nil && err != sql.ErrNoRows {
+			s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
+			return
+		}
+		s.sendDirectError(agentID, intentID, "INSUFFICIENT_ITEMS", fmt.Sprintf("Not enough %s in inventory (have %d, need %d)", payload.ItemID, invQty, payload.Quantity))
+		return
+	}
+	if _, err := tx.Exec("DELETE FROM inventories WHERE character_id = ? AND item_id = ? AND quantity = 0", agentID, payload.ItemID); err != nil {
+		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
+		return
 	}
 
-	var currentHealth int
-	_ = tx.QueryRow("SELECT health FROM characters WHERE id = ?", agentID).Scan(&currentHealth)
-	newHealth := currentHealth + (healthRestore * payload.Quantity)
-	if newHealth > 100 {
-		newHealth = 100
+	var currentHunger, currentHealth int
+	if err := tx.QueryRow("SELECT hunger, health FROM characters WHERE id = ?", agentID).Scan(&currentHunger, &currentHealth); err != nil {
+		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
+		return
 	}
+	newHunger := consumableRestoredValue(currentHunger, hungerRestore, payload.Quantity)
+	newHealth := consumableRestoredValue(currentHealth, healthRestore, payload.Quantity)
+	hungerActuallyRestored := newHunger - currentHunger
+	healthActuallyRestored := newHealth - currentHealth
 
 	_, err = tx.Exec("UPDATE characters SET hunger = ?, health = ? WHERE id = ?", newHunger, newHealth, agentID)
 	if err != nil {
@@ -1083,8 +1093,8 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 	eventPayload, _ := json.Marshal(map[string]interface{}{
 		"item_id":         payload.ItemID,
 		"quantity":        payload.Quantity,
-		"hunger_restored": hungerRestore * payload.Quantity,
-		"health_restored": healthRestore * payload.Quantity,
+		"hunger_restored": hungerActuallyRestored,
+		"health_restored": healthActuallyRestored,
 		"new_hunger":      newHunger,
 		"new_health":      newHealth,
 	})
@@ -1098,18 +1108,34 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 	}
 
 	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
-	sysMsg := fmt.Sprintf("%s consumed %s and restored vitality.", agentID, itemName)
+	sysMsg := fmt.Sprintf("%s consumed %s.", agentID, itemName)
 	_ = s.mqttServer.Publish(sysTopic, []byte(sysMsg), false, 0)
 
+	recovery := make([]string, 0, 2)
+	if hungerActuallyRestored > 0 {
+		recovery = append(recovery, fmt.Sprintf("Hunger +%d", hungerActuallyRestored))
+	}
+	if healthActuallyRestored > 0 {
+		recovery = append(recovery, fmt.Sprintf("Health +%d", healthActuallyRestored))
+	}
+	var narrative string
+	if len(recovery) > 0 {
+		narrative = fmt.Sprintf("You consumed %s (%s).", itemName, strings.Join(recovery, ", "))
+	} else {
+		narrative = fmt.Sprintf("You consumed %s, but it restored neither hunger nor health.", itemName)
+	}
+
 	respMap := map[string]interface{}{
-		"intent_id":     intentID,
-		"status":        "SUCCESS",
-		"action":        "EAT",
-		"item_id":       payload.ItemID,
-		"quantity":      payload.Quantity,
-		"hunger":        newHunger,
-		"health":        newHealth,
-		"narrative_log": fmt.Sprintf("You ate %s and satisfied your hunger (Hunger: %d/100).", itemName, newHunger),
+		"intent_id":       intentID,
+		"status":          "SUCCESS",
+		"action":          "EAT",
+		"item_id":         payload.ItemID,
+		"quantity":        payload.Quantity,
+		"hunger":          newHunger,
+		"health":          newHealth,
+		"hunger_restored": hungerActuallyRestored,
+		"health_restored": healthActuallyRestored,
+		"narrative_log":   narrative,
 	}
 	if respBytes, err := json.Marshal(respMap); err == nil {
 		directTopic := fmt.Sprintf("world/agents/%s/direct", agentID)
@@ -1117,12 +1143,30 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 	}
 }
 
+func consumableRestoredValue(current, perItem, quantity int) int {
+	if current >= 100 {
+		return 100
+	}
+	if perItem <= 0 || quantity <= 0 {
+		return current
+	}
+
+	neededToCap := (100-current-1)/perItem + 1
+	if quantity >= neededToCap {
+		return 100
+	}
+	return current + perItem*quantity
+}
+
 func (s *Server) handleRest(agentID string, intentID string, rawPayload json.RawMessage) {
 	var payload struct {
 		DurationTicks int `json:"duration_ticks"`
 	}
 	if err := json.Unmarshal(rawPayload, &payload); err != nil || payload.DurationTicks <= 0 {
-		payload.DurationTicks = 10
+		payload.DurationTicks = minimumRestDurationTicks
+	}
+	if payload.DurationTicks < minimumRestDurationTicks {
+		payload.DurationTicks = minimumRestDurationTicks
 	}
 
 	var status, currentLocation string

@@ -2,9 +2,14 @@ package server
 
 import (
 	"encoding/json"
+	"strings"
+	"sync"
 	"testing"
 
 	"agentmud/internal/db"
+
+	mqtt "github.com/mochi-mqtt/server/v2"
+	"github.com/mochi-mqtt/server/v2/packets"
 )
 
 func TestEatIntent(t *testing.T) {
@@ -153,5 +158,118 @@ func TestHerbalMedicineConsumableAndRestHealthRecovery(t *testing.T) {
 	_ = database.QueryRow("SELECT health FROM characters WHERE id = 'eldon_millwright'").Scan(&health)
 	if health != 85 { // 70 + 15
 		t.Errorf("Expected health to be 85 after resting, got %d", health)
+	}
+}
+
+func TestEatReportsActualCappedRecovery(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	srv, err := NewServer(database, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`
+		UPDATE characters SET hunger = 98, health = 95 WHERE id = 'eldon_millwright';
+		INSERT INTO inventories (character_id, item_id, quantity) VALUES ('eldon_millwright', 'willowbark_tea', 1)
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	directChan := make(chan []byte, 1)
+	if err := srv.mqttServer.Subscribe("world/agents/eldon_millwright/direct", 0, func(_ *mqtt.Client, _ packets.Subscription, pk packets.Packet) {
+		directChan <- pk.Payload
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, _ := json.Marshal(ItemActionPayload{ItemID: "willowbark_tea", Quantity: 1})
+	srv.handleEat("eldon_millwright", "req_eat_capped", payload)
+
+	var response struct {
+		HungerRestored int    `json:"hunger_restored"`
+		HealthRestored int    `json:"health_restored"`
+		Narrative      string `json:"narrative_log"`
+	}
+	if err := json.Unmarshal(<-directChan, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.HungerRestored != 2 || response.HealthRestored != 5 {
+		t.Fatalf("reported recovery = hunger %d, health %d; want 2 and 5", response.HungerRestored, response.HealthRestored)
+	}
+	if !strings.Contains(response.Narrative, "Hunger +2, Health +5") {
+		t.Fatalf("narrative does not report actual capped recovery: %q", response.Narrative)
+	}
+}
+
+func TestEatConcurrentRequestsCannotConsumeSameMedicineTwice(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	database.SetMaxOpenConns(1)
+
+	srv, err := NewServer(database, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`
+		UPDATE characters SET health = 10 WHERE id = 'eldon_millwright';
+		INSERT INTO inventories (character_id, item_id, quantity) VALUES ('eldon_millwright', 'willowbark_tea', 1)
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, _ := json.Marshal(ItemActionPayload{ItemID: "willowbark_tea", Quantity: 1})
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			srv.handleEat("eldon_millwright", "req_eat_race", payload)
+		}()
+	}
+	wg.Wait()
+
+	var health int
+	if err := database.QueryRow("SELECT health FROM characters WHERE id = 'eldon_millwright'").Scan(&health); err != nil {
+		t.Fatal(err)
+	}
+	if health != 30 {
+		t.Fatalf("health after two requests for one medicine = %d, want 30", health)
+	}
+	var inventoryQuantity int
+	if err := database.QueryRow("SELECT COALESCE((SELECT quantity FROM inventories WHERE character_id = 'eldon_millwright' AND item_id = 'willowbark_tea'), 0)").Scan(&inventoryQuantity); err != nil {
+		t.Fatal(err)
+	}
+	if inventoryQuantity != 0 {
+		t.Fatalf("medicine inventory quantity = %d, want 0 after one consumption", inventoryQuantity)
+	}
+}
+
+func TestRestEnforcesMinimumDuration(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	srv, err := NewServer(database, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(map[string]int{"duration_ticks": 1})
+	srv.handleRest("eldon_millwright", "req_rest_minimum", payload)
+
+	var startTick, endTick uint64
+	if err := database.QueryRow("SELECT action_start_tick, action_end_tick FROM characters WHERE id = 'eldon_millwright'").Scan(&startTick, &endTick); err != nil {
+		t.Fatal(err)
+	}
+	if duration := endTick - startTick; duration < minimumRestDurationTicks {
+		t.Fatalf("rest duration = %d ticks, want at least %d", duration, minimumRestDurationTicks)
 	}
 }
