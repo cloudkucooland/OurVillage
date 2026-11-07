@@ -248,7 +248,7 @@ Operating LLM agents on resource-constrained devices like the Raspberry Pi intro
 - [x] Inject pairwise relationship sentiments and episodic memories (RFC 013).
 
 ### Phase 4: Intent Dispatcher & Error Recovery
-- [x] Intent validator verifying action enum (`MOVE`, `CHAT`, `TRANSFER`, `FORAGE`, `PICKUP`, `DROP`, `EQUIP`, `UNEQUIP`).
+- [x] Intent validator verifying action enum (`MOVE`, `CHAT`, `TRANSFER`, `FORAGE`, `PLANT`, `HARVEST`, `PICKUP`, `DROP`, `EQUIP`, `UNEQUIP`).
 - [x] Retry/repair loop for malformed JSON before dispatching to `world/agents/{agent_id}/intent`.
 - [x] Correlation tracker matching dispatched `intent_id` with incoming server direct execution results.
 
