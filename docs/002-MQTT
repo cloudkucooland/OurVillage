@@ -89,3 +89,22 @@ G. Intent: Pick Up Ground Item
     "quantity": 2
   }
 }
+
+H. Intent: Plant a Communal Farm Plot
+{
+  "intent_id": "req_9919",
+  "action": "PLANT",
+  "payload": {
+    "plot_id": "field_plot_1",
+    "crop_id": "wheat"
+  }
+}
+
+I. Intent: Harvest a Mature Farm Plot
+{
+  "intent_id": "req_9920",
+  "action": "HARVEST",
+  "payload": {
+    "plot_id": "field_plot_1"
+  }
+}

@@ -5,6 +5,8 @@ Target Stack: Pure Go, Mochi-MQTT, SQLite, RKLLM
 1. Executive Summary & Weight Invariants
 RFC 007 establishes the physical resource foraging engine, metric mass (kg) carrying capacity, skill-based progression, and spatial inventory constraints for OurVillage. Item transport and physical limits are strictly enforced by the server. Carrying limits directly dictate energy expenditure, movement permissions, and trade logistics.
 
+Wild foraging and cultivated agriculture are separate production mechanics. Foraging uses renewable `location_resources`; cultivated crops use persistent communal plots and mature according to world ticks. See RFC 019 (`docs/019-Agriculture`) for the implemented field and crop lifecycle.
+
 2. Carrying Capacity & Container Gear
 Base unassisted carrying capacity is 20.0 kg. Exceeding capacity imposes server-enforced encumbrance penalties:
 - 0.0 kg – 20.0 kg (Unencumbered): Standard movement speed and baseline energy decay.
