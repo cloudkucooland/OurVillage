@@ -251,6 +251,28 @@ func TestMissingExplicitConfigFails(t *testing.T) {
 	}
 }
 
+func TestResolvePlayerConfigRequiresAndLoadsCredentials(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "player.yaml")
+	if err := os.WriteFile(configPath, []byte(`
+client:
+  agent_id: "human_character"
+  password: "character-password"
+  broker_url: "tcp://world.example:1883"
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTMUD_CONFIG", configPath)
+
+	cfg, err := ResolvePlayerConfig(nil)
+	if err != nil {
+		t.Fatalf("ResolvePlayerConfig() error = %v", err)
+	}
+	if cfg.Client.AgentID != "human_character" || cfg.Client.Password != "character-password" || cfg.Client.BrokerURL != "tcp://world.example:1883" {
+		t.Fatalf("unexpected player config: %+v", cfg.Client)
+	}
+}
+
 func TestConfigToYAMLAndJSON(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Client.AgentID = "test_agent"

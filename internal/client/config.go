@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/urfave/cli/v3"
 	"gopkg.in/yaml.v3"
@@ -219,6 +220,53 @@ func ResolveConfig(cmd *cli.Command) (*Config, error) {
 		applyCLIOverrides(cmd, cfg)
 	}
 
+	return cfg, nil
+}
+
+// ResolvePlayerConfig loads the shared client configuration without resolving
+// or exposing any model-related command-line flags.
+func ResolvePlayerConfig(cmd *cli.Command) (*Config, error) {
+	cfg := DefaultConfig()
+	configPath := ""
+	explicitConfig := false
+	if cmd != nil && cmd.IsSet("config") {
+		configPath = cmd.String("config")
+		explicitConfig = true
+	} else if envPath := os.Getenv("AGENTMUD_CONFIG"); envPath != "" {
+		configPath = envPath
+		explicitConfig = true
+	} else {
+		for _, candidate := range []string{"agent.yaml", "agent.yml"} {
+			if _, err := os.Stat(candidate); err == nil {
+				configPath = candidate
+				break
+			}
+		}
+	}
+
+	if configPath == "" {
+		return nil, fmt.Errorf("player requires a config file; pass --config or create agent.yaml")
+	}
+
+	cfg.Client.AgentID = ""
+	cfg.Client.Password = ""
+	cfg.Client.BrokerURL = ""
+	if err := LoadConfigFile(configPath, cfg); err != nil {
+		if explicitConfig {
+			return nil, err
+		}
+		return nil, fmt.Errorf("error loading discovered config %q: %w", configPath, err)
+	}
+	if strings.TrimSpace(cfg.Client.AgentID) == "" {
+		return nil, fmt.Errorf("player config must set client.agent_id")
+	}
+	if strings.TrimSpace(cfg.Client.Password) == "" {
+		return nil, fmt.Errorf("player config must set client.password")
+	}
+	if strings.TrimSpace(cfg.Client.BrokerURL) == "" {
+		return nil, fmt.Errorf("player config must set client.broker_url")
+	}
+	applyEnvOverrides(cfg)
 	return cfg, nil
 }
 

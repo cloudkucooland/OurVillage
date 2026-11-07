@@ -151,6 +151,7 @@ model:
     context_size: 2048
     threads: 4
     gpu_layers: 0           # Set > 0 if compiled with Vulkan/OpenCL on Pi
+    max_tokens: 256         # Maximum generated tokens for each intent
     temperature: 0.7
     top_p: 0.9
     repeat_penalty: 1.15
@@ -170,7 +171,10 @@ cognition:
   chat_response_probability: 0.85
   max_sensory_log_lines: 12
   reflection_interval_ticks: 30
+  small_system: false      # Bound optional memories and recent logs for low-resource systems
 ```
+
+`cognition.small_system: true` caps recent sensory history at six entries and limits optional memories, projects, and location knowledge included in inference prompts. Core identity, current state, action rules, and recent observations are retained. The client logs each inference request's prompt byte/character counts and its duration; prompt contents are not logged.
 
 ---
 

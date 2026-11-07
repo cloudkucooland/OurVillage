@@ -342,3 +342,28 @@ func NewApp() *cli.Command {
 		},
 	}
 }
+
+// NewPlayerApp creates the human-controlled player's CLI entry point.
+func NewPlayerApp() *cli.Command {
+	return &cli.Command{
+		Name:        "ourvillage-player",
+		Usage:       "Control an OurVillage character directly",
+		Description: "A human-operated TUI with no model or autonomous decision-making. Reads client.agent_id, client.password, and client.broker_url from the existing client config.",
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:      "config",
+				Aliases:   []string{"c"},
+				Usage:     "Path to client configuration YAML/JSON file",
+				TakesFile: true,
+				Sources:   cli.EnvVars("AGENTMUD_CONFIG"),
+			},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			cfg, err := ResolvePlayerConfig(cmd)
+			if err != nil {
+				return fmt.Errorf("configuration error: %w", err)
+			}
+			return RunPlayer(ctx, cfg)
+		},
+	}
+}
