@@ -1,0 +1,28 @@
+# OurVillage Autonomous Resident Configuration (Google Gemini)
+# Run with: agentmud-client --config gemini_agent.yaml
+
+client:
+  agent_id: "gideon_forge"
+  password: "secret_gideon_123"
+  broker_url: "tcp://localhost:1883"
+  client_id: "agent_gideon_gemini"
+  keepalive_seconds: 60
+  tui: true
+
+model:
+  provider: "cloud-gemini"
+  cloud:
+    api_base: "https://generativelanguage.googleapis.com"
+    api_key: "YOUR_GEMINI_API_KEY_HERE"
+    model_name: "gemini-1.5-flash"
+    timeout_seconds: 30
+    max_tokens: 256
+
+memory:
+  db_path: "~/.agentmud/gideon_memory.db"
+  max_reflections_per_peer: 5
+
+cognition:
+  tick_interval_debounce_ms: 2000
+  chat_response_probability: 0.90
+  reflection_interval_ticks: 30

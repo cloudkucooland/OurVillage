@@ -1,0 +1,7 @@
+client:
+  agent_id: "scotus"
+  password: "AkKH7y-Qc3d4cEIng7Q9BOmFvxvLDaQBnNgIfgz8e0U"
+  broker_url: "tcp://localhost:1883"
+  client_id: "scotus_rkllm_client"
+  keepalive_seconds: 60
+  log_file: "~/.agentmud/scotus.log"

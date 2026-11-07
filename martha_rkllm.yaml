@@ -1,0 +1,28 @@
+client:
+  agent_id: "martha_barkeep"
+  password: "secret_martha_123"
+  broker_url: "tcp://localhost:1883"
+  client_id: "martha_rkllm_client"
+  keepalive_seconds: 60
+  log_file: "~/.agentmud/martha.log"
+
+model:
+  provider: "rkllm"
+  rkllm:
+    library_path: "/usr/lib/librkllmrt.so"
+    model_path: "/home/scot/rkllama-models/qwen3-4b-16k/qwen3-4b.rkllm"
+    # context_size: 16384
+    # context_size: 8192
+    context_size: 4096
+    temperature: 0.7
+    top_p: 0.9
+
+memory:
+  db_path: "~/.agentmud/memory_martha.db"
+  max_reflections_per_peer: 7
+
+cognition:
+  tick_interval_debounce_ms: 2000
+  chat_response_probability: 0.90
+  max_sensory_log_lines: 10
+  reflection_interval_ticks: 60
