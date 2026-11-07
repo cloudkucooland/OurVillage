@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"agentmud/internal/client/routine"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -63,6 +65,56 @@ func TestClientMemoryStore_AddAndRetrieveEvents(t *testing.T) {
 	}
 	if eventType != "TRADE" {
 		t.Errorf("Expected event_type 'TRADE', got %s", eventType)
+	}
+}
+
+func TestClientMemoryStore_PersistsActiveIntention(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "memory.db")
+	store, err := NewClientMemoryStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := routine.Intention{
+		Kind:          routine.HomeAndRest,
+		Purpose:       "Return home and rest",
+		DestinationID: "eldons_room",
+		Phase:         routine.Traveling,
+	}
+	if err := store.SaveActiveIntention("eldon", want); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = NewClientMemoryStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	got, err := store.GetActiveIntention("eldon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || *got != want {
+		t.Fatalf("GetActiveIntention() = %#v, want %#v", got, want)
+	}
+	other := routine.Intention{Kind: routine.Visit, DestinationID: "tavern", Phase: routine.Traveling}
+	if err := store.SaveActiveIntention("martha", other); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ClearActiveIntention("eldon"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = store.GetActiveIntention("eldon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Fatalf("GetActiveIntention() after clear = %#v, want nil", got)
+	}
+	if got, err := store.GetActiveIntention("martha"); err != nil || got == nil || *got != other {
+		t.Fatalf("other agent's intention = %#v, %v; want %#v, nil", got, err, other)
 	}
 }
 

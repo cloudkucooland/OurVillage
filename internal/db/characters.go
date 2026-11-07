@@ -28,6 +28,7 @@ type CharacterSeed struct {
 	Hunger              int
 	Energy              int
 	Location            string
+	HomeLocationID      string
 	EquippedContainerID string
 	ControllerType      string // "agent" or "password" / "human"
 	MQTTPassword        string
@@ -94,6 +95,7 @@ var DefaultCharacters = []CharacterSeed{
 		Hunger:              90,
 		Energy:              100,
 		Location:            "town_mill",
+		HomeLocationID:      "eldons_room",
 		EquippedContainerID: "",
 		ControllerType:      "agent",
 		MQTTPassword:        "secret_eldon_123",
@@ -108,6 +110,7 @@ var DefaultCharacters = []CharacterSeed{
 		Hunger:              100,
 		Energy:              100,
 		Location:            "tavern",
+		HomeLocationID:      "marthas_room",
 		EquippedContainerID: "",
 		ControllerType:      "agent",
 		MQTTPassword:        "secret_martha_123",
@@ -122,6 +125,7 @@ var DefaultCharacters = []CharacterSeed{
 		Hunger:              85,
 		Energy:              100,
 		Location:            "blacksmith",
+		HomeLocationID:      "gideons_room",
 		EquippedContainerID: "wheelbarrow",
 		ControllerType:      "agent",
 		MQTTPassword:        "secret_gideon_123",
@@ -136,6 +140,7 @@ var DefaultCharacters = []CharacterSeed{
 		Hunger:              75,
 		Energy:              100,
 		Location:            "market",
+		HomeLocationID:      "lukes_room",
 		EquippedContainerID: "woven_basket",
 		ControllerType:      "agent",
 		MQTTPassword:        "secret_luke_123",
@@ -150,6 +155,7 @@ var DefaultCharacters = []CharacterSeed{
 		Hunger:              100,
 		Energy:              100,
 		Location:            "town_hall",
+		HomeLocationID:      "clerks_office",
 		EquippedContainerID: "",
 		ControllerType:      "human", // Can be played by a human player!
 		MQTTPassword:        "secret_eleanor_123",
@@ -197,8 +203,8 @@ func SeedItemsAndCharacters(db *sql.DB) error {
 
 	// Seed Characters
 	charQuery := `
-	INSERT INTO characters (id, name, persona_prompt, occupation, gold, hunger, energy, current_location, equipped_container_id, controller_type, mqtt_password)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO characters (id, name, persona_prompt, occupation, gold, hunger, energy, current_location, home_location_id, equipped_container_id, controller_type, mqtt_password)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		name=excluded.name,
 		persona_prompt=excluded.persona_prompt,
@@ -207,6 +213,7 @@ func SeedItemsAndCharacters(db *sql.DB) error {
 		hunger=excluded.hunger,
 		energy=excluded.energy,
 		current_location=excluded.current_location,
+		home_location_id=excluded.home_location_id,
 		equipped_container_id=excluded.equipped_container_id,
 		controller_type=excluded.controller_type,
 		mqtt_password=excluded.mqtt_password;
@@ -245,7 +252,7 @@ func SeedItemsAndCharacters(db *sql.DB) error {
 		if char.EquippedContainerID != "" {
 			containerVal = &char.EquippedContainerID
 		}
-		_, err := charStmt.Exec(char.ID, char.Name, char.PersonaPrompt, char.Occupation, char.Gold, char.Hunger, char.Energy, char.Location, containerVal, char.ControllerType, char.MQTTPassword)
+		_, err := charStmt.Exec(char.ID, char.Name, char.PersonaPrompt, char.Occupation, char.Gold, char.Hunger, char.Energy, char.Location, char.HomeLocationID, containerVal, char.ControllerType, char.MQTTPassword)
 		if err != nil {
 			return fmt.Errorf("failed to seed character %s: %w", char.ID, err)
 		}

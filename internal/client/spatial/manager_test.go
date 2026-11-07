@@ -1,9 +1,12 @@
 package spatial
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"agentmud/internal/client/routine"
 )
 
 func TestContextManager_PromptAssembly(t *testing.T) {
@@ -51,20 +54,21 @@ func TestContextManager_PromptAssembly(t *testing.T) {
 	if !strings.Contains(prompt, "Name: Eldon the Millwright") {
 		t.Error("prompt missing agent name")
 	}
-	if !strings.Contains(prompt, "Gold: 15 | Inventory: 4x Wheat, 2x Flour") {
-		t.Error("prompt missing gold and inventory")
+	if !strings.Contains(prompt, "Gold: 15\n") {
+		t.Error("prompt missing gold")
 	}
 
 	// Verify location rules section
 	if !strings.Contains(prompt, "=== LOCATION RULES (Town Mill) ===") {
 		t.Error("prompt missing LOCATION RULES section")
 	}
-	if !strings.Contains(prompt, "You must charge a fair fee") {
-		t.Error("prompt missing town mill rules")
+	if !strings.Contains(prompt, "Follow your own curiosity.") {
+		t.Error("prompt missing default location guidance")
 	}
 	if !strings.Contains(prompt, "exact observed IDs and quantities") ||
 		!strings.Contains(prompt, "listed connected exit") ||
-		!strings.Contains(prompt, "available resources, shop stock, inventory capacity, and known recipes") {
+		!strings.Contains(prompt, "available resources, shop stock, inventory capacity, and known recipes") ||
+		!strings.Contains(prompt, "choose TRAVEL with the final destination location ID") {
 		t.Error("prompt missing concise, observation-grounded action guidance")
 	}
 
@@ -100,9 +104,9 @@ func TestContextManager_PromptAssembly(t *testing.T) {
 		t.Error("prompt missing INSTRUCTION section")
 	}
 	if !strings.Contains(prompt, "Output MUST be valid JSON only") ||
-		!strings.Contains(prompt, `"payload":{"message":"spoken words"}`) ||
+		!strings.Contains(prompt, `"payload":{"message":"<your spoken dialogue>"}`) ||
 		strings.Contains(prompt, "Never use a default destination") {
-		t.Error("prompt missing compact JSON and CHAT format instructions")
+		t.Error("prompt missing JSON and CHAT format instructions")
 	}
 }
 
@@ -145,6 +149,127 @@ func TestContextManager_MemoryContinuityAndEmptyLocationSnapshot(t *testing.T) {
 	}
 }
 
+func TestContextManager_SmallSystemBoundsOptionalPromptContext(t *testing.T) {
+	cm := NewContextManager(ContextManagerConfig{
+		AgentID:         "elda",
+		MaxSensoryLines: 12,
+		SmallSystem:     true,
+	})
+	for i := 0; i < 10; i++ {
+		cm.IngestSystem(fmt.Sprintf("log-entry-%d", i))
+	}
+	cm.SetPersonalProjects([]PersonalProjectContext{
+		{Title: "Project A"}, {Title: "Project B"}, {Title: "Project C"}, {Title: "Project D"},
+	})
+	peers := []PeerMemoryContext{
+		{PeerID: "one", PeerName: "One", Reflections: []string{"memory-one"}},
+		{PeerID: "two", PeerName: "Two"},
+		{PeerID: "three", PeerName: "Three"},
+		{PeerID: "four", PeerName: "Four"},
+	}
+	locations := []LocationMemoryContext{
+		{LocationID: "one", LocationName: "Place One", MemoryText: "place-memory-one"},
+		{LocationID: "two", LocationName: "Place Two"},
+		{LocationID: "three", LocationName: "Place Three"},
+		{LocationID: "four", LocationName: "Place Four"},
+	}
+
+	prompt := cm.BuildPrompt(peers, locations)
+	for _, expected := range []string{"Project A", "Project C", "Regarding Three", "Place Three", "log-entry-9", "log-entry-4"} {
+		if !strings.Contains(prompt, expected) {
+			t.Errorf("small-system prompt missing retained context %q", expected)
+		}
+	}
+	for _, omitted := range []string{"Project D", "Regarding Four", "Place Four", "log-entry-3"} {
+		if strings.Contains(prompt, omitted) {
+			t.Errorf("small-system prompt should omit bounded context %q", omitted)
+		}
+	}
+}
+
+func TestContextManager_SmallSystemBoundsTextAndKeepsActionState(t *testing.T) {
+	cm := NewContextManager(ContextManagerConfig{
+		AgentID:         "elda",
+		InitialLocation: "market",
+		LocationName:    "Market",
+		MaxSensoryLines: 12,
+		SmallSystem:     true,
+	})
+	cm.mu.Lock()
+	cm.locationRules["market"] = []string{
+		strings.Repeat("R", 200), strings.Repeat("R", 200),
+		strings.Repeat("R", 200), strings.Repeat("R", 200),
+	}
+	cm.identityTraits = map[string]string{"belief": strings.Repeat("I", 500)}
+	cm.selfReflections = []string{strings.Repeat("F", 500), strings.Repeat("F", 500), strings.Repeat("F", 500)}
+	cm.skills = []SyncSkillEntry{{SkillID: "crafting", Level: 3, Experience: 245}}
+	cm.inventoryDetails = []SyncInventoryEntry{{ItemID: "woven_basket", Name: strings.Repeat("N", 500), Quantity: 7}}
+	cm.equippedContainer = "woven_basket"
+	cm.maxCapacityKg = 30
+	cm.maxSlots = 8
+	cm.homeLocationID = "home_room"
+	cm.homeLocationName = "Home"
+	cm.mu.Unlock()
+
+	cm.SetPersonalProjects([]PersonalProjectContext{{
+		Title: strings.Repeat("T", 120), Progress: strings.Repeat("P", 200),
+		Motivation: "omit-this-motivation", NextStep: strings.Repeat("Q", 200),
+	}})
+	peers := []PeerMemoryContext{{
+		PeerID: "friend", PeerName: strings.Repeat("A", 200), Summary: strings.Repeat("S", 500),
+		Commitments: []string{strings.Repeat("C", 500)},
+		Reflections: []string{strings.Repeat("M", 500)},
+	}}
+	locations := []LocationMemoryContext{{
+		LocationID: "market", LocationName: strings.Repeat("W", 200), MemoryCategory: strings.Repeat("Z", 100),
+		MemoryText: strings.Repeat("L", 500),
+	}}
+	cm.SetIntention(&routine.Intention{
+		Kind: routine.HomeAndRest, Purpose: strings.Repeat("Y", 500),
+		DestinationID: "home_room", Phase: routine.Traveling,
+	})
+	cm.IngestSystem("log-start " + strings.Repeat("X", 1000) + " preserved-log-tail")
+
+	prompt := cm.BuildPrompt(peers, locations)
+	for _, expected := range []string{
+		"Skills: crafting 3",
+		"Inventory (item_id x quantity): woven_basket x7",
+		"Equipped: " + strings.Repeat("N", 59) + "… [woven_basket]",
+		"Active Journey Destination: home_room",
+		"destination: home_room",
+		"preserved-log-tail",
+		"…[truncated]…",
+	} {
+		if !strings.Contains(prompt, expected) {
+			t.Errorf("small-system prompt missing %q", expected)
+		}
+	}
+	for _, oversized := range []string{
+		strings.Repeat("R", 161),
+		strings.Repeat("I", 121),
+		strings.Repeat("F", 121),
+		strings.Repeat("N", 61),
+		strings.Repeat("A", 61),
+		strings.Repeat("T", 81),
+		strings.Repeat("P", 101),
+		strings.Repeat("Q", 101),
+		strings.Repeat("S", 121),
+		strings.Repeat("C", 121),
+		strings.Repeat("Z", 31),
+		strings.Repeat("M", 121),
+		strings.Repeat("W", 61),
+		strings.Repeat("L", 141),
+		"omit-this-motivation",
+	} {
+		if strings.Contains(prompt, oversized) {
+			t.Errorf("small-system prompt contains oversized or omitted text %q", oversized)
+		}
+	}
+	if got := len([]rune(prompt)); got > 9000 {
+		t.Errorf("small-system prompt is too large: %d runes", got)
+	}
+}
+
 func TestContextManager_PromptShowsExactInventoryForVoluntaryDrop(t *testing.T) {
 	cm := NewContextManager(ContextManagerConfig{AgentID: "martha"})
 	payload := []byte(`{
@@ -171,6 +296,47 @@ func TestContextManager_PromptShowsExactInventoryForVoluntaryDrop(t *testing.T) 
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("prompt missing DROP guidance %q", expected)
 		}
+	}
+}
+
+func TestContextManager_PromptShowsEquippedContainer(t *testing.T) {
+	tests := []struct {
+		name        string
+		character   string
+		wantContext string
+	}{
+		{
+			name: "equipped container",
+			character: `"equipped_container":"woven_basket",
+				"max_capacity_kg":30,"max_slots":8,
+				"inventory":[{"item_id":"woven_basket","name":"Woven Basket","quantity":1}]`,
+			wantContext: "Equipped container: Woven Basket (woven_basket). Its weight counts toward your load; its capacity and slot limit are reflected above.",
+		},
+		{
+			name:        "no equipped container",
+			character:   `"max_capacity_kg":20,"max_slots":5`,
+			wantContext: "Equipped container: None; base carrying limits apply.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cm := NewContextManager(ContextManagerConfig{AgentID: "elda"})
+			payload := []byte(fmt.Sprintf(`{
+				"type":"STATE_SYNC",
+				"status":"SUCCESS",
+				"character":{"id":"elda",%s},
+				"location":{"id":"home","name":"Home"}
+			}`, tt.character))
+			if err := cm.IngestDirectResponse(payload); err != nil {
+				t.Fatal(err)
+			}
+
+			prompt := cm.BuildPrompt(nil, nil)
+			if !strings.Contains(prompt, tt.wantContext) {
+				t.Errorf("prompt missing equipped-container context %q", tt.wantContext)
+			}
+		})
 	}
 }
 
@@ -209,6 +375,95 @@ func TestContextManager_DynamicLocationChange(t *testing.T) {
 	}
 	if cm.LocationName() != "Tavern" {
 		t.Errorf("expected location name Tavern, got %s", cm.LocationName())
+	}
+}
+
+func TestContextManager_HomeJourneyPromptAndCompletion(t *testing.T) {
+	cm := NewContextManager(ContextManagerConfig{
+		AgentID:         "eldon_millwright",
+		InitialLocation: "town_mill",
+		LocationName:    "The Town Mill",
+	})
+	payload := []byte(`{
+		"type":"STATE_SYNC",
+		"character":{
+			"home_location_id":"eldons_room",
+			"home_location_name":"Eldon's Room"
+		},
+		"location":{"id":"town_mill","name":"The Town Mill"}
+	}`)
+	if err := cm.IngestDirectResponse(payload); err != nil {
+		t.Fatalf("failed to ingest home location: %v", err)
+	}
+
+	cm.IngestTimeTick(TimeTickMessage{InGameTime: "23:00"})
+	cm.SetIntention(&routine.Intention{
+		Kind:          routine.HomeAndRest,
+		Purpose:       "Return home and rest",
+		DestinationID: "eldons_room",
+		Phase:         routine.Traveling,
+	})
+	prompt := cm.BuildPrompt(nil, nil)
+	for _, expected := range []string{
+		"Home: Eldon's Room (eldons_room)",
+		"Active Journey Destination: eldons_room",
+		"Active Short-Term Intention: HOME_AND_REST — Return home and rest",
+	} {
+		if !strings.Contains(prompt, expected) {
+			t.Errorf("journey prompt missing %q:\n%s", expected, prompt)
+		}
+	}
+
+	cm.SetLocation("eldons_room", "Eldon's Room")
+	if destination, _ := cm.TargetDestination(); destination != "" {
+		t.Errorf("journey destination after reaching home = %q, want cleared", destination)
+	}
+	prompt = cm.BuildPrompt(nil, nil)
+	if !strings.Contains(prompt, "you are home. REST here") {
+		t.Errorf("home prompt should encourage resting at home:\n%s", prompt)
+	}
+}
+
+func TestContextManager_PromptSuggestsOptionalTravelHome(t *testing.T) {
+	cm := NewContextManager(ContextManagerConfig{AgentID: "eldon_millwright", InitialLocation: "town_square"})
+	payload := []byte(`{
+		"type":"STATE_SYNC",
+		"character":{"home_location_id":"eldons_room","home_location_name":"Eldon's Room"},
+		"location":{"id":"town_square","name":"Town Square"}
+	}`)
+	if err := cm.IngestDirectResponse(payload); err != nil {
+		t.Fatal(err)
+	}
+	cm.IngestTimeTick(TimeTickMessage{InGameTime: "23:00"})
+	prompt := cm.BuildPrompt(nil, nil)
+	if !strings.Contains(prompt, "If you choose to rest at home, choose TRAVEL with destination ID eldons_room") ||
+		!strings.Contains(prompt, "This is a suggestion, not a requirement") {
+		t.Errorf("late-night prompt should suggest an optional home trip:\n%s", prompt)
+	}
+}
+
+func TestContextManager_NextLocationTowardUsesShortestRoute(t *testing.T) {
+	cm := NewContextManager(ContextManagerConfig{AgentID: "elda", InitialLocation: "forest"})
+	payload := []byte(`{
+		"type":"STATE_SYNC",
+		"location_graph":[
+			{"from_location_id":"forest","to_location_id":"long_way"},
+			{"from_location_id":"forest","to_location_id":"prairie"},
+			{"from_location_id":"long_way","to_location_id":"middle"},
+			{"from_location_id":"middle","to_location_id":"market"},
+			{"from_location_id":"prairie","to_location_id":"market"}
+		],
+		"character":{"current_location":"forest"},
+		"location":{"id":"forest","name":"Forest"}
+	}`)
+	if err := cm.IngestDirectResponse(payload); err != nil {
+		t.Fatal(err)
+	}
+	if next, ok := cm.NextLocationToward("market"); !ok || next != "prairie" {
+		t.Fatalf("NextLocationToward(market) = %q, %v; want prairie, true", next, ok)
+	}
+	if _, ok := cm.NextLocationToward("unknown"); ok {
+		t.Fatal("NextLocationToward(unknown) unexpectedly found a route")
 	}
 }
 
@@ -274,10 +529,11 @@ func TestContextManager_StateSync(t *testing.T) {
 	}
 
 	prompt := cm.BuildPrompt(nil, nil)
-	if !strings.Contains(prompt, "Gold: 50 | Inventory: 3x Bag of Flour") {
-		t.Errorf("expected updated gold and inventory in prompt, got:\n%s", prompt)
+	if !strings.Contains(prompt, "Gold: 50\n") ||
+		!strings.Contains(prompt, "item_id: flour | name: Bag of Flour | quantity: 3") {
+		t.Errorf("expected updated gold and exact inventory in prompt, got:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "crafting: level 3, 215 total XP (15/100 XP to next level)") {
+	if !strings.Contains(prompt, "crafting level 3, 215 total XP (15/100 XP to next level)") {
 		t.Errorf("expected skill level and progress in prompt, got:\n%s", prompt)
 	}
 	if !strings.Contains(prompt, "Milling Flour [2x wheat; 3 ticks, crafting level 3]") {
@@ -313,7 +569,7 @@ func TestContextManager_RefreshesSkillProgressAndShowsLevelUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	prompt := cm.BuildPrompt(nil, nil)
-	if !strings.Contains(prompt, "woodcutting: level 2, 110 total XP (10/100 XP to next level)") {
+	if !strings.Contains(prompt, "woodcutting level 2, 110 total XP (10/100 XP to next level)") {
 		t.Errorf("prompt missing refreshed skill progress:\n%s", prompt)
 	}
 	if !strings.Contains(prompt, "You reached woodcutting level 2!") {

@@ -3,8 +3,12 @@ package server
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"agentmud/internal/db"
+
+	mqtt "github.com/mochi-mqtt/server/v2"
+	"github.com/mochi-mqtt/server/v2/packets"
 )
 
 func TestCraftIntentAndConcurrencyLock(t *testing.T) {
@@ -18,10 +22,22 @@ func TestCraftIntentAndConcurrencyLock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
+	directMessages := make(chan []byte, 4)
+	if err := srv.mqttServer.Subscribe("world/agents/eldon_millwright/direct", 0, func(_ *mqtt.Client, _ packets.Subscription, pk packets.Packet) {
+		directMessages <- pk.Payload
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Eldon is at town_mill with 4 wheat and 2 flour
 	craftPayload, _ := json.Marshal(CraftPayload{RecipeID: "mill_flour"})
 	srv.handleCraft("eldon_millwright", "req_craft_1", craftPayload)
+	select {
+	case response := <-directMessages:
+		assertCharacterStatusSync(t, response, "CRAFTING")
+	case <-time.After(time.Second):
+		t.Fatal("expected craft start state sync")
+	}
 
 	// Verify character state transitioned to CRAFTING
 	var status string
@@ -57,6 +73,30 @@ func TestCraftIntentAndConcurrencyLock(t *testing.T) {
 	// Fast-forward clock and process tick
 	srv.SetTickCount(endTick)
 	srv.ProcessTick()
+	deadline := time.After(time.Second)
+	completionSynced := false
+	for !completionSynced {
+		select {
+		case response := <-directMessages:
+			var direct struct {
+				Type          string `json:"type"`
+				PrivateStatus struct {
+					Status string `json:"status"`
+				} `json:"private_status"`
+			}
+			if err := json.Unmarshal(response, &direct); err != nil {
+				t.Fatal(err)
+			}
+			if direct.Type == "STATE_SYNC" {
+				if direct.PrivateStatus.Status != "IDLE" {
+					t.Fatalf("craft completion state = %q, want IDLE", direct.PrivateStatus.Status)
+				}
+				completionSynced = true
+			}
+		case <-deadline:
+			t.Fatal("expected craft completion state sync")
+		}
+	}
 
 	// Verify resolution
 	_ = database.QueryRow("SELECT status FROM characters WHERE id = 'eldon_millwright'").Scan(&status)

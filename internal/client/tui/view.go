@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"agentmud/internal/client/memory"
 	"agentmud/internal/client/spatial"
 
 	"github.com/charmbracelet/lipgloss"
@@ -67,7 +68,7 @@ func (m TUIModel) View() string {
 	header := headerBoxStyle.Render(titleStyle.Render("AgentMUD Client TUI") + "\n" + headerText)
 
 	// 2. Tabs
-	tabs := []string{"Sensory Log", "Inventory", "Relationships", "Self Identity", "Projects"}
+	tabs := []string{"Sensory Log", "Inventory", "Relationships", "Self Identity", "Projects", "Locations"}
 	var renderedTabs []string
 	for i, t := range tabs {
 		if i == m.tab {
@@ -175,6 +176,57 @@ func (m TUIModel) View() string {
 				}
 				if len(proj.Locations) > 0 {
 					lines = append(lines, fmt.Sprintf("  - Locations: %s", strings.Join(proj.Locations, ", ")))
+				}
+				lines = append(lines, "")
+			}
+		}
+		contentBody = strings.Join(lines, "\n")
+	case 5:
+		var lines []string
+		lines = append(lines, "=== LOCATION KNOWLEDGE & MEMORIES ===")
+		if m.locationLoadError != "" {
+			lines = append(lines, "Unable to load location memories: "+m.locationLoadError)
+		} else if len(m.locationMemories) == 0 {
+			lines = append(lines, "[No location memories or observations recorded yet]")
+		} else {
+			locMap := make(map[string][]memory.LocationMemory)
+			locNames := make(map[string]string)
+			for _, lm := range m.locationMemories {
+				locMap[lm.LocationID] = append(locMap[lm.LocationID], lm)
+				locNames[lm.LocationID] = lm.LocationName
+			}
+
+			var locIDs []string
+			for locID := range locMap {
+				locIDs = append(locIDs, locID)
+			}
+			sort.Slice(locIDs, func(i, j int) bool {
+				nameI := locNames[locIDs[i]]
+				if nameI == "" {
+					nameI = locIDs[i]
+				}
+				nameJ := locNames[locIDs[j]]
+				if nameJ == "" {
+					nameJ = locIDs[j]
+				}
+				return nameI < nameJ
+			})
+
+			for _, locID := range locIDs {
+				name := locNames[locID]
+				if name == "" {
+					name = locID
+				}
+				lines = append(lines, fmt.Sprintf("• %s (%s)", name, locID))
+				mems := locMap[locID]
+				sort.Slice(mems, func(i, j int) bool {
+					if mems[i].MemoryCategory != mems[j].MemoryCategory {
+						return mems[i].MemoryCategory < mems[j].MemoryCategory
+					}
+					return mems[i].UpdatedAtTick < mems[j].UpdatedAtTick
+				})
+				for _, mem := range mems {
+					lines = append(lines, fmt.Sprintf("  - [%s] %s (Tick %d)", mem.MemoryCategory, mem.MemoryText, mem.UpdatedAtTick))
 				}
 				lines = append(lines, "")
 			}

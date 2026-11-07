@@ -301,6 +301,9 @@ func buildProjectsPrompt(events []EventRecord, projects []PersonalProject) (stri
 	sb.WriteString("You are a self-directed resident. Update your optional personal projects only when these action outcomes provide relevant evidence; do not turn routine actions into goals or invent progress. Having no projects is valid. Projects are your own choices, never obligations.\n")
 	sb.WriteString("Return valid JSON with a projects array. Each entry must include id (use an existing id to update), title, motivation, status (active/paused/completed), progress, next_step, people, and locations. Return an empty array when no update is warranted.\n")
 	sb.WriteString("Existing projects:\n")
+	if len(projects) > 5 {
+		projects = projects[:5]
+	}
 	encoded, err := json.Marshal(projects)
 	if err != nil {
 		return "", err
@@ -308,10 +311,18 @@ func buildProjectsPrompt(events []EventRecord, projects []PersonalProject) (stri
 	sb.Write(encoded)
 	sb.WriteString("\nAction outcomes:\n")
 	for _, event := range events {
-		sb.WriteString(fmt.Sprintf("- [Tick %d] %s\n", event.Tick, event.RawPayload))
+		payload := event.RawPayload
+		if len(payload) > 250 {
+			payload = payload[:250] + "..."
+		}
+		sb.WriteString(fmt.Sprintf("- [Tick %d] %s\n", event.Tick, payload))
 	}
 	sb.WriteString("\nResponse format: {\"projects\": []}\n")
-	return sb.String(), nil
+	prompt := sb.String()
+	if len(prompt) > 4000 {
+		prompt = prompt[:4000]
+	}
+	return prompt, nil
 }
 
 func parseProjectUpdates(raw string, tick uint64) ([]PersonalProject, error) {
@@ -473,7 +484,11 @@ func (s *ReflectionSynthesizer) buildReflectionPrompt(peerID string, events []Ev
 	sb.WriteString("Below is a raw log of recent interactions:\n\n")
 
 	for _, ev := range events {
-		sb.WriteString(fmt.Sprintf("- [Tick %d] [%s]: %s\n", ev.Tick, ev.EventType, ev.RawPayload))
+		payload := ev.RawPayload
+		if len(payload) > 250 {
+			payload = payload[:250] + "..."
+		}
+		sb.WriteString(fmt.Sprintf("- [Tick %d] [%s]: %s\n", ev.Tick, ev.EventType, payload))
 	}
 
 	sb.WriteString("\nInstructions:\n")

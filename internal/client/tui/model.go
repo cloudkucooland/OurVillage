@@ -2,14 +2,13 @@ package tui
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 
 	"agentmud/internal/client/dispatcher"
 	"agentmud/internal/client/memory"
 	"agentmud/internal/client/model"
+	"agentmud/internal/client/routine"
 	"agentmud/internal/client/spatial"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -31,24 +30,28 @@ type TUIModel struct {
 	engine            model.InferenceEngine
 	fetchPeerMemories func() []spatial.PeerMemoryContext
 
-	textInput            textinput.Model
-	viewport             viewport.Model
-	errMessage           string
-	infoMessage          string
-	backgroundStatus     string
-	isThinking           bool
-	synthesisStatus      <-chan string
-	selfIdentityProvider func() ([]memory.IdentityTrait, []memory.SelfReflection, error)
-	identityTraits       []memory.IdentityTrait
-	selfReflections      []memory.SelfReflection
-	identityLoadError    string
-	projectProvider      func() ([]memory.PersonalProject, error)
-	personalProjects     []memory.PersonalProject
-	projectLoadError     string
-	tab                  int // Sensory Log, Inventory, Relationships, Self Identity, Projects
-	width                int
-	height               int
-	quitting             bool
+	textInput              textinput.Model
+	viewport               viewport.Model
+	errMessage             string
+	infoMessage            string
+	backgroundStatus       string
+	isThinking             bool
+	synthesisStatus        <-chan string
+	selfIdentityProvider   func() ([]memory.IdentityTrait, []memory.SelfReflection, error)
+	identityTraits         []memory.IdentityTrait
+	selfReflections        []memory.SelfReflection
+	identityLoadError      string
+	projectProvider        func() ([]memory.PersonalProject, error)
+	personalProjects       []memory.PersonalProject
+	projectLoadError       string
+	locationMemoryProvider func() ([]memory.LocationMemory, error)
+	locationMemories       []memory.LocationMemory
+	locationLoadError      string
+	travelIntentionSaver   func(routine.Intention) error
+	tab                    int // Sensory Log, Inventory, Relationships, Self Identity, Projects, Locations
+	width                  int
+	height                 int
+	quitting               bool
 
 	// Config references for /set tuning
 	chatProbability *float64
@@ -72,6 +75,11 @@ type projectsMsg struct {
 	err      error
 }
 
+type locationMemoryMsg struct {
+	memories []memory.LocationMemory
+	err      error
+}
+
 func (e errMsg) Error() string { return e.err.Error() }
 
 func (m *TUIModel) SetSynthesisStatusChannel(statuses <-chan string) {
@@ -86,9 +94,17 @@ func (m *TUIModel) SetProjectProvider(provider func() ([]memory.PersonalProject,
 	m.projectProvider = provider
 }
 
+func (m *TUIModel) SetLocationMemoryProvider(provider func() ([]memory.LocationMemory, error)) {
+	m.locationMemoryProvider = provider
+}
+
+func (m *TUIModel) SetTravelIntentionSaver(saver func(routine.Intention) error) {
+	m.travelIntentionSaver = saver
+}
+
 func NewTUIModel(ctx context.Context, agentID string, client mqtt.Client, tracker *dispatcher.CorrelationTracker, ctxMgr *spatial.ContextManager, engine model.InferenceEngine, fetchMemories func() []spatial.PeerMemoryContext, chatProb *float64, refFreq *int, temp *float64, debounce *int) TUIModel {
 	ti := textinput.New()
-	ti.Placeholder = "Type a message or /help, /look, /move <loc>, /chat <msg>, /influence <hint>, /set..."
+	ti.Placeholder = "Type influence hint or /help, /chat <msg>, /look, /move <loc>, /set..."
 	ti.Focus()
 	ti.CharLimit = 256
 	ti.Width = 80
@@ -139,11 +155,13 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case tea.KeyTab:
-			m.tab = (m.tab + 1) % 5
+			m.tab = (m.tab + 1) % 6
 			if m.tab == 3 {
 				return m, m.loadSelfIdentity()
 			} else if m.tab == 4 {
 				return m, m.loadProjects()
+			} else if m.tab == 5 {
+				return m, m.loadLocationMemories()
 			}
 			return m, nil
 		case tea.KeyEnter:
@@ -215,6 +233,15 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.personalProjects = msg.projects
 		}
 		return m, nil
+
+	case locationMemoryMsg:
+		m.locationLoadError = ""
+		if msg.err != nil {
+			m.locationLoadError = msg.err.Error()
+		} else {
+			m.locationMemories = msg.memories
+		}
+		return m, nil
 	}
 
 	m.textInput, cmd = m.textInput.Update(msg)
@@ -242,6 +269,16 @@ func (m TUIModel) loadProjects() tea.Cmd {
 	}
 }
 
+func (m TUIModel) loadLocationMemories() tea.Cmd {
+	if m.locationMemoryProvider == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		memories, err := m.locationMemoryProvider()
+		return locationMemoryMsg{memories: memories, err: err}
+	}
+}
+
 func (m TUIModel) listenSynthesisStatus() tea.Cmd {
 	if m.synthesisStatus == nil {
 		return nil
@@ -263,21 +300,6 @@ func (m *TUIModel) handleInput(input string) tea.Cmd {
 		return m.handleSlashCommand(input)
 	}
 
-	// Default normal text input treated as public room chat
-	return func() tea.Msg {
-		chatPayload, _ := json.Marshal(map[string]string{
-			"agent_id": m.agentID,
-			"message":  input,
-		})
-		chatIntent := dispatcher.Intent{
-			IntentID: fmt.Sprintf("req_tui_chat_%d", time.Now().UnixNano()),
-			Action:   "CHAT",
-			Payload:  chatPayload,
-		}
-		res, err := m.dispatcher.Dispatch(m.ctx, chatIntent, 5*time.Second)
-		if err != nil {
-			return errMsg{err: fmt.Errorf("chat failed: %v", err)}
-		}
-		return infoMsg(fmt.Sprintf("Chat sent: %s", res.Message))
-	}
+	// Default normal text input treated as subconscious influence hint
+	return m.influenceCmd(input)
 }

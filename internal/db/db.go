@@ -145,6 +145,7 @@ CREATE TABLE IF NOT EXISTS characters (
     energy INTEGER NOT NULL DEFAULT 100,
     health INTEGER NOT NULL DEFAULT 100,
     current_location TEXT NOT NULL DEFAULT 'town_square',
+    home_location_id TEXT NOT NULL DEFAULT '',
     equipped_container_id TEXT,
     status TEXT NOT NULL DEFAULT 'IDLE', -- 'IDLE', 'FORAGING', 'RESTING', 'CRAFTING'
     action_end_tick INTEGER DEFAULT 0,
@@ -268,6 +269,7 @@ func migrateSchema(db *sql.DB) error {
 		{"locations", "vehicle_access_tier", "TEXT DEFAULT 'ALL'"},
 		{"characters", "energy", "INTEGER NOT NULL DEFAULT 100"},
 		{"characters", "health", "INTEGER NOT NULL DEFAULT 100"},
+		{"characters", "home_location_id", "TEXT NOT NULL DEFAULT ''"},
 		{"characters", "equipped_container_id", "TEXT"},
 		{"characters", "status", "TEXT NOT NULL DEFAULT 'IDLE'"},
 		{"characters", "action_end_tick", "INTEGER DEFAULT 0"},

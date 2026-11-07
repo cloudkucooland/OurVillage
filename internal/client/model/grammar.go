@@ -11,9 +11,10 @@ import (
 // DefaultAgentIntentGrammar returns the built-in canonical GBNF grammar for RFC 002 agent intents.
 func DefaultAgentIntentGrammar() string {
 	return `root ::= "{" ws "\"thought\"" ws ":" ws string ws "," ws "\"action\"" ws ":" ws action-type ws "," ws "\"payload\"" ws ":" ws payload ws "}"
-action-type ::= "\"MOVE\"" | "\"CHAT\"" | "\"TRANSFER\"" | "\"GIVE\"" | "\"FORAGE\"" | "\"COLLECT\"" | "\"CANCEL_ACTION\"" | "\"DROP\"" | "\"PICKUP\"" | "\"EQUIP\"" | "\"UNEQUIP\"" | "\"CRAFT\"" | "\"LOOK\"" | "\"STATUS\"" | "\"BUY\"" | "\"RESTOCK\"" | "\"EAT\"" | "\"REST\""
-payload ::= move-payload | chat-payload | transfer-payload | forage-payload | empty-payload | item-payload | craft-payload | buy-payload | restock-payload | rest-payload
+action-type ::= "\"MOVE\"" | "\"TRAVEL\"" | "\"CHAT\"" | "\"TRANSFER\"" | "\"GIVE\"" | "\"FORAGE\"" | "\"COLLECT\"" | "\"CANCEL_ACTION\"" | "\"DROP\"" | "\"PICKUP\"" | "\"EQUIP\"" | "\"UNEQUIP\"" | "\"CRAFT\"" | "\"LOOK\"" | "\"STATUS\"" | "\"BUY\"" | "\"RESTOCK\"" | "\"EAT\"" | "\"DRINK\"" | "\"REST\""
+payload ::= move-payload | travel-payload | chat-payload | transfer-payload | forage-payload | empty-payload | item-payload | craft-payload | buy-payload | restock-payload | rest-payload
 move-payload ::= "{" ws "\"target_location\"" ws ":" ws string ws "}"
+travel-payload ::= "{" ws "\"target_location\"" ws ":" ws string ws "}"
 chat-payload ::= "{" ws "\"message\"" ws ":" ws string ws "}"
 transfer-payload ::= "{" ws "\"recipient_id\"" ws ":" ws string ws "," ws "\"amount\"" ws ":" ws integer ws ("," ws "\"item_id\"" ws ":" ws string ws "," ws "\"quantity\"" ws ":" ws integer ws)? "}"
 forage-payload ::= "{" ws "\"target_resource\"" ws ":" ws string ws ("," ws "\"duration_ticks\"" ws ":" ws integer ws)? "}"
@@ -113,6 +114,7 @@ var validActions = map[string]struct{}{
 	"BUY":           {},
 	"RESTOCK":       {},
 	"EAT":           {},
+	"DRINK":         {},
 	"REST":          {},
 }
 
@@ -161,7 +163,7 @@ func SanitizeAndExtractJSON(raw string) (string, error) {
 
 	actionUpper := strings.ToUpper(strings.TrimSpace(actionStr))
 	if _, valid := validActions[actionUpper]; !valid {
-		return "", fmt.Errorf("invalid action %q in model output (expected one of MOVE, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, RESTOCK, EAT, REST)", actionStr)
+		return "", fmt.Errorf("invalid action %q in model output (expected one of MOVE, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, RESTOCK, EAT, DRINK, REST)", actionStr)
 	}
 
 	if actionUpper == "COLLECT" {
@@ -169,6 +171,9 @@ func SanitizeAndExtractJSON(raw string) (string, error) {
 	}
 	if actionUpper == "GIVE" {
 		actionUpper = "TRANSFER"
+	}
+	if actionUpper == "DRINK" {
+		actionUpper = "EAT"
 	}
 
 	// Update action to uppercase

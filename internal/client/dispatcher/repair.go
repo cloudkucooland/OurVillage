@@ -115,6 +115,9 @@ func GenerateIntentWithRetry(
 		if intent.Action == "MOVE" {
 			correction += " For MOVE, choose a target_location ID explicitly listed among the exits in your current observation; movement is only to a directly connected location. Never use a default destination, guess an ID, or target your current location. If no move is appropriate, choose another action."
 		}
+		if intent.Action == "TRAVEL" {
+			correction += " For TRAVEL, choose the final destination's exact location ID; the system will plan each connected movement step."
+		}
 		currentPrompt = fmt.Sprintf("%s\n\n[CORRECTION REQUIRED - ATTEMPT %d]: %s", prompt, attempt+1, correction)
 	}
 

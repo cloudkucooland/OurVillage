@@ -9,6 +9,7 @@ import (
 
 	"agentmud/internal/client/dispatcher"
 	"agentmud/internal/client/model"
+	"agentmud/internal/client/routine"
 	"agentmud/internal/client/spatial"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -26,10 +27,11 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 	switch cmd {
 	case "/help":
 		helpText := "=== AgentMUD TUI Help ===\n" +
+			"  <influence hint>      - Type any text directly to influence agent cognition\n" +
+			"  /chat <msg> (/c)      - Send public chat message\n" +
 			"  /look (/l)            - Refresh perception (LOOK intent)\n" +
 			"  /move <loc> (/m)      - Move to location ID (e.g. /move tavern)\n" +
 			"  /locations (/locs)    - List all village locations\n" +
-			"  /chat <msg> (/c)      - Send public chat message\n" +
 			"  /influence <hint> (/inf, /suggest, /s) - Inject subconscious influence and trigger agent cognition\n" +
 			"  /set <param> <val>    - Tune parameters (probability, freq, temp, debounce)\n" +
 			"  /help                 - Show this help message\n" +
@@ -143,60 +145,7 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 			return nil
 		}
 		hint := strings.Join(args, " ")
-		m.ctxMgr.IngestSystem(fmt.Sprintf("[SUBCONSCIOUS INFLUENCE] %s", hint))
-
-		if m.engine == nil {
-			msg := fmt.Sprintf("Subconscious influence recorded (no engine active): %s", hint)
-			m.ctxMgr.IngestSystem(msg)
-			m.infoMessage = msg
-			return nil
-		}
-
-		m.isThinking = true
-
-		// Capture snapshot references safely for the goroutine execution
-		ctx := m.ctx
-		eng := m.engine
-		disp := m.dispatcher
-		ctxMgr := m.ctxMgr
-		fetchMemories := m.fetchPeerMemories
-
-		temp := 0.7
-		if m.temperature != nil {
-			temp = *m.temperature
-		}
-
-		return func() (retMsg tea.Msg) {
-			defer func() {
-				if r := recover(); r != nil {
-					retMsg = errMsg{err: fmt.Errorf("panic recovered in /influence: %v", r)}
-				}
-			}()
-
-			var memories []spatial.PeerMemoryContext
-			if fetchMemories != nil {
-				memories = fetchMemories()
-			}
-
-			prompt := ctxMgr.BuildPrompt(memories, nil)
-			genOpts := model.GenerationOptions{
-				Temperature: float32(temp),
-			}
-
-			intent, err := dispatcher.GenerateIntentWithRetry(ctx, eng, prompt, genOpts, 2)
-			if err != nil {
-				return errMsg{err: fmt.Errorf("cognition generation failed: %v", err)}
-			}
-
-			res, err := disp.Dispatch(ctx, intent, 10*time.Second)
-			if err != nil {
-				return errMsg{err: fmt.Errorf("intent dispatch failed: %v", err)}
-			}
-
-			msg := fmt.Sprintf("Subconscious influence processed -> Action: %s (Thought: %s) [%s]", intent.Action, intent.Thought, res.Message)
-			ctxMgr.IngestSystem(msg)
-			return infoMsg(msg)
-		}
+		return m.influenceCmd(hint)
 
 	case "/set":
 		if len(args) < 2 {
@@ -255,5 +204,94 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 	default:
 		m.errMessage = fmt.Sprintf("Unknown command '%s'. Type /help for assistance.", cmd)
 		return nil
+	}
+}
+
+func (m *TUIModel) influenceCmd(hint string) tea.Cmd {
+	if hint == "" {
+		m.errMessage = "Usage: <influence hint> or /influence <hint>"
+		return nil
+	}
+	m.ctxMgr.IngestSystem(fmt.Sprintf("[SUBCONSCIOUS INFLUENCE] %s", hint))
+
+	if m.engine == nil {
+		msg := fmt.Sprintf("Subconscious influence recorded (no engine active): %s", hint)
+		m.ctxMgr.IngestSystem(msg)
+		m.infoMessage = msg
+		return nil
+	}
+
+	m.isThinking = true
+
+	// Capture snapshot references safely for the goroutine execution
+	ctx := m.ctx
+	eng := m.engine
+	disp := m.dispatcher
+	ctxMgr := m.ctxMgr
+	fetchMemories := m.fetchPeerMemories
+
+	temp := 0.7
+	if m.temperature != nil {
+		temp = *m.temperature
+	}
+
+	return func() (retMsg tea.Msg) {
+		defer func() {
+			if r := recover(); r != nil {
+				retMsg = errMsg{err: fmt.Errorf("panic recovered in influence: %v", r)}
+			}
+		}()
+
+		var memories []spatial.PeerMemoryContext
+		if fetchMemories != nil {
+			memories = fetchMemories()
+		}
+
+		prompt := ctxMgr.BuildPrompt(memories, nil)
+		genOpts := model.GenerationOptions{
+			Temperature: float32(temp),
+		}
+
+		intent, err := dispatcher.GenerateIntentWithRetry(ctx, eng, prompt, genOpts, 2)
+		if err != nil {
+			return errMsg{err: fmt.Errorf("cognition generation failed: %v", err)}
+		}
+		if strings.EqualFold(intent.Action, "TRAVEL") {
+			var payload struct {
+				TargetLocation string `json:"target_location"`
+			}
+			if err := json.Unmarshal(intent.Payload, &payload); err != nil {
+				return errMsg{err: fmt.Errorf("invalid TRAVEL destination: %w", err)}
+			}
+			if payload.TargetLocation != ctxMgr.CurrentLocation() {
+				if _, ok := ctxMgr.NextLocationToward(payload.TargetLocation); !ok {
+					return errMsg{err: fmt.Errorf("no known route to TRAVEL destination %q", payload.TargetLocation)}
+				}
+			}
+			intention := routine.Intention{
+				Kind:          routine.Visit,
+				Purpose:       "Visit " + payload.TargetLocation,
+				DestinationID: payload.TargetLocation,
+				Phase:         routine.Traveling,
+			}
+			if m.travelIntentionSaver == nil {
+				return errMsg{err: fmt.Errorf("travel intentions are unavailable")}
+			}
+			if err := m.travelIntentionSaver(intention); err != nil {
+				return errMsg{err: fmt.Errorf("save travel intention: %w", err)}
+			}
+			msg := "Travel intention started for " + payload.TargetLocation + "."
+			ctxMgr.IngestSystem(msg)
+			return infoMsg(msg)
+		}
+
+		res, err := disp.Dispatch(ctx, intent, 10*time.Second)
+		if err != nil {
+			return errMsg{err: fmt.Errorf("intent dispatch failed: %v", err)}
+		}
+
+		msg := fmt.Sprintf("Subconscious influence processed -> Action: %s (Thought: %s) [%s]", intent.Action, intent.Thought, res.Message)
+		ctxMgr.IngestSystem(msg)
+		return infoMsg(msg)
 	}
 }

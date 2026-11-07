@@ -37,6 +37,12 @@ func TestGetCharacterPerception(t *testing.T) {
 	if perception.Character.CurrentLocation != "town_mill" {
 		t.Errorf("expected town_mill, got %s", perception.Character.CurrentLocation)
 	}
+	if perception.Character.HomeLocationID != "eldons_room" || perception.Character.HomeLocationName != "Eldon's Room" {
+		t.Errorf("expected Eldon's home to be eldons_room, got %q (%q)", perception.Character.HomeLocationID, perception.Character.HomeLocationName)
+	}
+	if len(perception.LocationGraph) == 0 {
+		t.Fatal("expected state sync to include the location graph")
+	}
 	if len(perception.Character.Inventory) == 0 {
 		t.Error("expected non-empty inventory for Eldon")
 	}
@@ -117,6 +123,35 @@ func TestGetCharacterPerception(t *testing.T) {
 	_, err = GetCharacterPerception(database, "nonexistent_character")
 	if err == nil {
 		t.Fatal("expected error for nonexistent character, got nil")
+	}
+}
+
+func TestLocationGraphFiltersVehicleInaccessibleHops(t *testing.T) {
+	database, err := InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	perception, err := GetCharacterPerception(database, "gideon_forge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasHomeEdge := false
+	hasFootOnlyEdge := false
+	for _, edge := range perception.LocationGraph {
+		if edge.ToLocationID == "gideons_room" {
+			hasHomeEdge = true
+		}
+		if edge.ToLocationID == "deep_forest" {
+			hasFootOnlyEdge = true
+		}
+	}
+	if !hasHomeEdge {
+		t.Error("Gideon's route graph should include access to his room")
+	}
+	if hasFootOnlyEdge {
+		t.Error("Gideon's wheelbarrow route graph should exclude foot-only locations")
 	}
 }
 

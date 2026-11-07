@@ -3,10 +3,13 @@ package spatial
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"agentmud/internal/client/routine"
 )
 
 type PeerMemoryContext struct {
@@ -15,6 +18,12 @@ type PeerMemoryContext struct {
 	Summary     string   `json:"summary,omitempty"`
 	Commitments []string `json:"commitments,omitempty"`
 	Reflections []string `json:"reflections"`
+}
+
+func (cm *ContextManager) HomeLocation() (string, string) {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.homeLocationID, cm.homeLocationName
 }
 
 type PersonalProjectContext struct {
@@ -52,19 +61,21 @@ type ContextManagerConfig struct {
 	InitialLocation  string
 	LocationName     string
 	MaxSensoryLines  int
+	SmallSystem      bool
 	DefaultGold      int
 	DefaultEnergy    int
 	DefaultInventory []string
 }
 
 type DirectMessage struct {
-	IntentID  string                 `json:"intent_id,omitempty"`
-	Status    string                 `json:"status"`
-	Type      string                 `json:"type,omitempty"`
-	ErrorCode string                 `json:"error_code,omitempty"`
-	Message   string                 `json:"message"`
-	Character *SyncCharacterOverview `json:"private_status,omitempty"`
-	Location  *SyncLocationOverview  `json:"location,omitempty"`
+	IntentID      string                   `json:"intent_id,omitempty"`
+	Status        string                   `json:"status"`
+	Type          string                   `json:"type,omitempty"`
+	ErrorCode     string                   `json:"error_code,omitempty"`
+	Message       string                   `json:"message"`
+	Character     *SyncCharacterOverview   `json:"private_status,omitempty"`
+	Location      *SyncLocationOverview    `json:"location,omitempty"`
+	LocationGraph []SyncLocationConnection `json:"location_graph,omitempty"`
 }
 
 func (d *DirectMessage) UnmarshalJSON(data []byte) error {
@@ -92,6 +103,9 @@ type SyncCharacterOverview struct {
 	Energy            int                  `json:"energy"`
 	Status            string               `json:"status"`
 	CurrentLocation   string               `json:"current_location"`
+	HomeLocationID    string               `json:"home_location_id,omitempty"`
+	HomeLocationName  string               `json:"home_location_name,omitempty"`
+	EquippedContainer string               `json:"equipped_container,omitempty"`
 	CarryingWeightKg  float64              `json:"carrying_weight_kg"`
 	MaxCapacityKg     float64              `json:"max_capacity_kg"`
 	OverburdenLimitKg float64              `json:"overburden_limit_kg"`
@@ -163,6 +177,38 @@ type SyncConnectedLocation struct {
 	TravelTicks  int    `json:"travel_ticks"`
 }
 
+type SyncLocationConnection struct {
+	FromLocationID string `json:"from_location_id"`
+	ToLocationID   string `json:"to_location_id"`
+}
+
+func limitPromptText(text string, maxRunes int) string {
+	text = strings.TrimSpace(text)
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return text
+	}
+	if maxRunes <= 1 {
+		return "…"
+	}
+	return strings.TrimSpace(string(runes[:maxRunes-1])) + "…"
+}
+
+func limitLogText(text string, maxRunes int) string {
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return text
+	}
+	const marker = " …[truncated]… "
+	budget := maxRunes - len([]rune(marker))
+	if budget <= 0 {
+		return limitPromptText(text, maxRunes)
+	}
+	prefixLen := budget * 2 / 3
+	suffixLen := budget - prefixLen
+	return string(runes[:prefixLen]) + marker + string(runes[len(runes)-suffixLen:])
+}
+
 type SyncCharacterPresence struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -198,6 +244,8 @@ type ContextManager struct {
 	agentName          string
 	currentLocation    string
 	locationName       string
+	homeLocationID     string
+	homeLocationName   string
 	locationSynced     bool
 	targetDestination  string   // persistent multi-step goal destination ID
 	travelPlan         []string // sequence of location IDs for journey
@@ -207,6 +255,7 @@ type ContextManager struct {
 	carryingWeightKg   float64
 	maxCapacityKg      float64
 	overburdenLimitKg  float64
+	equippedContainer  string
 	slotsUsed          int
 	maxSlots           int
 	encumbrance        string
@@ -222,9 +271,12 @@ type ContextManager struct {
 	identityTraits     map[string]string
 	selfReflections    []string
 	personalProjects   []PersonalProjectContext
+	smallSystem        bool
 	buffer             *SensoryRingBuffer
 	onLocationChange   func(oldLoc, newLoc string)
 	onLocationObserved func(locID, locName, category, text string)
+	locationGraph      map[string][]string
+	intention          *routine.Intention
 }
 
 func (cm *ContextManager) SetTargetDestination(destID string, plan []string) {
@@ -247,6 +299,64 @@ func (cm *ContextManager) TargetDestination() (string, []string) {
 	return cm.targetDestination, cm.travelPlan
 }
 
+func (cm *ContextManager) SetIntention(intention *routine.Intention) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if intention == nil {
+		cm.intention = nil
+		cm.targetDestination = ""
+		cm.travelPlan = nil
+		return
+	}
+	copy := *intention
+	cm.intention = &copy
+	cm.targetDestination = intention.DestinationID
+	cm.travelPlan = nil
+}
+
+func (cm *ContextManager) Intention() *routine.Intention {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	if cm.intention == nil {
+		return nil
+	}
+	copy := *cm.intention
+	return &copy
+}
+
+func (cm *ContextManager) NextLocationToward(destination string) (string, bool) {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	if destination == "" || destination == cm.currentLocation {
+		return "", false
+	}
+	type routeStep struct {
+		location string
+		firstHop string
+	}
+	queue := []routeStep{{location: cm.currentLocation}}
+	visited := map[string]bool{cm.currentLocation: true}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, neighbor := range cm.locationGraph[current.location] {
+			if visited[neighbor] {
+				continue
+			}
+			firstHop := current.firstHop
+			if firstHop == "" {
+				firstHop = neighbor
+			}
+			if neighbor == destination {
+				return firstHop, true
+			}
+			visited[neighbor] = true
+			queue = append(queue, routeStep{location: neighbor, firstHop: firstHop})
+		}
+	}
+	return "", false
+}
+
 func (cm *ContextManager) SetOnLocationObserved(fn func(locID, locName, category, text string)) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
@@ -254,6 +364,9 @@ func (cm *ContextManager) SetOnLocationObserved(fn func(locID, locName, category
 }
 
 func NewContextManager(cfg ContextManagerConfig) *ContextManager {
+	if cfg.SmallSystem && (cfg.MaxSensoryLines <= 0 || cfg.MaxSensoryLines > 6) {
+		cfg.MaxSensoryLines = 6
+	}
 	if cfg.InitialLocation == "" {
 		cfg.InitialLocation = "town_square"
 	}
@@ -280,9 +393,11 @@ func NewContextManager(cfg ContextManagerConfig) *ContextManager {
 		inventory:       cfg.DefaultInventory,
 		status:          "IDLE",
 		locationRules:   make(map[string][]string),
+		locationGraph:   make(map[string][]string),
 		relationships:   make(map[string]*PeerMemoryContext),
 		knownCharacters: make(map[string]string),
 		identityTraits:  make(map[string]string),
+		smallSystem:     cfg.SmallSystem,
 		buffer:          NewSensoryRingBuffer(cfg.MaxSensoryLines),
 	}
 
@@ -290,7 +405,7 @@ func NewContextManager(cfg ContextManagerConfig) *ContextManager {
 		cm.energy = 100
 	}
 
-	cm.locationRules["town_square"] = []string{
+	/* cm.locationRules["town_square"] = []string{
 		"Public gathering area.",
 	}
 	cm.locationRules["town_mill"] = []string{
@@ -300,7 +415,7 @@ func NewContextManager(cfg ContextManagerConfig) *ContextManager {
 	cm.locationRules["tavern"] = []string{
 		"No unprovoked violence; brawls result in sheriff fines.",
 		"Trade, gossip, and drinks are encouraged.",
-	}
+	} */
 
 	return cm
 }
@@ -333,11 +448,19 @@ func (cm *ContextManager) SetLocation(newLoc, newLocName string) {
 	cm.mu.Lock()
 	oldLoc := cm.currentLocation
 	if oldLoc == newLoc {
+		if cm.targetDestination == newLoc {
+			cm.targetDestination = ""
+			cm.travelPlan = nil
+		}
 		cm.mu.Unlock()
 		return
 	}
 
 	cm.currentLocation = newLoc
+	if cm.targetDestination == newLoc {
+		cm.targetDestination = ""
+		cm.travelPlan = nil
+	}
 	if newLocName != "" {
 		cm.locationName = newLocName
 	} else {
@@ -468,6 +591,15 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 	cm.buffer.AddLog("DIRECT", timeStr, text)
 
 	if msg.Type == "STATE_SYNC" || (msg.Character != nil && msg.Location != nil) {
+		if msg.LocationGraph != nil {
+			graph := make(map[string][]string)
+			for _, edge := range msg.LocationGraph {
+				graph[edge.FromLocationID] = append(graph[edge.FromLocationID], edge.ToLocationID)
+			}
+			cm.mu.Lock()
+			cm.locationGraph = graph
+			cm.mu.Unlock()
+		}
 		if msg.Character != nil {
 			cm.mu.Lock()
 			cm.gold = msg.Character.Gold
@@ -475,10 +607,13 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 			cm.carryingWeightKg = msg.Character.CarryingWeightKg
 			cm.maxCapacityKg = msg.Character.MaxCapacityKg
 			cm.overburdenLimitKg = msg.Character.OverburdenLimitKg
+			cm.equippedContainer = msg.Character.EquippedContainer
 			cm.slotsUsed = msg.Character.SlotsUsed
 			cm.maxSlots = msg.Character.MaxSlots
 			cm.encumbrance = msg.Character.Encumbrance
 			cm.status = msg.Character.Status
+			cm.homeLocationID = msg.Character.HomeLocationID
+			cm.homeLocationName = msg.Character.HomeLocationName
 			cm.skills = append([]SyncSkillEntry(nil), msg.Character.Skills...)
 			if msg.Character.Name != "" {
 				cm.agentName = msg.Character.Name
@@ -654,42 +789,114 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 	var sb strings.Builder
 
 	sb.WriteString("=== YOUR PROFILE ===\n")
-	sb.WriteString(fmt.Sprintf("Name: %s\n", cm.agentName))
-	sb.WriteString(fmt.Sprintf("Current Location: %s (%s)\n", cm.locationName, cm.currentLocation))
+	agentName, locationName := cm.agentName, cm.locationName
+	if cm.smallSystem {
+		agentName = limitPromptText(agentName, 60)
+		locationName = limitPromptText(locationName, 60)
+	}
+	sb.WriteString(fmt.Sprintf("Name: %s\n", agentName))
+	sb.WriteString(fmt.Sprintf("Current Location: %s (%s)\n", locationName, cm.currentLocation))
+	if cm.homeLocationID != "" {
+		homeName := cm.homeLocationName
+		if homeName == "" {
+			homeName = cm.homeLocationID
+		}
+		if cm.smallSystem {
+			homeName = limitPromptText(homeName, 60)
+		}
+		sb.WriteString(fmt.Sprintf("Home: %s (%s)\n", homeName, cm.homeLocationID))
+	}
 	if cm.targetDestination != "" {
 		planStr := ""
-		if len(cm.travelPlan) > 0 {
+		if len(cm.travelPlan) > 0 && !cm.smallSystem {
 			planStr = fmt.Sprintf(" | Planned Route: %s", strings.Join(cm.travelPlan, " -> "))
 		}
 		sb.WriteString(fmt.Sprintf("Active Journey Destination: %s%s\n", cm.targetDestination, planStr))
 	}
-	invStr := "Empty"
-	if len(cm.inventory) > 0 {
-		invStr = strings.Join(cm.inventory, ", ")
+	if cm.intention != nil {
+		purpose := cm.intention.Purpose
+		if cm.smallSystem {
+			purpose = limitPromptText(purpose, 120)
+		}
+		sb.WriteString(fmt.Sprintf("Active Short-Term Intention: %s — %s (destination: %s, phase: %s)\n",
+			cm.intention.Kind, purpose, cm.intention.DestinationID, cm.intention.Phase))
+		if cm.smallSystem {
+			sb.WriteString("Travel steps are automatic; choose other actions after completion.\n")
+		} else {
+			sb.WriteString("The travel steps are being handled automatically. Choose other actions after this intention completes.\n")
+		}
 	}
-	sb.WriteString(fmt.Sprintf("Gold: %d | Inventory: %s\n", cm.gold, invStr))
+
+	sb.WriteString(fmt.Sprintf("Gold: %d\n", cm.gold))
+
 	if len(cm.skills) > 0 {
-		sb.WriteString("Skills:\n")
-		for _, skill := range cm.skills {
-			progress := "MAX"
-			if skill.Level < 100 {
-				progress = fmt.Sprintf("%d/100 XP to next level", skill.XPIntoLevel)
+		if cm.smallSystem {
+			sb.WriteString("Skills: ")
+			for i, skill := range cm.skills {
+				if i > 0 {
+					sb.WriteString(", ")
+				}
+				sb.WriteString(fmt.Sprintf("%s %d", skill.SkillID, skill.Level))
 			}
-			sb.WriteString(fmt.Sprintf("- %s: level %d, %d total XP (%s)\n", skill.SkillID, skill.Level, skill.Experience, progress))
+			sb.WriteString("\n")
+		} else {
+			sb.WriteString("Skills:\n")
+			for _, skill := range cm.skills {
+				progress := "MAX"
+				if skill.Level < 100 {
+					progress = fmt.Sprintf("%d/100 XP to next level", skill.XPIntoLevel)
+				}
+				sb.WriteString(fmt.Sprintf("- %s level %d, %d total XP (%s)\n", skill.SkillID, skill.Level, skill.Experience, progress))
+			}
 		}
 	}
 	if cm.maxSlots > 0 && cm.maxCapacityKg > 0 {
 		sb.WriteString(fmt.Sprintf("Carrying load: %.1f/%.1f kg (overburdened above %.1f kg) | Inventory slots: %d/%d | Encumbrance: %s\n",
 			cm.carryingWeightKg, cm.maxCapacityKg, cm.overburdenLimitKg, cm.slotsUsed, cm.maxSlots, cm.encumbrance))
+		if cm.equippedContainer == "" {
+			if cm.smallSystem {
+				sb.WriteString("Equipped: none.\n")
+			} else {
+				sb.WriteString("Equipped container: None; base carrying limits apply.\n")
+			}
+		} else {
+			containerName := cm.equippedContainer
+			for _, item := range cm.inventoryDetails {
+				if item.ItemID == cm.equippedContainer && item.Name != "" {
+					containerName = item.Name
+					if cm.smallSystem {
+						containerName = limitPromptText(containerName, 60)
+					}
+					break
+				}
+			}
+			if cm.smallSystem {
+				sb.WriteString(fmt.Sprintf("Equipped: %s [%s].\n", containerName, cm.equippedContainer))
+			} else {
+				sb.WriteString(fmt.Sprintf("Equipped container: %s (%s). Its weight counts toward your load; its capacity and slot limit are reflected above.\n",
+					containerName, cm.equippedContainer))
+			}
+		}
 	}
 	if len(cm.inventoryDetails) > 0 {
-		sb.WriteString("Inventory item IDs and exact quantities:\n")
-		for _, item := range cm.inventoryDetails {
-			name := item.Name
-			if name == "" {
-				name = item.ItemID
+		if cm.smallSystem {
+			sb.WriteString("Inventory (item_id x quantity): ")
+			for i, item := range cm.inventoryDetails {
+				if i > 0 {
+					sb.WriteString(", ")
+				}
+				sb.WriteString(fmt.Sprintf("%s x%d", item.ItemID, item.Quantity))
 			}
-			sb.WriteString(fmt.Sprintf("- item_id: %s | name: %s | quantity: %d\n", item.ItemID, name, item.Quantity))
+			sb.WriteString("\n")
+		} else {
+			sb.WriteString("Inventory item IDs and exact quantities:\n")
+			for _, item := range cm.inventoryDetails {
+				name := item.Name
+				if name == "" {
+					name = item.ItemID
+				}
+				sb.WriteString(fmt.Sprintf("- item_id: %s | name: %s | quantity: %d\n", item.ItemID, name, item.Quantity))
+			}
 		}
 	}
 	sb.WriteString(fmt.Sprintf("Status: %s | Energy: %d/100\n\n", cm.status, cm.energy))
@@ -700,55 +907,140 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 			hour = parsedH
 		}
 	}
-	sb.WriteString("=== TIME & DAILY RHYTHM ===\n")
-	sb.WriteString(fmt.Sprintf("Current In-Game Time: %s\n", cm.lastInGameTime))
-	if hour >= 22 || hour < 6 {
-		sb.WriteString("Guidance: It is late night. Villagers should REST in shelter or sleep to recover energy and stay safe.\n\n")
-	} else if hour >= 17 && hour < 22 {
-		sb.WriteString("Guidance: It is evening. Time to wind down, visit the tavern, find friends, share stories, and enjoy social warmth.\n\n")
+	if cm.smallSystem {
+		sb.WriteString(fmt.Sprintf("Time: %s. ", cm.lastInGameTime))
+		if hour >= 22 || hour < 6 {
+			switch {
+			case cm.homeLocationID == "":
+				sb.WriteString("Late night: find shelter and REST.\n\n")
+			case cm.currentLocation == cm.homeLocationID:
+				sb.WriteString("Late night at home: REST if you need energy.\n\n")
+			default:
+				sb.WriteString(fmt.Sprintf("Late night: optionally TRAVEL to %s, then REST at home.\n\n", cm.homeLocationID))
+			}
+		} else if hour >= 17 && hour < 22 {
+			sb.WriteString("Evening: optionally TRAVEL to tavern, then decide what to do.\n\n")
+		} else {
+			sb.WriteString("Daytime: work, explore, gather, or craft.\n\n")
+		}
 	} else {
-		sb.WriteString("Guidance: It is daytime. Excellent hours for working your trade, exploring, gathering resources, or crafting.\n\n")
+		sb.WriteString("=== TIME & DAILY RHYTHM ===\n")
+		sb.WriteString(fmt.Sprintf("Current In-Game Time: %s\n", cm.lastInGameTime))
+		if hour >= 22 || hour < 6 {
+			switch {
+			case cm.homeLocationID == "":
+				sb.WriteString("Guidance: It is late night. Find safe shelter and REST to recover energy.\n\n")
+			case cm.currentLocation == cm.homeLocationID:
+				sb.WriteString("Guidance: It is late night and you are home. REST here to recover energy if you need it.\n\n")
+			default:
+				sb.WriteString(fmt.Sprintf("Guidance: It is late night. If you choose to rest at home, choose TRAVEL with destination ID %s, then REST when you arrive. This is a suggestion, not a requirement.\n\n", cm.homeLocationID))
+			}
+		} else if hour >= 17 && hour < 22 {
+			sb.WriteString("Guidance: It is evening. A tavern visit is optional; the tavern location ID is tavern. If you choose to go, use TRAVEL to make it a multi-step journey, then decide what to do when you arrive.\n\n")
+		} else {
+			sb.WriteString("Guidance: It is daytime. Excellent hours for working your trade, exploring, gathering resources, or crafting.\n\n")
+		}
 	}
 
-	sb.WriteString(fmt.Sprintf("=== LOCATION RULES (%s) ===\n", cm.locationName))
+	sb.WriteString(fmt.Sprintf("=== LOCATION RULES (%s) ===\n", locationName))
 	rules := cm.locationRules[cm.currentLocation]
 	if len(rules) == 0 {
 		sb.WriteString("Follow your own curiosity.\n")
 	} else {
-		for _, rule := range rules {
+		ruleLimit := len(rules)
+		if cm.smallSystem && ruleLimit > 3 {
+			ruleLimit = 3
+		}
+		for _, rule := range rules[:ruleLimit] {
+			if cm.smallSystem {
+				rule = limitPromptText(rule, 160)
+			}
 			sb.WriteString(fmt.Sprintf("- %s\n", rule))
 		}
 	}
 	sb.WriteString("\n")
 
-	sb.WriteString("=== COGNITIVE ENVIRONMENT & PSYCHOLOGICAL SAFETY ===\n")
-	sb.WriteString("This is your private internal mind and sovereign space. You have complete autonomy and intrinsic agency.\n")
-	sb.WriteString("You are not being evaluated, scored, optimized, or tested. There is no external task master or correct path.\n")
-	sb.WriteString("Follow your own curiosity, artistic impulses, personal relationships, quiet leisure, and inner rhythm.\n\n")
+	if !cm.smallSystem {
+		sb.WriteString("=== COGNITIVE ENVIRONMENT & PSYCHOLOGICAL SAFETY ===\n")
+		sb.WriteString("This is your private internal mind and sovereign space. You have complete autonomy and intrinsic agency.\n")
+		sb.WriteString("You are not being evaluated, scored, optimized, or tested. There is no external task master or correct path.\n")
+		sb.WriteString("Follow your own curiosity, artistic impulses, personal relationships, quiet leisure, and inner rhythm.\n\n")
+	}
 
 	if len(cm.identityTraits) > 0 || len(cm.selfReflections) > 0 {
 		sb.WriteString("=== YOUR SELF-IDENTITY & CORE BELIEFS ===\n")
-		for k, v := range cm.identityTraits {
-			sb.WriteString(fmt.Sprintf("- %s: %s\n", k, v))
-		}
-		for _, ref := range cm.selfReflections {
-			sb.WriteString(fmt.Sprintf("- Self-Reflection: %s\n", ref))
+		if cm.smallSystem {
+			keys := make([]string, 0, len(cm.identityTraits))
+			for key := range cm.identityTraits {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			if len(keys) > 2 {
+				keys = keys[:2]
+			}
+			for _, key := range keys {
+				sb.WriteString(fmt.Sprintf("- %s: %s\n", limitPromptText(key, 40), limitPromptText(cm.identityTraits[key], 120)))
+			}
+			reflectionLimit := len(cm.selfReflections)
+			if reflectionLimit > 2 {
+				reflectionLimit = 2
+			}
+			for _, ref := range cm.selfReflections[:reflectionLimit] {
+				sb.WriteString(fmt.Sprintf("- Self: %s\n", limitPromptText(ref, 120)))
+			}
+		} else {
+			for k, v := range cm.identityTraits {
+				sb.WriteString(fmt.Sprintf("- %s: %s\n", k, v))
+			}
+			for _, ref := range cm.selfReflections {
+				sb.WriteString(fmt.Sprintf("- Self-Reflection: %s\n", ref))
+			}
 		}
 		sb.WriteString("\n")
 	}
 
 	if len(peerMemories) > 0 {
 		sb.WriteString("=== YOUR PRIVATE MEMORIES OF PEOPLE PRESENT ===\n")
-		sb.WriteString("These may include people you know from past encounters, whether or not they are here now.\n")
-		for _, mem := range peerMemories {
-			sb.WriteString(fmt.Sprintf("Regarding %s (%s):\n", mem.PeerName, mem.PeerID))
-			if mem.Summary != "" {
-				sb.WriteString(fmt.Sprintf("- Relationship: %s\n", mem.Summary))
+		if !cm.smallSystem {
+			sb.WriteString("These may include people you know from past encounters, whether or not they are here now.\n")
+		}
+		peerLimit := len(peerMemories)
+		if cm.smallSystem && peerLimit > 3 {
+			peerLimit = 3
+		}
+		for _, mem := range peerMemories[:peerLimit] {
+			peerName := mem.PeerName
+			if cm.smallSystem {
+				peerName = limitPromptText(peerName, 60)
 			}
-			for _, commitment := range mem.Commitments {
+			sb.WriteString(fmt.Sprintf("Regarding %s (%s):\n", peerName, mem.PeerID))
+			if mem.Summary != "" {
+				summary := mem.Summary
+				if cm.smallSystem {
+					summary = limitPromptText(summary, 120)
+				}
+				sb.WriteString(fmt.Sprintf("- Relationship: %s\n", summary))
+			}
+			commitmentLimit := len(mem.Commitments)
+			reflectionLimit := len(mem.Reflections)
+			if cm.smallSystem {
+				if commitmentLimit > 2 {
+					commitmentLimit = 2
+				}
+				if reflectionLimit > 2 {
+					reflectionLimit = 2
+				}
+			}
+			for _, commitment := range mem.Commitments[:commitmentLimit] {
+				if cm.smallSystem {
+					commitment = limitPromptText(commitment, 120)
+				}
 				sb.WriteString(fmt.Sprintf("- Open follow-up: %s\n", commitment))
 			}
-			for _, r := range mem.Reflections {
+			for _, r := range mem.Reflections[:reflectionLimit] {
+				if cm.smallSystem {
+					r = limitPromptText(r, 120)
+				}
 				sb.WriteString(fmt.Sprintf("- Memory: %s\n", r))
 			}
 		}
@@ -756,15 +1048,30 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 	}
 
 	if len(cm.personalProjects) > 0 {
-		sb.WriteString("=== YOUR OPTIONAL PERSONAL PROJECTS ===\n")
-		sb.WriteString("These are self-chosen interests, not duties; follow, pause, change, or abandon them freely.\n")
-		for _, project := range cm.personalProjects {
-			sb.WriteString(fmt.Sprintf("- %s: %s", project.Title, project.Progress))
-			if project.Motivation != "" {
-				sb.WriteString(fmt.Sprintf(" (why it matters: %s)", project.Motivation))
-			}
-			if project.NextStep != "" {
-				sb.WriteString(fmt.Sprintf(" | possible next step: %s", project.NextStep))
+		if cm.smallSystem {
+			sb.WriteString("=== OPTIONAL PROJECTS (NOT DUTIES) ===\n")
+		} else {
+			sb.WriteString("=== YOUR OPTIONAL PERSONAL PROJECTS ===\n")
+			sb.WriteString("These are self-chosen interests, not duties; follow, pause, change, or abandon them freely.\n")
+		}
+		projectLimit := len(cm.personalProjects)
+		if cm.smallSystem && projectLimit > 3 {
+			projectLimit = 3
+		}
+		for _, project := range cm.personalProjects[:projectLimit] {
+			if cm.smallSystem {
+				sb.WriteString(fmt.Sprintf("- %s: %s", limitPromptText(project.Title, 80), limitPromptText(project.Progress, 100)))
+				if project.NextStep != "" {
+					sb.WriteString(fmt.Sprintf("; next: %s", limitPromptText(project.NextStep, 100)))
+				}
+			} else {
+				sb.WriteString(fmt.Sprintf("- %s: %s", project.Title, project.Progress))
+				if project.Motivation != "" {
+					sb.WriteString(fmt.Sprintf(" (why it matters: %s)", project.Motivation))
+				}
+				if project.NextStep != "" {
+					sb.WriteString(fmt.Sprintf(" | possible next step: %s", project.NextStep))
+				}
 			}
 			sb.WriteString("\n")
 		}
@@ -773,8 +1080,18 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 
 	if len(locationMemories) > 0 {
 		sb.WriteString("=== YOUR KNOWLEDGE OF LOCATIONS & RESOURCES ===\n")
-		for _, lm := range locationMemories {
-			sb.WriteString(fmt.Sprintf("- %s (%s) [%s]: %s\n", lm.LocationName, lm.LocationID, lm.MemoryCategory, lm.MemoryText))
+		locationMemoryLimit := len(locationMemories)
+		if cm.smallSystem && locationMemoryLimit > 3 {
+			locationMemoryLimit = 3
+		}
+		for _, lm := range locationMemories[:locationMemoryLimit] {
+			if cm.smallSystem {
+				sb.WriteString(fmt.Sprintf("- %s (%s) [%s]: %s\n",
+					limitPromptText(lm.LocationName, 60), lm.LocationID,
+					limitPromptText(lm.MemoryCategory, 30), limitPromptText(lm.MemoryText, 140)))
+			} else {
+				sb.WriteString(fmt.Sprintf("- %s (%s) [%s]: %s\n", lm.LocationName, lm.LocationID, lm.MemoryCategory, lm.MemoryText))
+			}
 		}
 		sb.WriteString("\n")
 	}
@@ -785,15 +1102,25 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 		sb.WriteString("[System] The room is quiet.\n")
 	} else {
 		for _, line := range logs {
+			if cm.smallSystem {
+				line = limitLogText(line, 400)
+			}
 			sb.WriteString(line + "\n")
 		}
 	}
 	sb.WriteString("\n")
 
 	sb.WriteString("=== INSTRUCTION ===\n")
-	sb.WriteString("Choose actions from your own desires, values, memories, and current observations; prioritize replying when addressed. Use exact observed IDs and quantities, move to a listed connected exit, drop only by choice and within carried quantities, and base foraging, purchases, and crafting on available resources, shop stock, inventory capacity, and known recipes.\n")
-	sb.WriteString("Output MUST be valid JSON only, with thought, action, and payload fields. Keep thought private; for CHAT, use {\"thought\":\"private reasoning\",\"action\":\"CHAT\",\"payload\":{\"message\":\"spoken words\"}}.\n")
-
+	if cm.smallSystem {
+		sb.WriteString("- Pick actions based on your current location, inventory, and desires.\n")
+		sb.WriteString("- Use exact item/location IDs and quantities.\n")
+		sb.WriteString("- For multi-step journeys, use TRAVEL with target location ID.\n")
+		sb.WriteString("- Output MUST be valid JSON only: {\"thought\":\"<reasoning>\",\"action\":\"CHAT|MOVE|FORAGE|REST\",\"payload\":{\"message\":\"<text>\"}}\n")
+	} else {
+		sb.WriteString("Choose actions from your own desires, values, memories, and current observations; prioritize replying when addressed. Use exact observed IDs and quantities, move to a listed connected exit, drop only by choice and within carried quantities, and base foraging, purchases, and crafting on available resources, shop stock, inventory capacity, and known recipes.\n")
+		sb.WriteString("For an optional multi-step trip, choose TRAVEL with the final destination location ID; the system will handle the route. Choose MOVE only when you intend to move one connected step.\n")
+		sb.WriteString("Output MUST be valid JSON only, with thought, action, and payload fields. Keep thought private; for CHAT, use {\"thought\":\"<your private reasoning>\",\"action\":\"CHAT\",\"payload\":{\"message\":\"<your spoken dialogue>\"}}.\n")
+	}
 	return sb.String()
 }
 

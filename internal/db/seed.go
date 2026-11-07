@@ -88,13 +88,13 @@ var DefaultLocations = []LocationSeed{
 		ID:                "tavern",
 		Name:              "The Boar's Tusk Tavern",
 		Description:       "Warm, cozy, and boisterous. The center of village social life, offering hot meals, ale, and lodging beds upstairs.",
+		OwnerID:           "martha_barkeep",
 		IsPublic:          false,
 		IsIndoor:          true,
-		OwnerID:           "martha_barkeep",
 		VehicleAccessTier: "FOOT_AND_WHEELBARROW",
-		OpenTime:          "12:00",
-		CloseTime:         "23:59",
-		RulesPrompt:       "Please buy a drink or meal per visit.",
+		OpenTime:          "08:00",
+		CloseTime:         "02:00",
+		RulesPrompt:       "Please buy AND consume a drink or meal on each visit if you have enough gold.",
 	},
 	{
 		ID:                "town_mill",
@@ -214,7 +214,7 @@ var DefaultLocations = []LocationSeed{
 	{
 		ID:                "marthas_room",
 		Name:              "Martha's Room",
-		Description:       "Martha's private quarters tucked away inside the tavern.",
+		Description:       "Martha's private quarters tucked away inside the tavern. The bed is soft and covered with warm blankets. There is plenty of storage for items. There are a few books on the shelves to read.",
 		OwnerID:           "martha_barkeep",
 		IsPublic:          false,
 		IsIndoor:          true,
@@ -258,6 +258,18 @@ var DefaultLocations = []LocationSeed{
 		OpenTime:          "25:00",
 		CloseTime:         "25:00",
 		RulesPrompt:       "Private workspace for Gideon. A safe place to rest and store items.",
+	},
+	{
+		ID:                "lukes_room",
+		Name:              "Luke's Room",
+		Description:       "While small, Luke's room at the stable is warm, dry, and cozy. There is a small comfortable bed with warm blankets. A kettle for e and a small hearth.",
+		OwnerID:           "luke_farmer",
+		IsPublic:          true,
+		IsIndoor:          true,
+		VehicleAccessTier: "ALL",
+		OpenTime:          "00:00",
+		CloseTime:         "23:59",
+		RulesPrompt:       "",
 	},
 }
 
@@ -422,6 +434,8 @@ func SeedLocationConnections(db *sql.DB) error {
 		{"gideons_room", "blacksmith", 1},
 		{"town_mill", "eldons_room", 1},
 		{"eldons_room", "town_mill", 1},
+		{"stables", "lukes_room", 1},
+		{"lukes_room", "stables", 1},
 	}
 
 	for _, conn := range privateConnections {

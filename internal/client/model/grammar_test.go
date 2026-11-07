@@ -14,6 +14,7 @@ func TestDefaultAgentIntentGrammar(t *testing.T) {
 		t.Fatalf("DefaultAgentIntentGrammar failed validation: %v", err)
 	}
 	assertObjectChatPayload(t, grammar)
+	assertTravelPayload(t, grammar)
 }
 
 func TestLoadGrammarFile(t *testing.T) {
@@ -32,6 +33,23 @@ func TestLoadGrammarFile(t *testing.T) {
 		t.Fatal("grammar file content is empty")
 	}
 	assertObjectChatPayload(t, content)
+	assertTravelPayload(t, content)
+}
+
+func assertTravelPayload(t *testing.T, grammar string) {
+	t.Helper()
+	for _, expected := range []string{
+		`\"TRAVEL\"`,
+		"payload ::= move-payload | travel-payload",
+		`travel-payload ::= "{" ws "\"target_location\"" ws ":" ws string ws "}"`,
+	} {
+		if !strings.Contains(grammar, expected) {
+			t.Errorf("grammar missing TRAVEL support %q", expected)
+		}
+	}
+	if !strings.Contains(grammar, `\"DRINK\"`) {
+		t.Error("grammar should include DRINK alias for EAT")
+	}
 }
 
 func assertObjectChatPayload(t *testing.T, grammar string) {
@@ -81,6 +99,12 @@ func TestSanitizeAndExtractJSON(t *testing.T) {
 			name:       "JSON with unquoted action enum",
 			input:      `{"thought": "Saying hi", "action": CHAT, "payload": "Hi!"}`,
 			wantAction: "CHAT",
+			wantErr:    false,
+		},
+		{
+			name:       "Clean direct JSON with DRINK alias",
+			input:      `{"thought": "Drinking water", "action": "DRINK", "payload": {"item_id": "water"}}`,
+			wantAction: "EAT",
 			wantErr:    false,
 		},
 		{

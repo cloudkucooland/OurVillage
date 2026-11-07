@@ -73,7 +73,20 @@ func (h *DBAuthHook) OnConnectAuthenticate(cl *mqtt.Client, pk packets.Packet) b
 	}
 
 	var expectedPassword string
-	err := h.db.QueryRow("SELECT mqtt_password FROM characters WHERE id = ?", username).Scan(&expectedPassword)
+	var err error
+	for attempt := 1; attempt <= 3; attempt++ {
+		err = h.db.QueryRow("SELECT mqtt_password FROM characters WHERE id = ?", username).Scan(&expectedPassword)
+		if err == nil {
+			break
+		}
+		if strings.Contains(err.Error(), "database is locked") || strings.Contains(err.Error(), "SQLITE_BUSY") {
+			log.Printf("[Auth Warning] Database locked authenticating '%s' (attempt %d/3), retrying...", username, attempt)
+			time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
+			continue
+		}
+		break
+	}
+
 	if err == sql.ErrNoRows {
 		log.Printf("[Auth] Denied connection: unknown character '%s'", username)
 		return false
@@ -87,7 +100,17 @@ func (h *DBAuthHook) OnConnectAuthenticate(cl *mqtt.Client, pk packets.Packet) b
 		return false
 	}
 
-	_, _ = h.db.Exec("UPDATE characters SET is_online = 1 WHERE id = ?", username)
+	for attempt := 1; attempt <= 3; attempt++ {
+		_, err = h.db.Exec("UPDATE characters SET is_online = 1 WHERE id = ?", username)
+		if err == nil {
+			break
+		}
+		if strings.Contains(err.Error(), "database is locked") || strings.Contains(err.Error(), "SQLITE_BUSY") {
+			time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
+			continue
+		}
+		break
+	}
 	log.Printf("[Auth] Successfully authenticated character: '%s'", username)
 	return true
 }

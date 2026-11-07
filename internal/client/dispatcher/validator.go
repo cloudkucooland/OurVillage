@@ -39,7 +39,9 @@ var ValidActionTypes = map[string]struct{}{
 	"BUY":           {},
 	"RESTOCK":       {},
 	"EAT":           {},
+	"DRINK":         {},
 	"REST":          {},
+	"TRAVEL":        {},
 }
 
 // IsValidAction checks if an action string is a recognized RFC 002 action.
@@ -57,7 +59,7 @@ func ValidateIntent(intent Intent) (Intent, error) {
 
 	actionUpper := strings.ToUpper(strings.TrimSpace(intent.Action))
 	if !IsValidAction(actionUpper) {
-		return intent, fmt.Errorf("invalid action enum %q: must be one of MOVE, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, RESTOCK, EAT, REST", intent.Action)
+		return intent, fmt.Errorf("invalid action enum %q: must be one of MOVE, TRAVEL, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, RESTOCK, EAT, DRINK, REST", intent.Action)
 	}
 
 	if actionUpper == "COLLECT" {
@@ -65,6 +67,9 @@ func ValidateIntent(intent Intent) (Intent, error) {
 	}
 	if actionUpper == "GIVE" {
 		actionUpper = "TRANSFER"
+	}
+	if actionUpper == "DRINK" {
+		actionUpper = "EAT"
 	}
 	intent.Action = actionUpper
 
@@ -110,15 +115,15 @@ func ValidateIntent(intent Intent) (Intent, error) {
 			"quantity": p.Quantity,
 		})
 		intent.Payload = cleanPayload
-	case "MOVE":
+	case "MOVE", "TRAVEL":
 		var p struct {
 			TargetLocation string `json:"target_location"`
 		}
 		if err := json.Unmarshal(intent.Payload, &p); err != nil {
-			return intent, fmt.Errorf("invalid MOVE payload: %w", err)
+			return intent, fmt.Errorf("invalid %s payload: %w", actionUpper, err)
 		}
 		if strings.TrimSpace(p.TargetLocation) == "" {
-			return intent, fmt.Errorf("MOVE requires non-empty target_location")
+			return intent, fmt.Errorf("%s requires non-empty target_location", actionUpper)
 		}
 		// Re-marshal clean payload
 		cleanPayload, _ := json.Marshal(map[string]string{

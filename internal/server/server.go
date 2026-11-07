@@ -286,6 +286,10 @@ func (s *Server) resolveCompletedActions(currentTick uint64, weather string) {
 				log.Printf("Failed to resolve foraging for %s: %v", a.charID, err)
 				continue
 			}
+			if err := s.clearCompletedAction(a.charID); err != nil {
+				log.Printf("Failed to clear completed forage state for %s: %v", a.charID, err)
+				continue
+			}
 
 			// Broadcast room system event
 			sysTopic := fmt.Sprintf("world/locations/%s/system", a.locID)
@@ -321,6 +325,10 @@ func (s *Server) resolveCompletedActions(currentTick uint64, weather string) {
 			res, err := db.ResolveCrafting(s.db, a.charID, a.target, int(a.endTick-a.startTick))
 			if err != nil {
 				log.Printf("Failed to resolve crafting for %s: %v", a.charID, err)
+				continue
+			}
+			if err := s.clearCompletedAction(a.charID); err != nil {
+				log.Printf("Failed to clear completed craft state for %s: %v", a.charID, err)
 				continue
 			}
 
@@ -363,6 +371,11 @@ func (s *Server) resolveCompletedActions(currentTick uint64, weather string) {
 				continue
 			}
 
+			if err := s.clearCompletedAction(a.charID); err != nil {
+				log.Printf("Failed to clear completed rest state for %s: %v", a.charID, err)
+				continue
+			}
+
 			var newEnergy, newHealth int
 			_ = s.db.QueryRow("SELECT energy, health FROM characters WHERE id = ?", a.charID).Scan(&newEnergy, &newHealth)
 
@@ -378,6 +391,7 @@ func (s *Server) resolveCompletedActions(currentTick uint64, weather string) {
 				"health":        newHealth,
 				"narrative_log": fmt.Sprintf("You finished resting and recovered vitality (Energy: %d/100, Health: %d/100).", newEnergy, newHealth),
 			}
+			s.includeCharacterSync(a.charID, respMap)
 
 			if respBytes, err := json.Marshal(respMap); err == nil {
 				directTopic := fmt.Sprintf("world/agents/%s/direct", a.charID)
@@ -385,17 +399,16 @@ func (s *Server) resolveCompletedActions(currentTick uint64, weather string) {
 			}
 		}
 
-		// Reset character state back to IDLE in SQLite so actions aren't re-executed
-		_, err = s.db.Exec(`
-			UPDATE characters 
-			SET status = 'IDLE', action_target = '', action_start_tick = 0, action_end_tick = 0, action_intent_id = '' 
-			WHERE id = ?`,
-			a.charID,
-		)
-		if err != nil {
-			log.Printf("Failed to clear action state for character %s: %v", a.charID, err)
-		}
 	}
+}
+
+func (s *Server) clearCompletedAction(characterID string) error {
+	_, err := s.db.Exec(`
+		UPDATE characters
+		SET status = 'IDLE', action_target = '', action_start_tick = 0, action_end_tick = 0, action_intent_id = ''
+		WHERE id = ?
+	`, characterID)
+	return err
 }
 
 func (s *Server) includeCharacterSync(characterID string, response map[string]interface{}) {
@@ -406,4 +419,5 @@ func (s *Server) includeCharacterSync(characterID string, response map[string]in
 	}
 	response["type"] = "STATE_SYNC"
 	response["private_status"] = perception.Character
+	response["location_graph"] = perception.LocationGraph
 }

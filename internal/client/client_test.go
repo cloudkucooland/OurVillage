@@ -5,6 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+
+	"agentmud/internal/client/dispatcher"
+	"agentmud/internal/client/memory"
+	"agentmud/internal/client/routine"
+	"agentmud/internal/client/spatial"
 	"testing"
 )
 
@@ -264,5 +269,47 @@ func TestLogFileTildeExpansion(t *testing.T) {
 
 	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
 		t.Errorf("expected log file to be created at expanded tilde path %s, but it does not exist", expectedPath)
+	}
+}
+
+func TestBeginTravelIntentionPersistsOptionalDestination(t *testing.T) {
+	store, err := memory.NewClientMemoryStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctxMgr := spatial.NewContextManager(spatial.ContextManagerConfig{
+		AgentID:         "elda",
+		InitialLocation: "forest",
+	})
+	if err := ctxMgr.IngestDirectResponse([]byte(`{
+		"type":"STATE_SYNC",
+		"location_graph":[
+			{"from_location_id":"forest","to_location_id":"town_square"},
+			{"from_location_id":"town_square","to_location_id":"tavern"}
+		],
+		"location":{"id":"forest","name":"Forest"}
+	}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	handled, err := beginTravelIntention(dispatcher.Intent{
+		Action:  "TRAVEL",
+		Payload: json.RawMessage(`{"target_location":"tavern"}`),
+	}, "elda", ctxMgr, store)
+	if err != nil || !handled {
+		t.Fatalf("beginTravelIntention() = %v, %v; want true, nil", handled, err)
+	}
+	want := &routine.Intention{
+		Kind:          routine.Visit,
+		Purpose:       "Visit tavern",
+		DestinationID: "tavern",
+		Phase:         routine.Traveling,
+	}
+	if got := ctxMgr.Intention(); got == nil || *got != *want {
+		t.Fatalf("in-memory intention = %#v, want %#v", got, want)
+	}
+	if got, err := store.GetActiveIntention("elda"); err != nil || got == nil || *got != *want {
+		t.Fatalf("persisted intention = %#v, %v; want %#v, nil", got, err, want)
 	}
 }

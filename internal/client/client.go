@@ -10,14 +10,15 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"agentmud/internal/client/dispatcher"
 	"agentmud/internal/client/memory"
 	"agentmud/internal/client/model"
+	"agentmud/internal/client/routine"
 	"agentmud/internal/client/spatial"
 	"agentmud/internal/client/tui"
 
@@ -36,6 +37,10 @@ func BuildIntentMessage(actionCfg ActionConfig) ([]byte, error) {
 		payload, err = json.Marshal(map[string]string{
 			"target_location": actionCfg.TargetLoc,
 		})
+	case "TRAVEL":
+		payload, err = json.Marshal(map[string]string{
+			"target_location": actionCfg.TargetLoc,
+		})
 	case "CHAT":
 		payload, err = json.Marshal(actionCfg.ChatMsg)
 	case "TRANSFER":
@@ -45,12 +50,12 @@ func BuildIntentMessage(actionCfg ActionConfig) ([]byte, error) {
 			"item_id":      actionCfg.Item,
 			"quantity":     actionCfg.Qty,
 		})
-	case "FORAGE":
+	case "FORAGE", "COLLECT":
 		payload, err = json.Marshal(map[string]interface{}{
 			"target_resource": actionCfg.Resource,
 			"duration_ticks":  actionCfg.Duration,
 		})
-	case "CANCEL_ACTION":
+	case "CANCEL_ACTION", "LOOK", "STATUS", "UNEQUIP":
 		payload, err = json.Marshal(map[string]interface{}{})
 	case "DROP":
 		payload, err = json.Marshal(map[string]interface{}{
@@ -66,8 +71,6 @@ func BuildIntentMessage(actionCfg ActionConfig) ([]byte, error) {
 		payload, err = json.Marshal(map[string]interface{}{
 			"item_id": actionCfg.Item,
 		})
-	case "UNEQUIP":
-		payload, err = json.Marshal(map[string]interface{}{})
 	case "CRAFT":
 		payload, err = json.Marshal(map[string]interface{}{
 			"recipe_id": actionCfg.Recipe,
@@ -82,6 +85,14 @@ func BuildIntentMessage(actionCfg ActionConfig) ([]byte, error) {
 			"item_id":    actionCfg.Item,
 			"quantity":   actionCfg.Qty,
 			"price_gold": actionCfg.Amount,
+		})
+	case "REST":
+		duration := actionCfg.Duration
+		if duration <= 0 {
+			duration = 30
+		}
+		payload, err = json.Marshal(map[string]interface{}{
+			"duration_ticks": duration,
 		})
 	default:
 		return nil, fmt.Errorf("unknown action: %s", actionCfg.Action)
@@ -103,6 +114,150 @@ func BuildIntentMessage(actionCfg ActionConfig) ([]byte, error) {
 	}
 
 	return json.Marshal(validated)
+}
+
+func processActiveIntention(ctx context.Context, agentID string, ctxMgr *spatial.ContextManager, store *memory.ClientMemoryStore, disp *dispatcher.IntentDispatcher) (bool, error) {
+	intention := ctxMgr.Intention()
+	if intention == nil {
+		return false, nil
+	}
+	if !strings.EqualFold(ctxMgr.Status(), "IDLE") {
+		if intention.Kind == routine.HomeAndRest && intention.Phase == routine.StartingRest && strings.EqualFold(ctxMgr.Status(), "RESTING") {
+			intention.Phase = routine.Resting
+			if err := store.SaveActiveIntention(agentID, *intention); err != nil {
+				return true, err
+			}
+			ctxMgr.SetIntention(intention)
+		}
+		return true, nil
+	}
+
+	if ctxMgr.CurrentLocation() != intention.DestinationID {
+		next, ok := ctxMgr.NextLocationToward(intention.DestinationID)
+		if !ok {
+			if err := store.ClearActiveIntention(agentID); err != nil {
+				return true, err
+			}
+			ctxMgr.SetIntention(nil)
+			return true, fmt.Errorf("no known route to intention destination %q", intention.DestinationID)
+		}
+		payload, err := json.Marshal(map[string]string{"target_location": next})
+		if err != nil {
+			return true, fmt.Errorf("encode intention movement: %w", err)
+		}
+		result, err := disp.Dispatch(ctx, dispatcher.Intent{
+			IntentID: dispatcher.GenerateIntentID(),
+			Action:   "MOVE",
+			Payload:  payload,
+		}, 10*time.Second)
+		if err != nil {
+			return true, fmt.Errorf("move toward intention destination %q: %w", intention.DestinationID, err)
+		}
+		if !strings.EqualFold(result.Status, "SUCCESS") {
+			if clearErr := store.ClearActiveIntention(agentID); clearErr != nil {
+				return true, fmt.Errorf("movement failed (%s): %v; clear intention: %w", result.Message, result.Err, clearErr)
+			}
+			ctxMgr.SetIntention(nil)
+			return true, fmt.Errorf("movement toward intention destination %q failed: %s", intention.DestinationID, result.Message)
+		}
+		return true, nil
+	}
+
+	if intention.Kind == routine.Visit {
+		if err := store.ClearActiveIntention(agentID); err != nil {
+			return true, err
+		}
+		ctxMgr.SetIntention(nil)
+		ctxMgr.IngestSystem(fmt.Sprintf("You arrived at %s.", intention.DestinationID))
+		return true, nil
+	}
+	if intention.Kind != routine.HomeAndRest {
+		if err := store.ClearActiveIntention(agentID); err != nil {
+			return true, err
+		}
+		ctxMgr.SetIntention(nil)
+		return true, fmt.Errorf("unsupported short-term intention kind %q", intention.Kind)
+	}
+	if intention.Phase == routine.Resting {
+		if err := store.ClearActiveIntention(agentID); err != nil {
+			return true, err
+		}
+		ctxMgr.SetIntention(nil)
+		return true, nil
+	}
+	if ctxMgr.Energy() >= 100 {
+		if err := store.ClearActiveIntention(agentID); err != nil {
+			return true, err
+		}
+		ctxMgr.SetIntention(nil)
+		return true, nil
+	}
+
+	intention.Phase = routine.StartingRest
+	if err := store.SaveActiveIntention(agentID, *intention); err != nil {
+		return true, err
+	}
+	ctxMgr.SetIntention(intention)
+	payload, err := json.Marshal(map[string]int{"duration_ticks": 30})
+	if err != nil {
+		return true, fmt.Errorf("encode intention rest: %w", err)
+	}
+	result, err := disp.Dispatch(ctx, dispatcher.Intent{
+		IntentID: dispatcher.GenerateIntentID(),
+		Action:   "REST",
+		Payload:  payload,
+	}, 10*time.Second)
+	if err != nil {
+		return true, fmt.Errorf("rest at home: %w", err)
+	}
+	if !strings.EqualFold(result.Status, "SUCCESS") {
+		if clearErr := store.ClearActiveIntention(agentID); clearErr != nil {
+			return true, fmt.Errorf("rest failed (%s): %v; clear intention: %w", result.Message, result.Err, clearErr)
+		}
+		ctxMgr.SetIntention(nil)
+		return true, fmt.Errorf("rest at home failed: %s", result.Message)
+	}
+	intention.Phase = routine.Resting
+	if err := store.SaveActiveIntention(agentID, *intention); err != nil {
+		return true, err
+	}
+	ctxMgr.SetIntention(intention)
+	return true, nil
+}
+
+func beginTravelIntention(intent dispatcher.Intent, agentID string, ctxMgr *spatial.ContextManager, store *memory.ClientMemoryStore) (bool, error) {
+	if !strings.EqualFold(intent.Action, "TRAVEL") {
+		return false, nil
+	}
+	var payload struct {
+		TargetLocation string `json:"target_location"`
+	}
+	if err := json.Unmarshal(intent.Payload, &payload); err != nil {
+		return true, fmt.Errorf("decode TRAVEL destination: %w", err)
+	}
+	if payload.TargetLocation != ctxMgr.CurrentLocation() {
+		if _, ok := ctxMgr.NextLocationToward(payload.TargetLocation); !ok {
+			return true, fmt.Errorf("no known route to TRAVEL destination %q", payload.TargetLocation)
+		}
+	}
+	kind := routine.Visit
+	purpose := "Visit " + payload.TargetLocation
+	homeLocationID, _ := ctxMgr.HomeLocation()
+	if payload.TargetLocation == homeLocationID {
+		kind = routine.HomeAndRest
+		purpose = "Return home and rest"
+	}
+	intention := routine.Intention{
+		Kind:          kind,
+		Purpose:       purpose,
+		DestinationID: payload.TargetLocation,
+		Phase:         routine.Traveling,
+	}
+	if err := store.SaveActiveIntention(agentID, intention); err != nil {
+		return true, err
+	}
+	ctxMgr.SetIntention(&intention)
+	return true, nil
 }
 
 // RunClient initializes the MQTT client and event loops according to the provided configuration.
@@ -136,6 +291,7 @@ func RunClient(ctx context.Context, cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize model engine: %w", err)
 	}
+	engine = model.NewLoggingEngine(engine, log.Default())
 	defer engine.Close()
 
 	initLoc := cfg.Action.TargetLoc
@@ -146,6 +302,7 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		AgentID:          cfg.Client.AgentID,
 		InitialLocation:  initLoc,
 		MaxSensoryLines:  cfg.Cognition.MaxSensoryLogLines,
+		SmallSystem:      cfg.Cognition.SmallSystem,
 		DefaultGold:      15,
 		DefaultEnergy:    100,
 		DefaultInventory: []string{"bread", "water_flask"},
@@ -156,6 +313,11 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		return fmt.Errorf("failed to initialize client memory store: %w", err)
 	}
 	defer memoryStore.Close()
+	activeIntention, err := memoryStore.GetActiveIntention(cfg.Client.AgentID)
+	if err != nil {
+		return fmt.Errorf("failed to restore active intention: %w", err)
+	}
+	ctxMgr.SetIntention(activeIntention)
 
 	synthesizer := memory.NewReflectionSynthesizer(
 		memoryStore,
@@ -331,6 +493,7 @@ func RunClient(ctx context.Context, cfg *Config) error {
 	}
 
 	idleTicks := 0
+	var intentionRunning atomic.Bool
 	var activeMQTTClient mqtt.Client
 
 	subscribeLocation := func(c mqtt.Client, loc string) {
@@ -390,6 +553,12 @@ func RunClient(ctx context.Context, cfg *Config) error {
 							intent, err := dispatcher.GenerateIntentWithRetry(clientCtx, engine, prompt, genOpts, 2)
 							if err != nil {
 								log.Printf("[Autonomous Chat] Cognition generation failed: %v", err)
+								return
+							}
+							if handled, err := beginTravelIntention(intent, cfg.Client.AgentID, ctxMgr, memoryStore); handled {
+								if err != nil {
+									log.Printf("[Autonomous Chat] Failed to start travel intention: %v", err)
+								}
 								return
 							}
 
@@ -467,9 +636,28 @@ func RunClient(ctx context.Context, cfg *Config) error {
 				return
 			}
 
+			if ctxMgr.Intention() != nil {
+				idleTicks = 0
+				intention := ctxMgr.Intention()
+				status := ctxMgr.Status()
+				canAdvance := strings.EqualFold(status, "IDLE") ||
+					(intention != nil && intention.Kind == routine.HomeAndRest &&
+						intention.Phase == routine.StartingRest && strings.EqualFold(status, "RESTING"))
+				if canAdvance && intentionRunning.CompareAndSwap(false, true) {
+					go func() {
+						defer intentionRunning.Store(false)
+						disp := dispatcher.NewIntentDispatcher(cfg.Client.AgentID, c, tracker)
+						if _, err := processActiveIntention(clientCtx, cfg.Client.AgentID, ctxMgr, memoryStore, disp); err != nil {
+							log.Printf("[Intention] %v", err)
+						}
+					}()
+				}
+				return
+			}
+
 			if cfg.Cognition.IdleThresholdTicks > 0 {
 				status := ctxMgr.Status()
-				if status != "IDLE" {
+				if !strings.EqualFold(status, "IDLE") {
 					idleTicks = 0
 				} else {
 					idleTicks++
@@ -478,37 +666,9 @@ func RunClient(ctx context.Context, cfg *Config) error {
 						log.Printf("[Intrinsic Motivation] Idle threshold reached (%d ticks). Triggering autonomous motivation turn...", cfg.Cognition.IdleThresholdTicks)
 
 						go func() {
-							hour := 12
-							if len(tick.InGameTime) >= 2 {
-								if parsedH, err := strconv.Atoi(tick.InGameTime[:2]); err == nil {
-									hour = parsedH
-								}
+							if !strings.EqualFold(ctxMgr.Status(), "IDLE") {
+								return
 							}
-							var motivationPrompts []string
-							if hour >= 22 || hour < 6 {
-								motivationPrompts = []string{
-									"The night is deep and quiet. It is time to rest your weary limbs, find shelter, and REST to recover your energy.",
-									"Shadows stretch across the village at night. You should REST indoors and regain your strength for tomorrow.",
-									"Quiet night surrounds you. Consider resting, sleeping, or reflecting on the day in safety.",
-								}
-							} else if hour >= 17 && hour < 22 {
-								motivationPrompts = []string{
-									"Evening falls over the village. Perhaps you should visit the tavern, share a drink with neighbors, or find friends to chat with.",
-									"The day's work winds down. It is a wonderful time to seek out social warmth, visit the local tavern, or converse with villagers.",
-									"Evening approaches. Consider finding friends, discussing the day's events, or sharing a warm meal.",
-								}
-							} else {
-								motivationPrompts = []string{
-									"The sun is up and the village is bustling. Perhaps you should work at your trade, gather resources, explore, or craft useful goods.",
-									"Daylight invites productivity. Consider foraging in the forest, working at the mill or forge, or checking the town notice board.",
-									"A sudden creative impulse strikes you. Could you refine your craft, explore the village, or inspect your stored goods?",
-									"You feel an itch to be productive. Should you gather raw materials, wander the paths, or converse with a passing villager?",
-								}
-							}
-							promptIdx := time.Now().UnixNano() % int64(len(motivationPrompts))
-							selectedPrompt := motivationPrompts[promptIdx]
-
-							ctxMgr.IngestSystem(selectedPrompt)
 
 							memories := fetchPeerMemories()
 							prompt := ctxMgr.BuildPrompt(memories, fetchLocationMemories())
@@ -523,6 +683,16 @@ func RunClient(ctx context.Context, cfg *Config) error {
 							intent, err := dispatcher.GenerateIntentWithRetry(clientCtx, engine, prompt, genOpts, 2)
 							if err != nil {
 								log.Printf("[Intrinsic Motivation] Cognition generation failed: %v", err)
+								return
+							}
+
+							if !strings.EqualFold(ctxMgr.Status(), "IDLE") {
+								return
+							}
+							if handled, err := beginTravelIntention(intent, cfg.Client.AgentID, ctxMgr, memoryStore); handled {
+								if err != nil {
+									log.Printf("[Intrinsic Motivation] Failed to start travel intention: %v", err)
+								}
 								return
 							}
 
@@ -545,6 +715,7 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		c.Subscribe(directTopic, 0, func(_ mqtt.Client, msg mqtt.Message) {
 			idleTicks = 0
 			log.Printf("[DIRECT RESPONSE] %s", string(msg.Payload()))
+			_ = ctxMgr.IngestDirectResponse(msg.Payload())
 			res, matched := tracker.Resolve(msg.Payload())
 			if matched {
 				log.Printf("[Correlation] Intent %s acknowledged by server: %s in %v", res.IntentID, res.Status, res.Duration)
@@ -552,7 +723,6 @@ func RunClient(ctx context.Context, cfg *Config) error {
 					log.Printf("[Memory] Failed to record action outcome: %v", err)
 				}
 			}
-			_ = ctxMgr.IngestDirectResponse(msg.Payload())
 		})
 
 		// Re-subscribe to current location topics on reconnect
@@ -620,6 +790,13 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		debounce := &cfg.Cognition.TickIntervalDebounceMS
 
 		tuiModel := tui.NewTUIModel(clientCtx, cfg.Client.AgentID, client, tracker, ctxMgr, engine, fetchPeerMemories, chatProb, refFreq, temp, debounce)
+		tuiModel.SetTravelIntentionSaver(func(intention routine.Intention) error {
+			if err := memoryStore.SaveActiveIntention(cfg.Client.AgentID, intention); err != nil {
+				return err
+			}
+			ctxMgr.SetIntention(&intention)
+			return nil
+		})
 		tuiModel.SetSynthesisStatusChannel(synthesisStatuses)
 		tuiModel.SetSelfIdentityProvider(func() ([]memory.IdentityTrait, []memory.SelfReflection, error) {
 			traits, err := memoryStore.GetIdentityTraits()
@@ -634,6 +811,9 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		})
 		tuiModel.SetProjectProvider(func() ([]memory.PersonalProject, error) {
 			return memoryStore.GetProjects(false, 20)
+		})
+		tuiModel.SetLocationMemoryProvider(func() ([]memory.LocationMemory, error) {
+			return memoryStore.GetLocationMemories()
 		})
 		p := tea.NewProgram(tuiModel, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {

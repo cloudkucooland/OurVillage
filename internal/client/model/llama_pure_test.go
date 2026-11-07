@@ -29,3 +29,13 @@ func TestNewLlamaPureEngine_MissingLibrary(t *testing.T) {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
+
+func TestBuildGenerateOptionsUsesConfiguredMaxTokens(t *testing.T) {
+	engine := &LlamaPureEngine{config: LlamaPureEngineConfig{MaxTokens: 768}}
+	if got := engine.buildGenerateOptions(GenerationOptions{}).MaxTokens; got != 768 {
+		t.Fatalf("configured max tokens = %d, want 768", got)
+	}
+	if got := engine.buildGenerateOptions(GenerationOptions{MaxTokens: 96}).MaxTokens; got != 96 {
+		t.Fatalf("request max tokens = %d, want override 96", got)
+	}
+}

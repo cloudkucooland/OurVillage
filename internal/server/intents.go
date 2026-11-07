@@ -537,7 +537,7 @@ func (s *Server) handleForage(agentID string, intentID string, rawPayload json.R
 	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
 	_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s has started foraging for %s (%d ticks).", agentID, payload.TargetResource, payload.DurationTicks)), false, 0)
 
-	s.sendDirectResponse(agentID, intentID, "SUCCESS", fmt.Sprintf("Started foraging for %s (%d ticks)", payload.TargetResource, payload.DurationTicks))
+	s.sendDirectStateSync(agentID, intentID, "SUCCESS", fmt.Sprintf("Started foraging for %s (%d ticks)", payload.TargetResource, payload.DurationTicks), "FORAGE")
 }
 
 func (s *Server) handleCancelAction(agentID string, intentID string, rawPayload json.RawMessage) {
@@ -841,7 +841,21 @@ func (s *Server) handleCraft(agentID string, intentID string, rawPayload json.Ra
 	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
 	_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s has started crafting %s (%d ticks).", agentID, recipe.Name, effectiveDuration)), false, 0)
 
-	s.sendDirectResponse(agentID, intentID, "SUCCESS", fmt.Sprintf("Started crafting %s (%d ticks)", recipe.Name, effectiveDuration))
+	s.sendDirectStateSync(agentID, intentID, "SUCCESS", fmt.Sprintf("Started crafting %s (%d ticks)", recipe.Name, effectiveDuration), "CRAFT")
+}
+
+func (s *Server) sendDirectStateSync(agentID, intentID, status, message, action string) {
+	response := map[string]interface{}{
+		"intent_id": intentID,
+		"status":    status,
+		"message":   message,
+		"action":    action,
+	}
+	s.includeCharacterSync(agentID, response)
+	if payload, err := json.Marshal(response); err == nil {
+		directTopic := fmt.Sprintf("world/agents/%s/direct", agentID)
+		_ = s.mqttServer.Publish(directTopic, payload, false, 0)
+	}
 }
 
 func (s *Server) sendDirectError(agentID string, intentID string, errCode string, message string) {
@@ -904,6 +918,7 @@ func (s *Server) handleLook(agentID string, intentID string, customMsg ...string
 		"message":            msg,
 		"private_status":     perception.Character,
 		"location":           perception.Location,
+		"location_graph":     perception.LocationGraph,
 		"present_characters": presentCharacters,
 	}
 
@@ -1198,5 +1213,5 @@ func (s *Server) handleRest(agentID string, intentID string, rawPayload json.Raw
 	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
 	_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s has begun resting (%d ticks).", agentID, payload.DurationTicks)), false, 0)
 
-	s.sendDirectResponse(agentID, intentID, "SUCCESS", fmt.Sprintf("Started resting (%d ticks)", payload.DurationTicks))
+	s.sendDirectStateSync(agentID, intentID, "SUCCESS", fmt.Sprintf("Started resting (%d ticks)", payload.DurationTicks), "REST")
 }

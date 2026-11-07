@@ -30,6 +30,22 @@ func TestValidateIntent_AllActions(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "Valid multi-step TRAVEL",
+			intent: Intent{
+				Action:  "TRAVEL",
+				Payload: json.RawMessage(`{"target_location": "tavern"}`),
+			},
+			wantAction: "TRAVEL",
+		},
+		{
+			name: "TRAVEL with empty destination",
+			intent: Intent{
+				Action:  "TRAVEL",
+				Payload: json.RawMessage(`{"target_location": ""}`),
+			},
+			wantErr: true,
+		},
+		{
 			name: "Valid CHAT string payload",
 			intent: Intent{
 				Action:  "CHAT",
@@ -142,6 +158,14 @@ func TestValidateIntent_AllActions(t *testing.T) {
 			},
 			wantErr:    false,
 			wantAction: "UNEQUIP",
+		},
+		{
+			name: "DRINK aliases EAT",
+			intent: Intent{
+				Action:  "DRINK",
+				Payload: json.RawMessage(`{"item_id":"ale_mug","quantity":1}`),
+			},
+			wantAction: "EAT",
 		},
 		{
 			name: "Valid CRAFT",

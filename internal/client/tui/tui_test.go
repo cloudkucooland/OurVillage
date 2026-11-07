@@ -131,3 +131,16 @@ func TestProjectsTabLoadsAndDisplaysProjects(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultInputTriggersInfluence(t *testing.T) {
+	ctxMgr := spatial.NewContextManager(spatial.ContextManagerConfig{AgentID: "elda"})
+	model := NewTUIModel(context.Background(), "elda", nil, nil, ctxMgr, nil, nil, nil, nil, nil, nil)
+
+	cmd := model.handleInput("Check on the mill")
+	if cmd != nil {
+		t.Fatal("expected nil cmd when engine is nil")
+	}
+	if model.infoMessage != "Subconscious influence recorded (no engine active): Check on the mill" {
+		t.Errorf("unexpected info message: %q", model.infoMessage)
+	}
+}

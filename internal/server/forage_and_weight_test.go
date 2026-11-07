@@ -229,7 +229,8 @@ func TestTemporalForagingAndActionLock(t *testing.T) {
 	})
 	srv.handleForage("eldon_millwright", "req_forage_1001", foragePayload)
 	select {
-	case <-directMessages:
+	case response := <-directMessages:
+		assertCharacterStatusSync(t, response, "FORAGING")
 	case <-time.After(time.Second):
 		t.Fatal("expected forage start response")
 	}
@@ -276,7 +277,9 @@ func TestTemporalForagingAndActionLock(t *testing.T) {
 		case response := <-directMessages:
 			var direct struct {
 				Message       string `json:"message"`
+				Type          string `json:"type"`
 				PrivateStatus struct {
+					Status string                   `json:"status"`
 					Skills []db.CharacterSkillEntry `json:"skills"`
 				} `json:"private_status"`
 			}
@@ -285,6 +288,9 @@ func TestTemporalForagingAndActionLock(t *testing.T) {
 			}
 			if direct.Message != "You reached woodcutting level 2!" {
 				continue
+			}
+			if direct.Type != "STATE_SYNC" || direct.PrivateStatus.Status != "IDLE" {
+				t.Errorf("forage completion sync = type %q status %q; want STATE_SYNC / IDLE", direct.Type, direct.PrivateStatus.Status)
 			}
 			if len(direct.PrivateStatus.Skills) == 0 {
 				t.Error("completion response did not refresh private skill state")

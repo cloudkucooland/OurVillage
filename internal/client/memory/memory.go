@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"agentmud/internal/client/routine"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -165,6 +167,12 @@ func NewClientMemoryStore(dbPath string) (*ClientMemoryStore, error) {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_client_projects_status ON client_projects(status, updated_tick DESC);
+
+	CREATE TABLE IF NOT EXISTS client_active_intention (
+		agent_id TEXT PRIMARY KEY,
+		intention_json TEXT NOT NULL,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
 	`
 
 	if _, err := db.Exec(schema); err != nil {
@@ -241,6 +249,47 @@ func ensureColumn(db *sql.DB, table, column, definition string) error {
 
 func (m *ClientMemoryStore) Close() error {
 	return m.db.Close()
+}
+
+func (m *ClientMemoryStore) GetActiveIntention(agentID string) (*routine.Intention, error) {
+	var raw string
+	err := m.db.QueryRow("SELECT intention_json FROM client_active_intention WHERE agent_id = ?", agentID).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load active intention: %w", err)
+	}
+	var intention routine.Intention
+	if err := json.Unmarshal([]byte(raw), &intention); err != nil {
+		return nil, fmt.Errorf("decode active intention: %w", err)
+	}
+	return &intention, nil
+}
+
+func (m *ClientMemoryStore) SaveActiveIntention(agentID string, intention routine.Intention) error {
+	raw, err := json.Marshal(intention)
+	if err != nil {
+		return fmt.Errorf("encode active intention: %w", err)
+	}
+	_, err = m.db.Exec(`
+		INSERT INTO client_active_intention (agent_id, intention_json, updated_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(agent_id) DO UPDATE SET
+			intention_json = excluded.intention_json,
+			updated_at = CURRENT_TIMESTAMP
+	`, agentID, string(raw))
+	if err != nil {
+		return fmt.Errorf("save active intention: %w", err)
+	}
+	return nil
+}
+
+func (m *ClientMemoryStore) ClearActiveIntention(agentID string) error {
+	if _, err := m.db.Exec("DELETE FROM client_active_intention WHERE agent_id = ?", agentID); err != nil {
+		return fmt.Errorf("clear active intention: %w", err)
+	}
+	return nil
 }
 
 func (m *ClientMemoryStore) AddEvent(tick uint64, peerID, eventType, rawPayload string) error {

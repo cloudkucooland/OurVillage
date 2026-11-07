@@ -262,6 +262,7 @@ func NewApp() *cli.Command {
 						AgentID:         cfg.Client.AgentID,
 						InitialLocation: initLoc,
 						MaxSensoryLines: cfg.Cognition.MaxSensoryLogLines,
+						SmallSystem:     cfg.Cognition.SmallSystem,
 					})
 					fmt.Print(ctxMgr.BuildPrompt([]spatial.PeerMemoryContext{}, nil))
 					return nil

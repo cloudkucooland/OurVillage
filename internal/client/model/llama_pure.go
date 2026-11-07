@@ -17,6 +17,7 @@ type LlamaPureEngineConfig struct {
 	ContextSize   int
 	Threads       int
 	GPULayers     int
+	MaxTokens     int
 	Temperature   float32
 	TopP          float32
 	RepeatPenalty float32
@@ -93,6 +94,8 @@ func (p *LlamaPureEngine) buildGenerateOptions(opts GenerationOptions) llama.Gen
 
 	if opts.MaxTokens > 0 {
 		genOpts.MaxTokens = opts.MaxTokens
+	} else if p.config.MaxTokens > 0 {
+		genOpts.MaxTokens = p.config.MaxTokens
 	} else {
 		genOpts.MaxTokens = 256
 	}

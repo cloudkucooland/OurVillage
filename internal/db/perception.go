@@ -9,10 +9,11 @@ import (
 
 // PerceptionData encapsulates complete spatial perception and character state for an agent.
 type PerceptionData struct {
-	Type      string            `json:"type"` // "STATE_SYNC"
-	Timestamp time.Time         `json:"timestamp"`
-	Character CharacterOverview `json:"character"`
-	Location  LocationOverview  `json:"location"`
+	Type          string                    `json:"type"` // "STATE_SYNC"
+	Timestamp     time.Time                 `json:"timestamp"`
+	Character     CharacterOverview         `json:"character"`
+	Location      LocationOverview          `json:"location"`
+	LocationGraph []LocationConnectionEntry `json:"location_graph"`
 }
 
 // CharacterOverview captures character attributes, encumbrance, and inventory.
@@ -25,6 +26,8 @@ type CharacterOverview struct {
 	Energy            int                   `json:"energy"`
 	Status            string                `json:"status"`
 	CurrentLocation   string                `json:"current_location"`
+	HomeLocationID    string                `json:"home_location_id,omitempty"`
+	HomeLocationName  string                `json:"home_location_name,omitempty"`
 	EquippedContainer string                `json:"equipped_container,omitempty"`
 	CarryingWeightKg  float64               `json:"carrying_weight_kg"`
 	MaxCapacityKg     float64               `json:"max_capacity_kg"`
@@ -100,6 +103,11 @@ type ConnectedLocationEntry struct {
 	TravelTicks  int    `json:"travel_ticks"`
 }
 
+type LocationConnectionEntry struct {
+	FromLocationID string `json:"from_location_id"`
+	ToLocationID   string `json:"to_location_id"`
+}
+
 // CharacterPublicPerception captures the observable physical traits of another agent in the room.
 type CharacterPublicPerception struct {
 	ID         string `json:"id"`
@@ -137,9 +145,11 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 	var equippedContainer sql.NullString
 
 	err := database.QueryRow(`
-		SELECT id, name, occupation, gold, hunger, energy, current_location, status, equipped_container_id
-		FROM characters
-		WHERE id = ?
+		SELECT c.id, c.name, c.occupation, c.gold, c.hunger, c.energy,
+		       c.current_location, c.status, c.home_location_id, COALESCE(home.name, ''), c.equipped_container_id
+		FROM characters c
+		LEFT JOIN locations home ON home.id = c.home_location_id
+		WHERE c.id = ?
 	`, characterID).Scan(
 		&char.ID,
 		&char.Name,
@@ -149,6 +159,8 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 		&char.Energy,
 		&char.CurrentLocation,
 		&char.Status,
+		&char.HomeLocationID,
+		&char.HomeLocationName,
 		&equippedContainer,
 	)
 	if err == sql.ErrNoRows {
@@ -403,11 +415,40 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 		}
 	}
 
+	graphRows, err := database.Query(`
+		SELECT lc.from_location_id, lc.to_location_id
+		FROM location_connections lc
+		JOIN characters c ON c.id = ?
+		JOIN locations target ON target.id = lc.to_location_id
+		WHERE c.equipped_container_id IS NULL
+		   OR c.equipped_container_id = ''
+		   OR c.equipped_container_id NOT IN ('wheelbarrow', 'draft_horse_cart')
+		   OR (c.equipped_container_id = 'wheelbarrow' AND target.vehicle_access_tier != 'FOOT_ONLY')
+		   OR (c.equipped_container_id = 'draft_horse_cart' AND target.is_indoor = 0 AND target.vehicle_access_tier = 'ALL')
+		ORDER BY lc.from_location_id, lc.to_location_id
+	`, characterID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query location graph: %w", err)
+	}
+	defer graphRows.Close()
+	locationGraph := make([]LocationConnectionEntry, 0)
+	for graphRows.Next() {
+		var connection LocationConnectionEntry
+		if err := graphRows.Scan(&connection.FromLocationID, &connection.ToLocationID); err != nil {
+			return nil, fmt.Errorf("failed to scan location graph: %w", err)
+		}
+		locationGraph = append(locationGraph, connection)
+	}
+	if err := graphRows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read location graph: %w", err)
+	}
+
 	return &PerceptionData{
-		Type:      "STATE_SYNC",
-		Timestamp: time.Now(),
-		Character: char,
-		Location:  loc,
+		Type:          "STATE_SYNC",
+		Timestamp:     time.Now(),
+		Character:     char,
+		Location:      loc,
+		LocationGraph: locationGraph,
 	}, nil
 }
 

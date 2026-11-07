@@ -63,6 +63,7 @@ type LlamaPureConfig struct {
 	ContextSize   int     `yaml:"context_size" json:"context_size"`
 	Threads       int     `yaml:"threads" json:"threads"`
 	GPULayers     int     `yaml:"gpu_layers" json:"gpu_layers"`
+	MaxTokens     int     `yaml:"max_tokens" json:"max_tokens"`
 	Temperature   float64 `yaml:"temperature" json:"temperature"`
 	TopP          float64 `yaml:"top_p" json:"top_p"`
 	RepeatPenalty float64 `yaml:"repeat_penalty" json:"repeat_penalty"`
@@ -85,6 +86,7 @@ type CognitionConfig struct {
 	MaxSensoryLogLines      int     `yaml:"max_sensory_log_lines" json:"max_sensory_log_lines"`
 	ReflectionIntervalTicks int     `yaml:"reflection_interval_ticks" json:"reflection_interval_ticks"`
 	IdleThresholdTicks      int     `yaml:"idle_threshold_ticks" json:"idle_threshold_ticks"`
+	SmallSystem             bool    `yaml:"small_system" json:"small_system"`
 }
 
 // ActionConfig allows specifying an intent to fire upon connecting (useful for CLI test actions).
@@ -119,6 +121,7 @@ func DefaultConfig() *Config {
 				ContextSize:   2048,
 				Threads:       4,
 				GPULayers:     0,
+				MaxTokens:     256,
 				Temperature:   0.7,
 				TopP:          0.9,
 				RepeatPenalty: 1.15,
@@ -269,6 +272,11 @@ func applyEnvOverrides(cfg *Config) {
 	if val := os.Getenv("AGENTMUD_GPU_LAYERS"); val != "" {
 		if n, err := strconv.Atoi(val); err == nil {
 			cfg.Model.LlamaPure.GPULayers = n
+		}
+	}
+	if val := os.Getenv("AGENTMUD_LLAMA_MAX_TOKENS"); val != "" {
+		if n, err := strconv.Atoi(val); err == nil {
+			cfg.Model.LlamaPure.MaxTokens = n
 		}
 	}
 	if val := os.Getenv("AGENTMUD_TEMPERATURE"); val != "" {

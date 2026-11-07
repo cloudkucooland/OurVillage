@@ -27,6 +27,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Model.LlamaPure.ContextSize != 2048 {
 		t.Fatalf("expected context size 2048, got %d", cfg.Model.LlamaPure.ContextSize)
 	}
+	if cfg.Model.LlamaPure.MaxTokens != 256 {
+		t.Fatalf("expected llama-pure max tokens 256, got %d", cfg.Model.LlamaPure.MaxTokens)
+	}
 	if cfg.Cognition.TickIntervalDebounceMS != 2000 {
 		t.Fatalf("expected debounce 2000, got %d", cfg.Cognition.TickIntervalDebounceMS)
 	}
@@ -49,6 +52,8 @@ client:
 
 model:
   provider: "cloud-openai"
+  llama_pure:
+    max_tokens: 768
   cloud:
     api_base: "https://custom.openai.api/v1"
     api_key: "sk-test-key-123"
@@ -60,6 +65,7 @@ cognition:
   tick_interval_debounce_ms: 3500
   chat_response_probability: 0.95
   idle_threshold_ticks: 15
+  small_system: true
 
 memory:
   db_path: "~/.agentmud/memory_custom.db"
@@ -103,6 +109,9 @@ memory:
 	if cfg.Model.Cloud.ModelName != "gpt-4o" {
 		t.Errorf("expected gpt-4o, got %s", cfg.Model.Cloud.ModelName)
 	}
+	if cfg.Model.LlamaPure.MaxTokens != 768 {
+		t.Errorf("expected llama-pure max tokens 768, got %d", cfg.Model.LlamaPure.MaxTokens)
+	}
 	if cfg.Cognition.TickIntervalDebounceMS != 3500 {
 		t.Errorf("expected debounce 3500, got %d", cfg.Cognition.TickIntervalDebounceMS)
 	}
@@ -111,6 +120,9 @@ memory:
 	}
 	if cfg.Cognition.IdleThresholdTicks != 15 {
 		t.Errorf("expected idle threshold 15, got %d", cfg.Cognition.IdleThresholdTicks)
+	}
+	if !cfg.Cognition.SmallSystem {
+		t.Error("expected small_system enabled from config")
 	}
 	if cfg.Memory.DBPath != "~/.agentmud/memory_custom.db" {
 		t.Errorf("expected ~/.agentmud/memory_custom.db, got %s", cfg.Memory.DBPath)

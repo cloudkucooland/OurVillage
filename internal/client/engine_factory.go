@@ -30,6 +30,7 @@ func NewEngine(cfg *Config) (model.InferenceEngine, error) {
 			ContextSize:   cfg.Model.LlamaPure.ContextSize,
 			Threads:       cfg.Model.LlamaPure.Threads,
 			GPULayers:     cfg.Model.LlamaPure.GPULayers,
+			MaxTokens:     cfg.Model.LlamaPure.MaxTokens,
 			Temperature:   float32(cfg.Model.LlamaPure.Temperature),
 			TopP:          float32(cfg.Model.LlamaPure.TopP),
 			RepeatPenalty: float32(cfg.Model.LlamaPure.RepeatPenalty),

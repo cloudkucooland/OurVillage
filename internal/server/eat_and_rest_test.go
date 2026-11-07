@@ -71,6 +71,12 @@ func TestRestIntentAndCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
+	directChan := make(chan []byte, 2)
+	if err := srv.mqttServer.Subscribe("world/agents/eldon_millwright/direct", 0, func(_ *mqtt.Client, _ packets.Subscription, pk packets.Packet) {
+		directChan <- pk.Payload
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Set Eldon's energy low
 	_, err = database.Exec("UPDATE characters SET energy = 40 WHERE id = 'eldon_millwright'")
@@ -81,6 +87,7 @@ func TestRestIntentAndCompletion(t *testing.T) {
 	// Submit REST intent for 30 ticks
 	restPayload, _ := json.Marshal(map[string]int{"duration_ticks": 30})
 	srv.handleRest("eldon_millwright", "req_rest_1", restPayload)
+	assertCharacterStatusSync(t, <-directChan, "RESTING")
 
 	var status string
 	var startTick, endTick uint64
@@ -95,6 +102,7 @@ func TestRestIntentAndCompletion(t *testing.T) {
 	// Fast-forward clock and process tick
 	srv.SetTickCount(endTick)
 	srv.ProcessTick()
+	assertCharacterStatusSync(t, <-directChan, "IDLE")
 
 	// Verify resolution
 	_ = database.QueryRow("SELECT status FROM characters WHERE id = 'eldon_millwright'").Scan(&status)
@@ -106,6 +114,22 @@ func TestRestIntentAndCompletion(t *testing.T) {
 	_ = database.QueryRow("SELECT energy FROM characters WHERE id = 'eldon_millwright'").Scan(&energy)
 	if energy != 90 { // 40 + 50 restored
 		t.Errorf("Expected 90 energy after resting, got %d", energy)
+	}
+}
+
+func assertCharacterStatusSync(t *testing.T, payload []byte, wantStatus string) {
+	t.Helper()
+	var response struct {
+		Type          string `json:"type"`
+		PrivateStatus struct {
+			Status string `json:"status"`
+		} `json:"private_status"`
+	}
+	if err := json.Unmarshal(payload, &response); err != nil {
+		t.Fatalf("failed to decode rest state sync: %v", err)
+	}
+	if response.Type != "STATE_SYNC" || response.PrivateStatus.Status != wantStatus {
+		t.Fatalf("response sync = type %q, status %q; want STATE_SYNC / %s", response.Type, response.PrivateStatus.Status, wantStatus)
 	}
 }
 
