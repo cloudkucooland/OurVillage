@@ -1,0 +1,69 @@
+# RFC 019: Communal Agriculture
+
+Status: Implemented
+
+## Purpose and boundary
+
+Agriculture is a primary-production mechanic separate from crafting. Farming changes persistent plot state and produces harvestable crops; crafting transforms items already in a character's inventory at a recipe or workstation. Harvested wheat can therefore enter the existing crafting chain, such as milling wheat into flour.
+
+The server owns plot state, seed consumption, crop maturity, and harvest output. Clients request actions and observe plot state; the server validates and applies each change.
+
+## Field and communal access
+
+The seeded `village_field` is an outdoor, public-property location connected to the village travel graph. It contains four persistent plots: `field_plot_1` through `field_plot_4`.
+
+Existing seeded worlds receive the field, crop data, and plots additively at database initialization; this does not reset character or world state.
+
+Plots are communal and have no owner. Any idle character at the field may plant an empty plot or harvest its mature crop. Planting consumes a seed from that character's inventory; harvesting does not require the planter to be present.
+
+## Crop lifecycle
+
+The field currently supports wheat and mixed vegetables:
+
+| Crop ID | Seed item | Harvest item | Growth | Yield |
+|---|---|---|---:|---:|
+| `wheat` | `wheat` | `wheat` | 24 ticks | 3 wheat |
+| `vegetables` | `vegetable_seeds` | `vegetable_basket` | 24 ticks | 3 baskets |
+
+One world tick is 15 in-game minutes, so either crop matures 6 in-game hours after planting. One wheat item is consumed as seed and the harvest returns three wheat, so the existing grain item supports planting and downstream milling without a separate seed item. Vegetable seeds are stocked at the market and included in Luke's seeded inventory; their harvest reuses the existing consumable `vegetable_basket` item. The server stores planted and maturity ticks on the plot; no per-tick crop update is needed. A harvested plot becomes empty and can be replanted.
+
+`PLANT` and `HARVEST` are immediate intents, not duration-based character actions. Both require the character to be `IDLE` and physically at the plot's location. `PLANT` also requires a known crop, an empty plot, and one matching seed. `HARVEST` requires a planted crop whose maturity tick has arrived. The server rejects invalid requests without changing the plot or inventory.
+
+Harvested items enter the character's inventory when carrying capacity permits; otherwise, they are placed on the field ground using the existing location-item behavior.
+
+## Intent contract
+
+Both intents are sent to `world/agents/{agent_id}/intent`.
+
+Plant a crop:
+
+```json
+{
+  "intent_id": "req_1001",
+  "action": "PLANT",
+  "payload": {
+    "plot_id": "field_plot_1",
+    "crop_id": "wheat"
+  }
+}
+```
+
+Harvest a mature plot:
+
+```json
+{
+  "intent_id": "req_1002",
+  "action": "HARVEST",
+  "payload": {
+    "plot_id": "field_plot_1"
+  }
+}
+```
+
+The standard direct response includes refreshed state and location perception. The field perception describes available crops and each plot's crop and maturity tick, allowing agents to distinguish empty, growing, and harvest-ready plots.
+
+The player TUI supports `/plant <plot_id> <crop_id>` and `/harvest <plot_id>`.
+
+## Implementation boundary
+
+Crop definitions and plot state are stored separately from `location_resources`: ecological resource pools support foraging, while farm plots track deliberately planted crops. Crafting recipes consume the ordinary harvest item IDs and remain independent of plot management.
