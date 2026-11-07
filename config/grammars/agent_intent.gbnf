@@ -3,15 +3,16 @@
 
 root ::= "{" ws "\"thought\"" ws ":" ws string ws "," ws "\"action\"" ws ":" ws action-type ws "," ws "\"payload\"" ws ":" ws payload ws "}"
 
-action-type ::= "\"MOVE\"" | "\"TRAVEL\"" | "\"CHAT\"" | "\"TRANSFER\"" | "\"GIVE\"" | "\"FORAGE\"" | "\"COLLECT\"" | "\"CANCEL_ACTION\"" | "\"DROP\"" | "\"PICKUP\"" | "\"EQUIP\"" | "\"UNEQUIP\"" | "\"CRAFT\"" | "\"LOOK\"" | "\"STATUS\"" | "\"BUY\"" | "\"RESTOCK\"" | "\"EAT\"" | "\"DRINK\"" | "\"REST\""
-
-payload ::= move-payload | travel-payload | chat-payload | transfer-payload | forage-payload | empty-payload | item-payload | craft-payload | buy-payload | restock-payload | rest-payload
+action-type ::= "\"MOVE\"" | "\"TRAVEL\"" | "\"CHAT\"" | "\"TRANSFER\"" | "\"GIVE\"" | "\"FORAGE\"" | "\"COLLECT\"" | "\"PLANT\"" | "\"HARVEST\"" | "\"CANCEL_ACTION\"" | "\"DROP\"" | "\"PICKUP\"" | "\"EQUIP\"" | "\"UNEQUIP\"" | "\"CRAFT\"" | "\"LOOK\"" | "\"STATUS\"" | "\"BUY\"" | "\"RESTOCK\"" | "\"EAT\"" | "\"DRINK\"" | "\"REST\""
+payload ::= move-payload | travel-payload | chat-payload | transfer-payload | forage-payload | plant-payload | harvest-payload | empty-payload | item-payload | craft-payload | buy-payload | restock-payload | rest-payload
 
 move-payload ::= "{" ws "\"target_location\"" ws ":" ws string ws "}"
 travel-payload ::= "{" ws "\"target_location\"" ws ":" ws string ws "}"
 chat-payload ::= "{" ws "\"message\"" ws ":" ws string ws "}"
 transfer-payload ::= "{" ws "\"recipient_id\"" ws ":" ws string ws "," ws "\"amount\"" ws ":" ws integer ws ("," ws "\"item_id\"" ws ":" ws string ws "," ws "\"quantity\"" ws ":" ws integer ws)? "}"
 forage-payload ::= "{" ws "\"target_resource\"" ws ":" ws string ws ("," ws "\"duration_ticks\"" ws ":" ws integer ws)? "}"
+plant-payload ::= "{" ws "\"plot_id\"" ws ":" ws string ws "," ws "\"crop_id\"" ws ":" ws string ws "}"
+harvest-payload ::= "{" ws "\"plot_id\"" ws ":" ws string ws "}"
 empty-payload ::= "{" ws "}"
 item-payload ::= "{" ws "\"item_id\"" ws ":" ws string ws ("," ws "\"quantity\"" ws ":" ws integer ws)? "}"
 craft-payload ::= "{" ws "\"recipe_id\"" ws ":" ws string ws "}"
