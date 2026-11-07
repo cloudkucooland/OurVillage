@@ -124,6 +124,38 @@ func TestValidateIntent_AllActions(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "Valid PLANT",
+			intent: Intent{
+				Action:  "PLANT",
+				Payload: json.RawMessage(`{"plot_id":"field_plot_1","crop_id":"wheat"}`),
+			},
+			wantAction: "PLANT",
+		},
+		{
+			name: "PLANT requires plot and crop",
+			intent: Intent{
+				Action:  "PLANT",
+				Payload: json.RawMessage(`{"plot_id":"field_plot_1"}`),
+			},
+			wantErr: true,
+		},
+		{
+			name: "Valid HARVEST",
+			intent: Intent{
+				Action:  "HARVEST",
+				Payload: json.RawMessage(`{"plot_id":"field_plot_1"}`),
+			},
+			wantAction: "HARVEST",
+		},
+		{
+			name: "HARVEST requires plot",
+			intent: Intent{
+				Action:  "HARVEST",
+				Payload: json.RawMessage(`{}`),
+			},
+			wantErr: true,
+		},
+		{
 			name: "Valid DROP",
 			intent: Intent{
 				Action:  "DROP",
@@ -207,6 +239,58 @@ func TestValidateIntent_AllActions(t *testing.T) {
 				if res.IntentID == "" {
 					t.Error("expected non-empty IntentID to be generated")
 				}
+			}
+		})
+	}
+}
+
+func TestValidateIntentRejectsNonPositiveParameters(t *testing.T) {
+	tests := []struct {
+		name    string
+		action  string
+		payload string
+	}{
+		{name: "FORAGE duration", action: "FORAGE", payload: `{"target_resource":"wood","duration_ticks":0}`},
+		{name: "FORAGE null duration", action: "FORAGE", payload: `{"target_resource":"wood","duration_ticks":null}`},
+		{name: "PLANT empty crop", action: "PLANT", payload: `{"plot_id":"field_plot_1","crop_id":" "}`},
+		{name: "HARVEST empty plot", action: "HARVEST", payload: `{"plot_id":" "}`},
+		{name: "BUY quantity", action: "BUY", payload: `{"item_id":"bread","quantity":0}`},
+		{name: "RESTOCK quantity", action: "RESTOCK", payload: `{"item_id":"bread","quantity":-1}`},
+		{name: "RESTOCK missing quantity", action: "RESTOCK", payload: `{"item_id":"bread"}`},
+		{name: "DROP quantity", action: "DROP", payload: `{"item_id":"bread","quantity":0}`},
+		{name: "REST duration", action: "REST", payload: `{"duration_ticks":-5}`},
+		{name: "REST null duration", action: "REST", payload: `{"duration_ticks":null}`},
+		{name: "Malformed REST payload", action: "REST", payload: `{`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ValidateIntent(Intent{
+				Action:  tt.action,
+				Payload: json.RawMessage(tt.payload),
+			})
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
+func TestValidateIntentRejectsMissingEmptyPayloadObject(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload json.RawMessage
+	}{
+		{name: "missing", payload: nil},
+		{name: "null", payload: json.RawMessage(`null`)},
+		{name: "non-empty", payload: json.RawMessage(`{"unexpected":true}`)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ValidateIntent(Intent{Action: "LOOK", Payload: tt.payload})
+			if err == nil {
+				t.Fatal("expected validation error")
 			}
 		})
 	}

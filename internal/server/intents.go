@@ -52,6 +52,15 @@ type CraftPayload struct {
 	RecipeID string `json:"recipe_id"`
 }
 
+type PlantPayload struct {
+	PlotID string `json:"plot_id"`
+	CropID string `json:"crop_id"`
+}
+
+type HarvestPayload struct {
+	PlotID string `json:"plot_id"`
+}
+
 type BuyPayload struct {
 	ItemID   string `json:"item_id"`
 	Quantity int    `json:"quantity"`
@@ -100,6 +109,10 @@ func (s *Server) SetupIntentHandlers() error {
 			s.handleChat(agentID, intent.IntentID, intent.Payload)
 		case "FORAGE":
 			s.handleForage(agentID, intent.IntentID, intent.Payload)
+		case "PLANT":
+			s.handlePlant(agentID, intent.IntentID, intent.Payload)
+		case "HARVEST":
+			s.handleHarvest(agentID, intent.IntentID, intent.Payload)
 		case "CANCEL_ACTION":
 			s.handleCancelAction(agentID, intent.IntentID, intent.Payload)
 		case "DROP":
@@ -468,23 +481,29 @@ func (s *Server) handleChat(agentID string, intentID string, rawPayload json.Raw
 }
 
 func (s *Server) handleForage(agentID string, intentID string, rawPayload json.RawMessage) {
-	var payload ForagePayload
-	if err := json.Unmarshal(rawPayload, &payload); err != nil {
+	var input struct {
+		TargetResource string          `json:"target_resource"`
+		DurationTicks  json.RawMessage `json:"duration_ticks"`
+	}
+	if err := json.Unmarshal(rawPayload, &input); err != nil {
 		s.sendDirectError(agentID, intentID, "INVALID_PAYLOAD", "Invalid FORAGE payload")
 		return
 	}
 
-	if payload.TargetResource == "" {
+	if input.TargetResource == "" {
 		s.sendDirectError(agentID, intentID, "INVALID_PAYLOAD", "target_resource is required")
 		return
 	}
-	if payload.DurationTicks <= 0 {
-		payload.DurationTicks = 15
+	durationTicks, err := positivePayloadInt(input.DurationTicks, 15)
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "INVALID_PAYLOAD", "duration_ticks must be a positive integer")
+		return
 	}
+	payload := ForagePayload{TargetResource: input.TargetResource, DurationTicks: durationTicks}
 
 	var status, currentLocation string
 	var energy, hunger int
-	err := s.db.QueryRow("SELECT status, current_location, energy, hunger FROM characters WHERE id = ?", agentID).Scan(&status, &currentLocation, &energy, &hunger)
+	err = s.db.QueryRow("SELECT status, current_location, energy, hunger FROM characters WHERE id = ?", agentID).Scan(&status, &currentLocation, &energy, &hunger)
 	if err != nil {
 		s.sendDirectError(agentID, intentID, "CHARACTER_NOT_FOUND", "Character not found")
 		return
@@ -844,6 +863,57 @@ func (s *Server) handleCraft(agentID string, intentID string, rawPayload json.Ra
 	s.sendDirectStateSync(agentID, intentID, "SUCCESS", fmt.Sprintf("Started crafting %s (%d ticks)", recipe.Name, effectiveDuration), "CRAFT")
 }
 
+func (s *Server) handlePlant(agentID string, intentID string, rawPayload json.RawMessage) {
+	var payload PlantPayload
+	if err := json.Unmarshal(rawPayload, &payload); err != nil ||
+		strings.TrimSpace(payload.PlotID) == "" || strings.TrimSpace(payload.CropID) == "" {
+		s.sendDirectError(agentID, intentID, "INVALID_PAYLOAD", "PLANT requires plot_id and crop_id")
+		return
+	}
+
+	result, err := db.PlantFarmPlot(s.db, agentID, strings.TrimSpace(payload.PlotID), strings.TrimSpace(payload.CropID), s.GetTickCount())
+	if err != nil {
+		code := "FARM_ACTION_FAILED"
+		if strings.HasPrefix(err.Error(), "character is busy:") {
+			code = "CHARACTER_BUSY"
+		}
+		s.sendDirectError(agentID, intentID, code, err.Error())
+		return
+	}
+
+	message := fmt.Sprintf("Planted %s in %s; it will be ready at tick %d.", result.CropName, result.PlotID, result.MatureTick)
+	sysTopic := fmt.Sprintf("world/locations/%s/system", result.LocationID)
+	_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s planted %s in %s.", agentID, result.CropName, result.PlotID)), false, 0)
+	s.handleLook(agentID, intentID, message)
+}
+
+func (s *Server) handleHarvest(agentID string, intentID string, rawPayload json.RawMessage) {
+	var payload HarvestPayload
+	if err := json.Unmarshal(rawPayload, &payload); err != nil || strings.TrimSpace(payload.PlotID) == "" {
+		s.sendDirectError(agentID, intentID, "INVALID_PAYLOAD", "HARVEST requires plot_id")
+		return
+	}
+
+	result, err := db.HarvestFarmPlot(s.db, agentID, strings.TrimSpace(payload.PlotID), s.GetTickCount())
+	if err != nil {
+		code := "FARM_ACTION_FAILED"
+		if strings.HasPrefix(err.Error(), "character is busy:") {
+			code = "CHARACTER_BUSY"
+		}
+		s.sendDirectError(agentID, intentID, code, err.Error())
+		return
+	}
+
+	where := "your inventory"
+	if result.PlacedOnGround {
+		where = "the field ground because your carrying capacity is full"
+	}
+	message := fmt.Sprintf("Harvested %dx %s from %s into %s.", result.Quantity, result.ItemName, result.PlotID, where)
+	sysTopic := fmt.Sprintf("world/locations/%s/system", result.LocationID)
+	_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s harvested %s from %s.", agentID, result.CropName, result.PlotID)), false, 0)
+	s.handleLook(agentID, intentID, message)
+}
+
 func (s *Server) sendDirectStateSync(agentID, intentID, status, message, action string) {
 	response := map[string]interface{}{
 		"intent_id": intentID,
@@ -915,6 +985,7 @@ func (s *Server) handleLook(agentID string, intentID string, customMsg ...string
 		"intent_id":          intentID,
 		"status":             "SUCCESS",
 		"type":               "STATE_SYNC",
+		"current_tick":       s.GetTickCount(),
 		"message":            msg,
 		"private_status":     perception.Character,
 		"location":           perception.Location,
@@ -1018,17 +1089,22 @@ func (s *Server) notifyLocationOwnerOfPurchase(locationID string, buyerID string
 }
 
 func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawMessage) {
-	var payload ItemActionPayload
+	var payload struct {
+		ItemID   string          `json:"item_id"`
+		Quantity json.RawMessage `json:"quantity"`
+	}
 	if err := json.Unmarshal(rawPayload, &payload); err != nil {
 		s.sendDirectError(agentID, intentID, "INVALID_PAYLOAD", "Invalid EAT payload")
 		return
 	}
-	if payload.Quantity <= 0 {
-		payload.Quantity = 1
+	quantity, err := positivePayloadInt(payload.Quantity, 1)
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "INVALID_PAYLOAD", "quantity must be a positive integer")
+		return
 	}
 
 	var status, currentLocation string
-	err := s.db.QueryRow("SELECT status, current_location FROM characters WHERE id = ?", agentID).Scan(&status, &currentLocation)
+	err = s.db.QueryRow("SELECT status, current_location FROM characters WHERE id = ?", agentID).Scan(&status, &currentLocation)
 	if err != nil {
 		s.sendDirectError(agentID, intentID, "CHARACTER_NOT_FOUND", "Character not found")
 		return
@@ -1062,7 +1138,7 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 
 	result, err := tx.Exec(
 		"UPDATE inventories SET quantity = quantity - ? WHERE character_id = ? AND item_id = ? AND quantity >= ?",
-		payload.Quantity, agentID, payload.ItemID, payload.Quantity,
+		quantity, agentID, payload.ItemID, quantity,
 	)
 	if err != nil {
 		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
@@ -1080,7 +1156,7 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 			s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
 			return
 		}
-		s.sendDirectError(agentID, intentID, "INSUFFICIENT_ITEMS", fmt.Sprintf("Not enough %s in inventory (have %d, need %d)", payload.ItemID, invQty, payload.Quantity))
+		s.sendDirectError(agentID, intentID, "INSUFFICIENT_ITEMS", fmt.Sprintf("Not enough %s in inventory (have %d, need %d)", payload.ItemID, invQty, quantity))
 		return
 	}
 	if _, err := tx.Exec("DELETE FROM inventories WHERE character_id = ? AND item_id = ? AND quantity = 0", agentID, payload.ItemID); err != nil {
@@ -1093,8 +1169,8 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
 		return
 	}
-	newHunger := consumableRestoredValue(currentHunger, hungerRestore, payload.Quantity)
-	newHealth := consumableRestoredValue(currentHealth, healthRestore, payload.Quantity)
+	newHunger := consumableRestoredValue(currentHunger, hungerRestore, quantity)
+	newHealth := consumableRestoredValue(currentHealth, healthRestore, quantity)
 	hungerActuallyRestored := newHunger - currentHunger
 	healthActuallyRestored := newHealth - currentHealth
 
@@ -1107,7 +1183,7 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 	currentTick := s.GetTickCount()
 	eventPayload, _ := json.Marshal(map[string]interface{}{
 		"item_id":         payload.ItemID,
-		"quantity":        payload.Quantity,
+		"quantity":        quantity,
 		"hunger_restored": hungerActuallyRestored,
 		"health_restored": healthActuallyRestored,
 		"new_hunger":      newHunger,
@@ -1145,7 +1221,7 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 		"status":          "SUCCESS",
 		"action":          "EAT",
 		"item_id":         payload.ItemID,
-		"quantity":        payload.Quantity,
+		"quantity":        quantity,
 		"hunger":          newHunger,
 		"health":          newHealth,
 		"hunger_restored": hungerActuallyRestored,
@@ -1173,20 +1249,41 @@ func consumableRestoredValue(current, perItem, quantity int) int {
 	return current + perItem*quantity
 }
 
+func positivePayloadInt(raw json.RawMessage, defaultValue int) (int, error) {
+	if len(raw) == 0 {
+		return defaultValue, nil
+	}
+
+	var value int
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return 0, err
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("value must be greater than zero")
+	}
+	return value, nil
+}
+
 func (s *Server) handleRest(agentID string, intentID string, rawPayload json.RawMessage) {
-	var payload struct {
-		DurationTicks int `json:"duration_ticks"`
+	var input struct {
+		DurationTicks json.RawMessage `json:"duration_ticks"`
 	}
-	if err := json.Unmarshal(rawPayload, &payload); err != nil || payload.DurationTicks <= 0 {
-		payload.DurationTicks = minimumRestDurationTicks
+	if err := json.Unmarshal(rawPayload, &input); err != nil {
+		s.sendDirectError(agentID, intentID, "INVALID_PAYLOAD", "Invalid REST payload")
+		return
 	}
-	if payload.DurationTicks < minimumRestDurationTicks {
-		payload.DurationTicks = minimumRestDurationTicks
+	durationTicks, err := positivePayloadInt(input.DurationTicks, minimumRestDurationTicks)
+	if err != nil {
+		s.sendDirectError(agentID, intentID, "INVALID_PAYLOAD", "duration_ticks must be a positive integer")
+		return
+	}
+	if durationTicks < minimumRestDurationTicks {
+		durationTicks = minimumRestDurationTicks
 	}
 
 	var status, currentLocation string
 	var energy int
-	err := s.db.QueryRow("SELECT status, current_location, energy FROM characters WHERE id = ?", agentID).Scan(&status, &currentLocation, &energy)
+	err = s.db.QueryRow("SELECT status, current_location, energy FROM characters WHERE id = ?", agentID).Scan(&status, &currentLocation, &energy)
 	if err != nil {
 		s.sendDirectError(agentID, intentID, "CHARACTER_NOT_FOUND", "Character not found")
 		return
@@ -1198,7 +1295,7 @@ func (s *Server) handleRest(agentID string, intentID string, rawPayload json.Raw
 	}
 
 	currentTick := s.GetTickCount()
-	endTick := currentTick + uint64(payload.DurationTicks)
+	endTick := currentTick + uint64(durationTicks)
 
 	_, err = s.db.Exec(`
 		UPDATE characters 
@@ -1211,7 +1308,7 @@ func (s *Server) handleRest(agentID string, intentID string, rawPayload json.Raw
 	}
 
 	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
-	_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s has begun resting (%d ticks).", agentID, payload.DurationTicks)), false, 0)
+	_ = s.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s has begun resting (%d ticks).", agentID, durationTicks)), false, 0)
 
-	s.sendDirectStateSync(agentID, intentID, "SUCCESS", fmt.Sprintf("Started resting (%d ticks)", payload.DurationTicks), "REST")
+	s.sendDirectStateSync(agentID, intentID, "SUCCESS", fmt.Sprintf("Started resting (%d ticks)", durationTicks), "REST")
 }

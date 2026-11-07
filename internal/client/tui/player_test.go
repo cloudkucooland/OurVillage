@@ -21,6 +21,8 @@ func TestBuildPlayerIntentSupportsDirectWorldActions(t *testing.T) {
 		{"/c Hello village", "CHAT"},
 		{"/forage firewood", "FORAGE"},
 		{"/collect berries 12", "FORAGE"},
+		{"/plant field_plot_1 wheat", "PLANT"},
+		{"/harvest field_plot_1", "HARVEST"},
 		{"/give martha gold 5", "TRANSFER"},
 		{"/give martha bread 2", "TRANSFER"},
 		{"/drop bread", "DROP"},
@@ -82,5 +84,14 @@ func TestPlayerDisplaysServerErrorsAsErrors(t *testing.T) {
 	model = updated.(PlayerModel)
 	if !strings.Contains(model.View(), "CHARACTER_BUSY: Cannot move") {
 		t.Fatal("server error was not shown in the error status")
+	}
+}
+
+func TestPlayerTUIHeaderDisplaysHealthAndHunger(t *testing.T) {
+	ctxMgr := spatial.NewContextManager(spatial.ContextManagerConfig{AgentID: "elda"})
+	model := NewPlayerModel(t.Context(), ctxMgr, nil)
+	view := model.View()
+	if !strings.Contains(view, "Health:") || !strings.Contains(view, "Hunger:") {
+		t.Errorf("Player TUI View missing Health or Hunger in header: %q", view)
 	}
 }

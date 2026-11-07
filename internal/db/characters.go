@@ -37,7 +37,7 @@ type CharacterSeed struct {
 
 var DefaultItems = []ItemSeed{
 	// Existing village items with metric mass (RFC 007)
-	{ID: "wheat", Name: "Sack of Wheat", Description: "Raw grain ready to be milled into flour.", WeightKg: 0.5, IsConsumable: false, HungerRestore: 0},
+	{ID: "wheat", Name: "Sack of Wheat", Description: "Raw grain that can be planted or milled into flour.", WeightKg: 0.5, IsConsumable: false, HungerRestore: 0},
 	{ID: "flour", Name: "Bag of Flour", Description: "Fine milled flour ready for baking bread.", WeightKg: 0.5, IsConsumable: false, HungerRestore: 0},
 	{ID: "bread", Name: "Fresh Loaf of Bread", Description: "Warm, crusty bread that restores hunger.", WeightKg: 0.3, IsConsumable: true, HungerRestore: 25},
 	{ID: "ale_mug", Name: "Mug of Ale", Description: "Foamy, refreshing village ale.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 10},
@@ -47,6 +47,7 @@ var DefaultItems = []ItemSeed{
 	{ID: "smithing_hammer", Name: "Smithing Hammer", Description: "Heavy hammer for blacksmithing work.", WeightKg: 2.5, IsConsumable: false, HungerRestore: 0},
 	{ID: "coal", Name: "Lump of Coal", Description: "Fuel for the forge and heaters.", WeightKg: 1.0, IsConsumable: false, HungerRestore: 0},
 	{ID: "vegetable_basket", Name: "Basket of Vegetables", Description: "Fresh carrots, potatoes, and greens.", WeightKg: 1.0, IsConsumable: true, HungerRestore: 15},
+	{ID: "vegetable_seeds", Name: "Vegetable Seeds", Description: "Seeds for planting a mixed vegetable crop in a communal field plot.", WeightKg: 0.1},
 	{ID: "parchment", Name: "Parchment & Quill", Description: "Materials for official clerk records and letters.", WeightKg: 0.1, IsConsumable: false, HungerRestore: 0},
 	{ID: "ink_bottle", Name: "Bottle of Black Ink", Description: "Standard writing ink.", WeightKg: 0.2, IsConsumable: false, HungerRestore: 0},
 	{ID: "official_seal", Name: "Official Town Seal", Description: "Brass stamp used to authenticate municipal deeds.", WeightKg: 0.5, IsConsumable: false, HungerRestore: 0},
@@ -144,7 +145,7 @@ var DefaultCharacters = []CharacterSeed{
 		EquippedContainerID: "woven_basket",
 		ControllerType:      "agent",
 		MQTTPassword:        "secret_luke_123",
-		Inventory:           map[string]int{"wheat": 10, "vegetable_basket": 2, "woven_basket": 1},
+		Inventory:           map[string]int{"wheat": 10, "vegetable_seeds": 10, "vegetable_basket": 2, "woven_basket": 1},
 	},
 	{
 		ID:                  "eleanor_clerk",

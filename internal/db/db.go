@@ -196,6 +196,28 @@ CREATE TABLE IF NOT EXISTS inventories (
     PRIMARY KEY (character_id, item_id)
 );
 
+-- Communal farm crops and plots
+CREATE TABLE IF NOT EXISTS farm_crops (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    seed_item_id TEXT NOT NULL,
+    harvest_item_id TEXT NOT NULL,
+    growth_ticks INTEGER NOT NULL,
+    yield_quantity INTEGER NOT NULL,
+    FOREIGN KEY (seed_item_id) REFERENCES items(id),
+    FOREIGN KEY (harvest_item_id) REFERENCES items(id)
+);
+
+CREATE TABLE IF NOT EXISTS farm_plots (
+    id TEXT PRIMARY KEY,
+    location_id TEXT NOT NULL,
+    crop_id TEXT,
+    planted_tick INTEGER NOT NULL DEFAULT 0,
+    mature_tick INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE,
+    FOREIGN KEY (crop_id) REFERENCES farm_crops(id)
+);
+
 -- Objective Event Ledger (RFC 013: Server Audit Trail)
 CREATE TABLE IF NOT EXISTS event_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -243,6 +265,10 @@ CREATE INDEX IF NOT EXISTS idx_event_logs_location ON event_logs(location_id);
 			return nil, fmt.Errorf("failed to seed items and characters: %w", err)
 		}
 
+		if err := SeedFarming(db); err != nil {
+			return nil, fmt.Errorf("failed to seed farming: %w", err)
+		}
+
 		if err := SeedCrafting(db); err != nil {
 			return nil, fmt.Errorf("failed to seed crafting recipes and workstations: %w", err)
 		}
@@ -253,6 +279,16 @@ CREATE INDEX IF NOT EXISTS idx_event_logs_location ON event_logs(location_id);
 
 		if err := SeedShopInventory(db); err != nil {
 			return nil, fmt.Errorf("failed to seed shop inventory: %w", err)
+		}
+	} else {
+		var locationCount int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM locations`).Scan(&locationCount); err != nil {
+			return nil, fmt.Errorf("check existing world data: %w", err)
+		}
+		if locationCount > 0 {
+			if err := SeedFarming(db); err != nil {
+				return nil, fmt.Errorf("failed to migrate communal farming data: %w", err)
+			}
 		}
 	}
 
@@ -370,7 +406,7 @@ func execQueryable(q Queryable, query string, args ...any) (sql.Result, error) {
 	return nil, fmt.Errorf("unsupported Queryable type")
 }
 
-// SeedDB seeds all default records (locations, resources, connections, items, characters, crafting, shop inventory).
+// SeedDB seeds all default records (locations, resources, connections, items, characters, farming, crafting, shop inventory).
 func SeedDB(db *sql.DB) error {
 	if err := SeedLocations(db); err != nil {
 		return fmt.Errorf("failed to seed locations: %w", err)
@@ -383,6 +419,9 @@ func SeedDB(db *sql.DB) error {
 	}
 	if err := SeedItemsAndCharacters(db); err != nil {
 		return fmt.Errorf("failed to seed items and characters: %w", err)
+	}
+	if err := SeedFarming(db); err != nil {
+		return fmt.Errorf("failed to seed farming: %w", err)
 	}
 	if err := SeedCrafting(db); err != nil {
 		return fmt.Errorf("failed to seed crafting recipes and workstations: %w", err)

@@ -482,7 +482,9 @@ func TestContextManager_StateSync(t *testing.T) {
 			"id": "eldon_millwright",
 			"name": "Eldon the Millwright",
 			"gold": 50,
+			"hunger": 35,
 			"energy": 90,
+			"health": 42,
 			"status": "IDLE",
 			"current_location": "town_mill",
 			"carrying_weight_kg": 6.5,
@@ -533,6 +535,19 @@ func TestContextManager_StateSync(t *testing.T) {
 		!strings.Contains(prompt, "item_id: flour | name: Bag of Flour | quantity: 3") {
 		t.Errorf("expected updated gold and exact inventory in prompt, got:\n%s", prompt)
 	}
+	if !strings.Contains(prompt, "Status: IDLE | Energy: 90/100 | Hunger: 35/100 | Health: 42/100") ||
+		!strings.Contains(prompt, "EAT medicine for health") ||
+		!strings.Contains(prompt, "REST recovers energy") {
+		t.Errorf("expected distinct needs and recovery guidance in prompt, got:\n%s", prompt)
+	}
+	eatResponse := []byte(`{"action":"EAT","hunger":80,"health":72}`)
+	if err := cm.IngestDirectResponse(eatResponse); err != nil {
+		t.Fatalf("failed to ingest EAT response: %v", err)
+	}
+	prompt = cm.BuildPrompt(nil, nil)
+	if !strings.Contains(prompt, "Status: IDLE | Energy: 90/100 | Hunger: 80/100 | Health: 72/100") {
+		t.Errorf("expected EAT response to refresh prompt needs, got:\n%s", prompt)
+	}
 	if !strings.Contains(prompt, "crafting level 3, 215 total XP (15/100 XP to next level)") {
 		t.Errorf("expected skill level and progress in prompt, got:\n%s", prompt)
 	}
@@ -574,5 +589,41 @@ func TestContextManager_RefreshesSkillProgressAndShowsLevelUp(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "You reached woodcutting level 2!") {
 		t.Errorf("prompt logs missing level-up notice:\n%s", prompt)
+	}
+}
+
+func TestContextManager_PromptShowsCommunalFarmState(t *testing.T) {
+	cm := NewContextManager(ContextManagerConfig{AgentID: "luke_farmer"})
+	payload := []byte(`{
+		"type":"STATE_SYNC",
+		"status":"SUCCESS",
+		"current_tick":34,
+		"location":{
+			"id":"village_field",
+			"name":"Village Field",
+			"farm_crops":[
+				{"id":"vegetables","name":"Vegetables","seed_item_id":"vegetable_seeds","seed_item_name":"Vegetable Seeds","harvest_item_id":"vegetable_basket","harvest_item_name":"Basket of Vegetables","growth_ticks":24,"yield_quantity":3},
+				{"id":"wheat","name":"Wheat","seed_item_id":"wheat","seed_item_name":"Sack of Wheat","harvest_item_id":"wheat","harvest_item_name":"Sack of Wheat","growth_ticks":24,"yield_quantity":3}
+			],
+			"farm_plots":[
+				{"id":"field_plot_1","crop_id":"","mature_tick":0},
+				{"id":"field_plot_2","crop_id":"wheat","crop_name":"Wheat","mature_tick":40}
+			]
+		}
+	}`)
+	if err := cm.IngestDirectResponse(payload); err != nil {
+		t.Fatal(err)
+	}
+
+	prompt := cm.BuildPrompt(nil, nil)
+	for _, expected := range []string{
+		"Crops Available to Plant: Vegetables (crop_id: vegetables; plant vegetable_seeds; harvest 3x vegetable_basket; growth: 24 ticks); Wheat",
+		"Wheat (crop_id: wheat; plant wheat; harvest 3x wheat; growth: 24 ticks)",
+		"field_plot_1 (empty)",
+		"field_plot_2 (Wheat growing; ready in 6 ticks)",
+	} {
+		if !strings.Contains(prompt, expected) {
+			t.Errorf("prompt missing %q", expected)
+		}
 	}
 }

@@ -189,6 +189,17 @@ var DefaultLocations = []LocationSeed{
 		RulesPrompt:       "Open meadow under the sky. Free foraging for all citizens.",
 	},
 	{
+		ID:                "village_field",
+		Name:              "Village Field",
+		Description:       "A communal field divided into small plots where villagers can plant seeds and harvest mature crops.",
+		IsPublic:          true,
+		IsIndoor:          false,
+		VehicleAccessTier: "ALL",
+		OpenTime:          "00:00",
+		CloseTime:         "23:59",
+		RulesPrompt:       "The plots are communal. Any villager may plant an empty plot or harvest a mature crop.",
+	},
+	{
 		ID:                "riverbank",
 		Name:              "Whispering Riverbank",
 		Description:       "Gentle shoreline where fresh water flows, river reeds grow, and clay lumps can be dredged from the riverbed.",
@@ -404,6 +415,10 @@ func SeedLocationConnections(db *sql.DB) error {
 	}{
 		{"town_square", "prairie", 2},
 		{"prairie", "town_square", 2},
+		{"town_square", "village_field", 1},
+		{"village_field", "town_square", 1},
+		{"village_field", "prairie", 2},
+		{"prairie", "village_field", 2},
 		{"prairie", "deep_forest", 4},
 		{"deep_forest", "prairie", 4},
 		{"prairie", "riverbank", 3},

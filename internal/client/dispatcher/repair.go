@@ -10,7 +10,7 @@ import (
 )
 
 // ParseAndRepairIntent parses raw text from inference output, extracts JSON,
-// repairs casing, validates RFC 002 constraints, and applies fallback repairs if needed.
+// normalizes casing, and validates RFC 002 constraints.
 func ParseAndRepairIntent(rawText string) (Intent, error) {
 	// 1. Sanitize and extract JSON using the GBNF regex/JSON repair step
 	cleanJSON, err := model.SanitizeAndExtractJSON(rawText)
@@ -38,38 +38,13 @@ func ParseAndRepairIntent(rawText string) (Intent, error) {
 
 	if p, ok := rawMap["payload"]; ok {
 		payloadBytes, err := json.Marshal(p)
-		if err == nil {
-			intent.Payload = payloadBytes
+		if err != nil {
+			return intent, fmt.Errorf("failed to marshal intent payload: %w", err)
 		}
-	}
-	if len(intent.Payload) == 0 {
-		intent.Payload = json.RawMessage("{}")
+		intent.Payload = payloadBytes
 	}
 
-	// 3. Validate
-	validated, err := ValidateIntent(intent)
-	if err == nil {
-		return validated, nil
-	}
-
-	// 4. Fallback repairs for common SLM omissions:
-	// A. If CHAT has empty payload but non-empty thought, use thought as chat payload
-	if intent.Action == "CHAT" && intent.Thought != "" {
-		intent.Payload, _ = json.Marshal(intent.Thought)
-		if fixed, fixErr := ValidateIntent(intent); fixErr == nil {
-			return fixed, nil
-		}
-	}
-
-	// B. If payload is missing for FORAGE, default to firewood
-	if intent.Action == "FORAGE" {
-		intent.Payload, _ = json.Marshal(map[string]interface{}{"target_resource": "firewood", "duration_ticks": 60})
-		if fixed, fixErr := ValidateIntent(intent); fixErr == nil {
-			return fixed, nil
-		}
-	}
-
-	return intent, err
+	return ValidateIntent(intent)
 }
 
 // GenerateIntentWithRetry generates model output using the InferenceEngine,
@@ -87,7 +62,6 @@ func GenerateIntentWithRetry(
 
 	currentPrompt := prompt
 	var lastErr error
-	var lastRawOutput string
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if err := ctx.Err(); err != nil {
@@ -99,8 +73,6 @@ func GenerateIntentWithRetry(
 			lastErr = fmt.Errorf("inference generation error (attempt %d): %w", attempt+1, err)
 			continue
 		}
-		lastRawOutput = rawOutput
-
 		intent, err := ParseAndRepairIntent(rawOutput)
 		if err == nil {
 			return intent, nil
@@ -109,7 +81,7 @@ func GenerateIntentWithRetry(
 		lastErr = err
 		// Append corrective instruction for the next retry attempt
 		correction := fmt.Sprintf(
-			"Your previous output failed validation: %s. Respond ONLY with valid JSON having 'thought', 'action', and 'payload'.",
+			"Your previous output failed validation: %s. Respond ONLY with valid JSON having 'thought', 'action', and 'payload'. Do not invent missing action parameters or substitute defaults; choose another action if the required information is unavailable.",
 			err.Error(),
 		)
 		if intent.Action == "MOVE" {
@@ -121,58 +93,5 @@ func GenerateIntentWithRetry(
 		currentPrompt = fmt.Sprintf("%s\n\n[CORRECTION REQUIRED - ATTEMPT %d]: %s", prompt, attempt+1, correction)
 	}
 
-	// Ultimate fallback for SLMs when retries are exhausted:
-	// If model outputted plain conversational text without JSON, wrap it as a CHAT intent.
-	// If it was a JSON/intent generation attempt, fallback to a safe action like LOOK rather than leaking raw JSON into chat.
-	trimmed := strings.TrimSpace(lastRawOutput)
-	if trimmed != "" {
-		if containsPromptMetadata(trimmed) {
-			fallbackIntent := Intent{
-				IntentID: GenerateIntentID(),
-				Thought:  "Failed to generate valid intent JSON",
-				Action:   "CANCEL_ACTION",
-				Payload:  json.RawMessage("{}"),
-			}
-			return ValidateIntent(fallbackIntent)
-		}
-
-		isJsonAttempt := strings.Contains(trimmed, "{") || strings.Contains(trimmed, "\"action\"") || strings.Contains(trimmed, "\"thought\"") || strings.Contains(trimmed, "```")
-
-		var fallbackIntent Intent
-		if isJsonAttempt {
-			fallbackIntent = Intent{
-				IntentID: GenerateIntentID(),
-				Thought:  "Fallback recovery from malformed output",
-				Action:   "LOOK",
-				Payload:  json.RawMessage("{}"),
-			}
-		} else {
-			fallbackIntent = Intent{
-				IntentID: GenerateIntentID(),
-				Thought:  trimmed,
-				Action:   "CHAT",
-			}
-			fallbackIntent.Payload, _ = json.Marshal(trimmed)
-		}
-
-		if validated, valErr := ValidateIntent(fallbackIntent); valErr == nil {
-			return validated, nil
-		}
-	}
-
 	return Intent{}, fmt.Errorf("intent generation failed after %d attempts: %w", maxRetries+1, lastErr)
-}
-
-func containsPromptMetadata(text string) bool {
-	upper := strings.ToUpper(text)
-	for _, marker := range []string{
-		"[CORRECTION REQUIRED",
-		"=== STANDARD RULES ===",
-		"=== INSTRUCTION ===",
-	} {
-		if strings.Contains(upper, marker) {
-			return true
-		}
-	}
-	return false
 }

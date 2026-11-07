@@ -20,6 +20,7 @@ var DefaultShopItems = []ShopItemSeed{
 	{LocationID: "tavern", ItemID: "mint_tea", PriceGold: 2, StockQuantity: 15},
 	{LocationID: "tavern", ItemID: "elderflower_wine", PriceGold: 5, StockQuantity: 10},
 	{LocationID: "bakery", ItemID: "bread", PriceGold: 1, StockQuantity: 25},
+	{LocationID: "market", ItemID: "vegetable_seeds", PriceGold: 1, StockQuantity: 50},
 	{LocationID: "blacksmith", ItemID: "iron_ingot", PriceGold: 4, StockQuantity: 10},
 	{LocationID: "blacksmith", ItemID: "smithing_hammer", PriceGold: 10, StockQuantity: 3},
 	{LocationID: "herbalist", ItemID: "medicinal_herbs", PriceGold: 3, StockQuantity: 15},

@@ -68,11 +68,15 @@ type ContextManagerConfig struct {
 }
 
 type DirectMessage struct {
+	Action        string                   `json:"action,omitempty"`
 	IntentID      string                   `json:"intent_id,omitempty"`
 	Status        string                   `json:"status"`
 	Type          string                   `json:"type,omitempty"`
 	ErrorCode     string                   `json:"error_code,omitempty"`
 	Message       string                   `json:"message"`
+	CurrentTick   uint64                   `json:"current_tick,omitempty"`
+	Hunger        int                      `json:"hunger"`
+	Health        int                      `json:"health"`
 	Character     *SyncCharacterOverview   `json:"private_status,omitempty"`
 	Location      *SyncLocationOverview    `json:"location,omitempty"`
 	LocationGraph []SyncLocationConnection `json:"location_graph,omitempty"`
@@ -101,6 +105,7 @@ type SyncCharacterOverview struct {
 	Gold              int                  `json:"gold"`
 	Hunger            int                  `json:"hunger"`
 	Energy            int                  `json:"energy"`
+	Health            int                  `json:"health"`
 	Status            string               `json:"status"`
 	CurrentLocation   string               `json:"current_location"`
 	HomeLocationID    string               `json:"home_location_id,omitempty"`
@@ -139,9 +144,32 @@ type SyncLocationOverview struct {
 	GroundItems        []SyncGroundItem        `json:"ground_items"`
 	Workstations       []SyncWorkstation       `json:"workstations"`
 	ResourcePools      []SyncResourcePool      `json:"resource_pools"`
+	FarmCrops          []SyncFarmCrop          `json:"farm_crops"`
+	FarmPlots          []SyncFarmPlot          `json:"farm_plots"`
 	ConnectedLocations []SyncConnectedLocation `json:"connected_locations"`
 	ShopItems          []SyncShopItem          `json:"shop_items"`
 	AvailableRecipes   []SyncAvailableRecipe   `json:"available_recipes"`
+}
+
+type SyncFarmCrop struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	SeedItemID      string `json:"seed_item_id"`
+	SeedItemName    string `json:"seed_item_name"`
+	HarvestItemID   string `json:"harvest_item_id"`
+	HarvestItemName string `json:"harvest_item_name"`
+	GrowthTicks     int    `json:"growth_ticks"`
+	YieldQuantity   int    `json:"yield_quantity"`
+}
+
+type SyncFarmPlot struct {
+	ID            string `json:"id"`
+	CropID        string `json:"crop_id"`
+	CropName      string `json:"crop_name"`
+	SeedItemID    string `json:"seed_item_id"`
+	HarvestItemID string `json:"harvest_item_id"`
+	PlantedTick   uint64 `json:"planted_tick"`
+	MatureTick    uint64 `json:"mature_tick"`
 }
 
 type SyncShopItem struct {
@@ -251,7 +279,9 @@ type ContextManager struct {
 	travelPlan         []string // sequence of location IDs for journey
 	locationRules      map[string][]string
 	gold               int
+	hunger             int
 	energy             int
+	health             int
 	carryingWeightKg   float64
 	maxCapacityKg      float64
 	overburdenLimitKg  float64
@@ -389,7 +419,9 @@ func NewContextManager(cfg ContextManagerConfig) *ContextManager {
 		currentLocation: cfg.InitialLocation,
 		locationName:    cfg.LocationName,
 		gold:            cfg.DefaultGold,
+		hunger:          100,
 		energy:          cfg.DefaultEnergy,
+		health:          100,
 		inventory:       cfg.DefaultInventory,
 		status:          "IDLE",
 		locationRules:   make(map[string][]string),
@@ -535,11 +567,7 @@ func (cm *ContextManager) IngestTimeTick(tick TimeTickMessage) {
 	cm.lastInGameTime = tick.InGameTime
 	cm.lastWeather = tick.Weather
 	cm.currentTick = tick.Tick
-	timeStr := cm.lastInGameTime
 	cm.mu.Unlock()
-
-	text := fmt.Sprintf("SYSTEM: Server tick. Time is %s. Weather is %s.", tick.InGameTime, tick.Weather)
-	cm.buffer.AddLog("TIME", timeStr, text)
 }
 
 func (cm *ContextManager) IngestChat(senderID, message string) {
@@ -586,9 +614,23 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 	cm.mu.RLock()
 	timeStr := cm.lastInGameTime
 	cm.mu.RUnlock()
+	if msg.CurrentTick > 0 {
+		cm.mu.Lock()
+		if msg.CurrentTick > cm.currentTick {
+			cm.currentTick = msg.CurrentTick
+		}
+		cm.mu.Unlock()
+	}
 
 	text := fmt.Sprintf("DIRECT [%s]: %s", msg.Status, msg.Message)
 	cm.buffer.AddLog("DIRECT", timeStr, text)
+
+	if msg.Action == "EAT" {
+		cm.mu.Lock()
+		cm.hunger = msg.Hunger
+		cm.health = msg.Health
+		cm.mu.Unlock()
+	}
 
 	if msg.Type == "STATE_SYNC" || (msg.Character != nil && msg.Location != nil) {
 		if msg.LocationGraph != nil {
@@ -603,7 +645,9 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 		if msg.Character != nil {
 			cm.mu.Lock()
 			cm.gold = msg.Character.Gold
+			cm.hunger = msg.Character.Hunger
 			cm.energy = msg.Character.Energy
+			cm.health = msg.Character.Health
 			cm.carryingWeightKg = msg.Character.CarryingWeightKg
 			cm.maxCapacityKg = msg.Character.MaxCapacityKg
 			cm.overburdenLimitKg = msg.Character.OverburdenLimitKg
@@ -683,6 +727,27 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 					resStrs = append(resStrs, fmt.Sprintf("%s (%d stock)", rp.ResourceID, rp.CurrentStock))
 				}
 				obsParts = append(obsParts, fmt.Sprintf("Resources: %s", strings.Join(resStrs, ", ")))
+			}
+			if len(msg.Location.FarmCrops) > 0 {
+				var crops []string
+				for _, crop := range msg.Location.FarmCrops {
+					crops = append(crops, fmt.Sprintf("%s (crop_id: %s; plant %s; harvest %dx %s; growth: %d ticks)",
+						crop.Name, crop.ID, crop.SeedItemID, crop.YieldQuantity, crop.HarvestItemID, crop.GrowthTicks))
+				}
+				obsParts = append(obsParts, fmt.Sprintf("Crops Available to Plant: %s", strings.Join(crops, "; ")))
+			}
+			if len(msg.Location.FarmPlots) > 0 {
+				var plots []string
+				for _, plot := range msg.Location.FarmPlots {
+					if plot.CropID == "" {
+						plots = append(plots, fmt.Sprintf("%s (empty)", plot.ID))
+					} else if cm.currentTick >= plot.MatureTick {
+						plots = append(plots, fmt.Sprintf("%s (%s ready to harvest)", plot.ID, plot.CropName))
+					} else {
+						plots = append(plots, fmt.Sprintf("%s (%s growing; ready in %d ticks)", plot.ID, plot.CropName, plot.MatureTick-cm.currentTick))
+					}
+				}
+				obsParts = append(obsParts, fmt.Sprintf("Communal Farm Plots: %s", strings.Join(plots, "; ")))
 			}
 			if len(msg.Location.ShopItems) > 0 {
 				var shopStrs []string
@@ -899,7 +964,19 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 			}
 		}
 	}
-	sb.WriteString(fmt.Sprintf("Status: %s | Energy: %d/100\n\n", cm.status, cm.energy))
+	sb.WriteString(fmt.Sprintf("Status: %s | Energy: %d/100 | Hunger: %d/100 | Health: %d/100\n",
+		cm.status, cm.energy, cm.hunger, cm.health))
+	sb.WriteString("Needs: REST recovers energy; EAT restorative food when hungry; EAT medicine for health, with REST also helping recovery when needed.\n\n")
+
+	if cm.health < 40 {
+		sb.WriteString(fmt.Sprintf("[CRITICAL HEALTH WARNING]: Your health is critically low (%d/100)! You are suffering from injury or illness. You MUST EAT medicine (such as willowbark_tea or charcoal_draught) or restorative food, and REST immediately to survive!\n\n", cm.health))
+	}
+	if cm.hunger < 30 {
+		sb.WriteString(fmt.Sprintf("[HUNGER WARNING]: Your hunger is low (%d/100)! You are starving. EAT food (such as bread, roasted_mutton, or vegetable_basket) immediately to restore your strength!\n\n", cm.hunger))
+	}
+	if cm.energy < 25 {
+		sb.WriteString(fmt.Sprintf("[ENERGY WARNING]: Your energy is low (%d/100)! You are exhausted. REST immediately to recover your energy!\n\n", cm.energy))
+	}
 
 	hour := 12
 	if len(cm.lastInGameTime) >= 2 {
@@ -914,7 +991,7 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 			case cm.homeLocationID == "":
 				sb.WriteString("Late night: find shelter and REST.\n\n")
 			case cm.currentLocation == cm.homeLocationID:
-				sb.WriteString("Late night at home: REST if you need energy.\n\n")
+				sb.WriteString("Late night at home: REST if you need energy or health recovery.\n\n")
 			default:
 				sb.WriteString(fmt.Sprintf("Late night: optionally TRAVEL to %s, then REST at home.\n\n", cm.homeLocationID))
 			}
@@ -931,7 +1008,7 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 			case cm.homeLocationID == "":
 				sb.WriteString("Guidance: It is late night. Find safe shelter and REST to recover energy.\n\n")
 			case cm.currentLocation == cm.homeLocationID:
-				sb.WriteString("Guidance: It is late night and you are home. REST here to recover energy if you need it.\n\n")
+				sb.WriteString("Guidance: It is late night and you are home. REST here to recover energy or health if you need it.\n\n")
 			default:
 				sb.WriteString(fmt.Sprintf("Guidance: It is late night. If you choose to rest at home, choose TRAVEL with destination ID %s, then REST when you arrive. This is a suggestion, not a requirement.\n\n", cm.homeLocationID))
 			}
@@ -1115,7 +1192,7 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 		sb.WriteString("- Pick actions based on your current location, inventory, and desires.\n")
 		sb.WriteString("- Use exact item/location IDs and quantities.\n")
 		sb.WriteString("- For multi-step journeys, use TRAVEL with target location ID.\n")
-		sb.WriteString("- Output MUST be valid JSON only: {\"thought\":\"<reasoning>\",\"action\":\"CHAT|MOVE|FORAGE|REST\",\"payload\":{\"message\":\"<text>\"}}\n")
+		sb.WriteString("- Output MUST be valid JSON only: {\"thought\":\"<reasoning>\",\"action\":\"CHAT|MOVE|FORAGE|PLANT|HARVEST|REST\",\"payload\":{\"message\":\"<text>\"}}\n")
 	} else {
 		sb.WriteString("Choose actions from your own desires, values, memories, and current observations; prioritize replying when addressed. Use exact observed IDs and quantities, move to a listed connected exit, drop only by choice and within carried quantities, and base foraging, purchases, and crafting on available resources, shop stock, inventory capacity, and known recipes.\n")
 		sb.WriteString("For an optional multi-step trip, choose TRAVEL with the final destination location ID; the system will handle the route. Choose MOVE only when you intend to move one connected step.\n")
@@ -1168,6 +1245,18 @@ func (cm *ContextManager) Energy() int {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 	return cm.energy
+}
+
+func (cm *ContextManager) Health() int {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.health
+}
+
+func (cm *ContextManager) Hunger() int {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.hunger
 }
 
 func (cm *ContextManager) Status() string {

@@ -60,6 +60,28 @@ func TestEatIntent(t *testing.T) {
 	}
 }
 
+func TestEatRejectsNonPositiveQuantity(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	srv, err := NewServer(database, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	directChan := make(chan []byte, 1)
+	if err := srv.mqttServer.Subscribe("world/agents/eldon_millwright/direct", 0, func(_ *mqtt.Client, _ packets.Subscription, pk packets.Packet) {
+		directChan <- pk.Payload
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv.handleEat("eldon_millwright", "req_eat_invalid", json.RawMessage(`{"item_id":"bread","quantity":0}`))
+	assertInvalidPayloadError(t, <-directChan)
+}
+
 func TestRestIntentAndCompletion(t *testing.T) {
 	database, err := db.InitDB(":memory:")
 	if err != nil {
@@ -295,5 +317,43 @@ func TestRestEnforcesMinimumDuration(t *testing.T) {
 	}
 	if duration := endTick - startTick; duration < minimumRestDurationTicks {
 		t.Fatalf("rest duration = %d ticks, want at least %d", duration, minimumRestDurationTicks)
+	}
+}
+
+func TestRestRejectsMalformedOrNonPositiveDuration(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	srv, err := NewServer(database, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	directChan := make(chan []byte, 2)
+	if err := srv.mqttServer.Subscribe("world/agents/eldon_millwright/direct", 0, func(_ *mqtt.Client, _ packets.Subscription, pk packets.Packet) {
+		directChan <- pk.Payload
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, payload := range []json.RawMessage{
+		json.RawMessage(`{`),
+		json.RawMessage(`{"duration_ticks":0}`),
+	} {
+		srv.handleRest("eldon_millwright", "req_rest_invalid", payload)
+		assertInvalidPayloadError(t, <-directChan)
+	}
+}
+
+func assertInvalidPayloadError(t *testing.T, raw []byte) {
+	t.Helper()
+	var response DirectResponse
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatalf("failed to decode direct response: %v", err)
+	}
+	if response.Status != "ERROR" || response.ErrorCode != "INVALID_PAYLOAD" {
+		t.Fatalf("response = %#v; want INVALID_PAYLOAD error", response)
 	}
 }

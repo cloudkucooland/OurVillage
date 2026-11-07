@@ -20,6 +20,12 @@ func TestGetCharacterPerception(t *testing.T) {
 	`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := database.Exec(`
+		UPDATE characters SET hunger = 61, energy = 72, health = 43
+		WHERE id = 'eldon_millwright'
+	`); err != nil {
+		t.Fatal(err)
+	}
 	perception, err := GetCharacterPerception(database, "eldon_millwright")
 	if err != nil {
 		t.Fatalf("failed to get character perception: %v", err)
@@ -33,6 +39,10 @@ func TestGetCharacterPerception(t *testing.T) {
 	}
 	if perception.Character.Gold != 15 {
 		t.Errorf("expected 15 gold, got %d", perception.Character.Gold)
+	}
+	if perception.Character.Hunger != 61 || perception.Character.Energy != 72 || perception.Character.Health != 43 {
+		t.Errorf("expected distinct hunger/energy/health values 61/72/43, got %d/%d/%d",
+			perception.Character.Hunger, perception.Character.Energy, perception.Character.Health)
 	}
 	if perception.Character.CurrentLocation != "town_mill" {
 		t.Errorf("expected town_mill, got %s", perception.Character.CurrentLocation)

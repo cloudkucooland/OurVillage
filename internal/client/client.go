@@ -75,6 +75,15 @@ func BuildIntentMessage(actionCfg ActionConfig) ([]byte, error) {
 		payload, err = json.Marshal(map[string]interface{}{
 			"recipe_id": actionCfg.Recipe,
 		})
+	case "PLANT":
+		payload, err = json.Marshal(map[string]string{
+			"plot_id": actionCfg.PlotID,
+			"crop_id": actionCfg.CropID,
+		})
+	case "HARVEST":
+		payload, err = json.Marshal(map[string]string{
+			"plot_id": actionCfg.PlotID,
+		})
 	case "BUY":
 		payload, err = json.Marshal(map[string]interface{}{
 			"item_id":  actionCfg.Item,

@@ -177,7 +177,7 @@ func CommonFlags() []cli.Flag {
 		// Action flags
 		&cli.StringFlag{
 			Name:    "action",
-			Usage:   "Intent action to submit (MOVE, CHAT, TRANSFER, FORAGE, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT)",
+			Usage:   "Intent action to submit (MOVE, CHAT, TRANSFER, FORAGE, PLANT, HARVEST, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT)",
 			Sources: cli.EnvVars("AGENTMUD_ACTION"),
 		},
 		&cli.StringFlag{
@@ -224,6 +224,16 @@ func CommonFlags() []cli.Flag {
 			Name:  "recipe",
 			Usage: "Recipe ID for CRAFT intent",
 			Value: "mill_flour",
+		},
+		&cli.StringFlag{
+			Name:  "plot",
+			Usage: "Farm plot ID for PLANT or HARVEST intent",
+			Value: "field_plot_1",
+		},
+		&cli.StringFlag{
+			Name:  "crop",
+			Usage: "Crop ID for PLANT intent",
+			Value: "wheat",
 		},
 	}
 }

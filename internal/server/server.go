@@ -214,6 +214,14 @@ func (s *Server) ProcessTick() {
 		_ = db.ReplenishLocationResources(s.db, weather)
 	}
 
+	// 1.5. Apply passive hunger and energy decay per tick for idle characters
+	_, _ = s.db.Exec(`
+		UPDATE characters 
+		SET hunger = MAX(0, hunger - 1), 
+		    energy = MAX(0, energy - 1)
+		WHERE status = 'IDLE'
+	`)
+
 	// 2. Resolve temporal action locks (RFC 007 Section 6: Stateful Temporal Foraging Engine)
 	s.resolveCompletedActions(currentTick, weather)
 

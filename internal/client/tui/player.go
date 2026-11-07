@@ -122,9 +122,9 @@ func (m PlayerModel) View() string {
 	}
 
 	headerText := fmt.Sprintf(
-		"Character: %s | Location: %s (%s) | Gold: %d | Energy: %d | Status: %s | Time: %s | Weather: %s",
+		"Character: %s | Location: %s (%s) | Gold: %d | Energy: %d | Health: %d | Hunger: %d | Status: %s | Time: %s | Weather: %s",
 		m.ctxMgr.AgentName(), m.ctxMgr.LocationName(), m.ctxMgr.CurrentLocation(),
-		m.ctxMgr.Gold(), m.ctxMgr.Energy(), m.ctxMgr.Status(),
+		m.ctxMgr.Gold(), m.ctxMgr.Energy(), m.ctxMgr.Health(), m.ctxMgr.Hunger(), m.ctxMgr.Status(),
 		m.ctxMgr.LastInGameTime(), m.ctxMgr.LastWeather(),
 	)
 	header := headerBoxStyle.Render(titleStyle.Render("OurVillage Player TUI") + "\n" + headerText)
@@ -201,6 +201,8 @@ const playerHelpText = `=== PLAYER COMMANDS ===
 /chat <message> (/c)            Send public chat
 /forage <resource> [ticks]      Gather a resource (default: 60 ticks)
 /collect <resource> [ticks]     Alias for /forage
+/plant <plot_id> <crop_id>       Plant a seed in an empty communal plot
+/harvest <plot_id>               Harvest a mature communal plot
 /give <recipient> gold <amount> Give gold to a character
 /give <recipient> <item> <qty>  Give items to a character
 /drop <item> [qty]              Drop items
@@ -290,6 +292,18 @@ func buildPlayerIntent(input string) (dispatcher.Intent, error) {
 		}
 		action = "FORAGE"
 		payload = map[string]any{"target_resource": args[0], "duration_ticks": duration}
+	case "plant":
+		if err := require(2, 2, "/plant <plot_id> <crop_id>"); err != nil {
+			return dispatcher.Intent{}, err
+		}
+		action = "PLANT"
+		payload = map[string]any{"plot_id": args[0], "crop_id": args[1]}
+	case "harvest":
+		if err := require(1, 1, "/harvest <plot_id>"); err != nil {
+			return dispatcher.Intent{}, err
+		}
+		action = "HARVEST"
+		payload = map[string]any{"plot_id": args[0]}
 	case "give", "transfer":
 		if err := require(3, 3, "/"+command+" <recipient_id> gold <amount> | <recipient_id> <item_id> <quantity>"); err != nil {
 			return dispatcher.Intent{}, err

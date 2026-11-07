@@ -15,6 +15,7 @@ func TestDefaultAgentIntentGrammar(t *testing.T) {
 	}
 	assertObjectChatPayload(t, grammar)
 	assertTravelPayload(t, grammar)
+	assertFarmingPayloads(t, grammar)
 }
 
 func TestLoadGrammarFile(t *testing.T) {
@@ -34,6 +35,21 @@ func TestLoadGrammarFile(t *testing.T) {
 	}
 	assertObjectChatPayload(t, content)
 	assertTravelPayload(t, content)
+	assertFarmingPayloads(t, content)
+}
+
+func assertFarmingPayloads(t *testing.T, grammar string) {
+	t.Helper()
+	for _, expected := range []string{
+		`\"PLANT\"`,
+		`\"HARVEST\"`,
+		`plant-payload ::= "{" ws "\"plot_id\"" ws ":" ws string ws "," ws "\"crop_id\"" ws ":" ws string ws "}"`,
+		`harvest-payload ::= "{" ws "\"plot_id\"" ws ":" ws string ws "}"`,
+	} {
+		if !strings.Contains(grammar, expected) {
+			t.Errorf("grammar missing farming support %q", expected)
+		}
+	}
 }
 
 func assertTravelPayload(t *testing.T, grammar string) {
@@ -115,6 +131,16 @@ func TestSanitizeAndExtractJSON(t *testing.T) {
 		{
 			name:    "Missing action field",
 			input:   `{"thought": "Just thinking..."}`,
+			wantErr: true,
+		},
+		{
+			name:    "Missing payload field",
+			input:   `{"thought": "I should look around", "action": "LOOK"}`,
+			wantErr: true,
+		},
+		{
+			name:    "Null payload field",
+			input:   `{"thought": "I should look around", "action": "LOOK", "payload": null}`,
 			wantErr: true,
 		},
 		{

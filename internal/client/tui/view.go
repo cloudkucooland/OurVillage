@@ -59,12 +59,14 @@ func (m TUIModel) View() string {
 	locName := m.ctxMgr.LocationName()
 	gold := m.ctxMgr.Gold()
 	energy := m.ctxMgr.Energy()
+	health := m.ctxMgr.Health()
+	hunger := m.ctxMgr.Hunger()
 	status := m.ctxMgr.Status()
 	timeStr := m.ctxMgr.LastInGameTime()
 	weather := m.ctxMgr.LastWeather()
 
-	headerText := fmt.Sprintf("Agent: %s | Location: %s (%s) | Gold: %d | Energy: %d | Status: %s | Time: %s | Weather: %s",
-		name, locName, locID, gold, energy, status, timeStr, weather)
+	headerText := fmt.Sprintf("Agent: %s | Location: %s (%s) | Gold: %d | Energy: %d | Health: %d | Hunger: %d | Status: %s | Time: %s | Weather: %s",
+		name, locName, locID, gold, energy, health, hunger, status, timeStr, weather)
 	header := headerBoxStyle.Render(titleStyle.Render("AgentMUD Client TUI") + "\n" + headerText)
 
 	// 2. Tabs

@@ -24,6 +24,7 @@ type CharacterOverview struct {
 	Gold              int                   `json:"gold"`
 	Hunger            int                   `json:"hunger"`
 	Energy            int                   `json:"energy"`
+	Health            int                   `json:"health"`
 	Status            string                `json:"status"`
 	CurrentLocation   string                `json:"current_location"`
 	HomeLocationID    string                `json:"home_location_id,omitempty"`
@@ -67,6 +68,8 @@ type LocationOverview struct {
 	GroundItems        []GroundItemEntry           `json:"ground_items"`
 	Workstations       []WorkstationEntry          `json:"workstations"`
 	ResourcePools      []ResourcePoolEntry         `json:"resource_pools"`
+	FarmCrops          []FarmCrop                  `json:"farm_crops,omitempty"`
+	FarmPlots          []FarmPlot                  `json:"farm_plots,omitempty"`
 	ConnectedLocations []ConnectedLocationEntry    `json:"connected_locations"`
 	ShopItems          []ShopItemEntry             `json:"shop_items"`
 	AvailableRecipes   []AvailableRecipeEntry      `json:"available_recipes"`
@@ -145,7 +148,7 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 	var equippedContainer sql.NullString
 
 	err := database.QueryRow(`
-		SELECT c.id, c.name, c.occupation, c.gold, c.hunger, c.energy,
+		SELECT c.id, c.name, c.occupation, c.gold, c.hunger, c.energy, c.health,
 		       c.current_location, c.status, c.home_location_id, COALESCE(home.name, ''), c.equipped_container_id
 		FROM characters c
 		LEFT JOIN locations home ON home.id = c.home_location_id
@@ -157,6 +160,7 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 		&char.Gold,
 		&char.Hunger,
 		&char.Energy,
+		&char.Health,
 		&char.CurrentLocation,
 		&char.Status,
 		&char.HomeLocationID,
@@ -360,6 +364,15 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 			return nil, fmt.Errorf("failed to scan resource pool: %w", err)
 		}
 		loc.ResourcePools = append(loc.ResourcePools, r)
+	}
+
+	farmCrops, farmPlots, err := GetFarmLocationData(database, char.CurrentLocation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query farm state: %w", err)
+	}
+	if len(farmPlots) > 0 {
+		loc.FarmCrops = farmCrops
+		loc.FarmPlots = farmPlots
 	}
 
 	// 9. Query Shop Items at Location

@@ -20,17 +20,19 @@ func TestParseAndRepairIntent(t *testing.T) {
 		}
 	})
 
-	t.Run("Fallback repair: CHAT payload recovered from thought", func(t *testing.T) {
+	t.Run("CHAT missing message is rejected instead of using thought", func(t *testing.T) {
 		input := `{"thought": "Hello Martha, nice weather!", "action": "CHAT", "payload": ""}`
 		intent, err := ParseAndRepairIntent(input)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+		if err == nil || !strings.Contains(err.Error(), "CHAT requires a non-empty message") {
+			t.Fatalf("expected missing CHAT message error, got intent=%#v err=%v", intent, err)
 		}
-		if intent.Action != "CHAT" {
-			t.Errorf("expected CHAT, got %s", intent.Action)
-		}
-		if !strings.Contains(string(intent.Payload), "Hello Martha") {
-			t.Errorf("expected thought to be used as chat message, got %s", string(intent.Payload))
+	})
+
+	t.Run("FORAGE missing resource is rejected instead of defaulting", func(t *testing.T) {
+		input := `{"thought": "I should forage", "action": "FORAGE", "payload": {}}`
+		intent, err := ParseAndRepairIntent(input)
+		if err == nil || !strings.Contains(err.Error(), "FORAGE requires non-empty target_resource") {
+			t.Fatalf("expected missing FORAGE resource error, got intent=%#v err=%v", intent, err)
 		}
 	})
 
@@ -65,6 +67,27 @@ func TestGenerateIntentWithRetry_MissingMoveTargetDoesNotForceTownSquare(t *test
 	}
 }
 
+func TestGenerateIntentWithRetry_AllowsDifferentActionAfterMissingForageTarget(t *testing.T) {
+	mockEng := model.NewMockEngine()
+	mockEng.QueueResponses(
+		`{"thought":"I should forage","action":"FORAGE","payload":{}}`,
+		`{"thought":"I should observe first","action":"LOOK","payload":{}}`,
+	)
+
+	intent, err := GenerateIntentWithRetry(context.Background(), mockEng,
+		"Choose an action.", model.GenerationOptions{}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if intent.Action != "LOOK" {
+		t.Fatalf("retried action = %q; want LOOK", intent.Action)
+	}
+	if !strings.Contains(mockEng.LastPrompt(), "FORAGE requires non-empty target_resource") ||
+		!strings.Contains(mockEng.LastPrompt(), "choose another action") {
+		t.Fatalf("correction prompt did not explain how to handle missing target: %s", mockEng.LastPrompt())
+	}
+}
+
 func TestGenerateIntentWithRetry(t *testing.T) {
 	mockEng := model.NewMockEngine()
 	ctx := context.Background()
@@ -93,7 +116,7 @@ func TestGenerateIntentWithRetry(t *testing.T) {
 	}
 }
 
-func TestGenerateIntentWithRetry_MalformedJsonFallback(t *testing.T) {
+func TestGenerateIntentWithRetry_ReturnsErrorAfterMalformedRetries(t *testing.T) {
 	mockEng := model.NewMockEngine()
 	ctx := context.Background()
 	opts := model.GenerationOptions{}
@@ -105,18 +128,16 @@ func TestGenerateIntentWithRetry_MalformedJsonFallback(t *testing.T) {
 		`{"thought": "even more broken", "action": INVALID_ACTION_ENUM, "payload": {}}`,
 	)
 
-	intent, err := GenerateIntentWithRetry(ctx, mockEng, "What do you do?", opts, 2)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := GenerateIntentWithRetry(ctx, mockEng, "What do you do?", opts, 2)
+	if err == nil || !strings.Contains(err.Error(), "intent generation failed after 3 attempts") {
+		t.Fatalf("expected generation error after retries, got %v", err)
 	}
-
-	// Should fallback to LOOK rather than broadcasting raw malformed JSON as CHAT
-	if intent.Action != "LOOK" {
-		t.Errorf("expected fallback action LOOK, got %s", intent.Action)
+	if mockEng.GenerationCount() != 3 {
+		t.Fatalf("expected 3 generation attempts, got %d", mockEng.GenerationCount())
 	}
 }
 
-func TestGenerateIntentWithRetry_PromptMetadataFallback(t *testing.T) {
+func TestGenerateIntentWithRetry_ReturnsErrorForPromptMetadata(t *testing.T) {
 	tests := []struct {
 		name     string
 		response string
@@ -136,15 +157,12 @@ func TestGenerateIntentWithRetry_PromptMetadataFallback(t *testing.T) {
 			mockEng := model.NewMockEngine()
 			mockEng.QueueResponses(tt.response, tt.response, tt.response)
 
-			intent, err := GenerateIntentWithRetry(context.Background(), mockEng, "Choose an action.", model.GenerationOptions{}, 2)
-			if err != nil {
-				t.Fatalf("GenerateIntentWithRetry() error = %v", err)
+			_, err := GenerateIntentWithRetry(context.Background(), mockEng, "Choose an action.", model.GenerationOptions{}, 2)
+			if err == nil || !strings.Contains(err.Error(), "intent generation failed after 3 attempts") {
+				t.Fatalf("expected generation error, got %v", err)
 			}
-			if intent.Action != "CANCEL_ACTION" {
-				t.Fatalf("fallback action = %q, want CANCEL_ACTION", intent.Action)
-			}
-			if strings.Contains(string(intent.Payload), tt.response) || strings.Contains(intent.Thought, tt.response) {
-				t.Fatalf("fallback leaked prompt metadata: %#v", intent)
+			if mockEng.GenerationCount() != 3 {
+				t.Fatalf("expected 3 generation attempts, got %d", mockEng.GenerationCount())
 			}
 		})
 	}

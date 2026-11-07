@@ -102,6 +102,8 @@ type ActionConfig struct {
 	Item      string `yaml:"item" json:"item"`
 	Qty       int    `yaml:"qty" json:"qty"`
 	Recipe    string `yaml:"recipe" json:"recipe"`
+	PlotID    string `yaml:"plot_id" json:"plot_id"`
+	CropID    string `yaml:"crop_id" json:"crop_id"`
 }
 
 // DefaultConfig returns a Config populated with standard defaults.
@@ -158,6 +160,8 @@ func DefaultConfig() *Config {
 			Item:      "firewood",
 			Qty:       1,
 			Recipe:    "mill_flour",
+			PlotID:    "field_plot_1",
+			CropID:    "wheat",
 		},
 	}
 }
@@ -495,6 +499,12 @@ func applyCLIOverrides(cmd *cli.Command, cfg *Config) {
 	}
 	if cmd.IsSet("recipe") {
 		cfg.Action.Recipe = cmd.String("recipe")
+	}
+	if cmd.IsSet("plot") {
+		cfg.Action.PlotID = cmd.String("plot")
+	}
+	if cmd.IsSet("crop") {
+		cfg.Action.CropID = cmd.String("crop")
 	}
 }
 

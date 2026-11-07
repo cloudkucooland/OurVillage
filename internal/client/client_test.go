@@ -78,6 +78,33 @@ func TestBuildIntentMessage(t *testing.T) {
 			},
 		},
 		{
+			name: "PLANT action",
+			action: ActionConfig{
+				Action: "PLANT",
+				PlotID: "field_plot_1",
+				CropID: "wheat",
+			},
+			wantAction: "PLANT",
+			checkFunc: func(t *testing.T, p map[string]interface{}) {
+				if p["plot_id"] != "field_plot_1" || p["crop_id"] != "wheat" {
+					t.Errorf("unexpected PLANT payload: %#v", p)
+				}
+			},
+		},
+		{
+			name: "HARVEST action",
+			action: ActionConfig{
+				Action: "HARVEST",
+				PlotID: "field_plot_1",
+			},
+			wantAction: "HARVEST",
+			checkFunc: func(t *testing.T, p map[string]interface{}) {
+				if p["plot_id"] != "field_plot_1" {
+					t.Errorf("expected plot_id field_plot_1, got %v", p["plot_id"])
+				}
+			},
+		},
+		{
 			name: "CANCEL_ACTION",
 			action: ActionConfig{
 				Action: "CANCEL_ACTION",

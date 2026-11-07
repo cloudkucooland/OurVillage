@@ -144,3 +144,12 @@ func TestDefaultInputTriggersInfluence(t *testing.T) {
 		t.Errorf("unexpected info message: %q", model.infoMessage)
 	}
 }
+
+func TestTUIHeaderDisplaysHealthAndHunger(t *testing.T) {
+	ctxMgr := spatial.NewContextManager(spatial.ContextManagerConfig{AgentID: "elda"})
+	model := NewTUIModel(context.Background(), "elda", nil, nil, ctxMgr, nil, nil, nil, nil, nil, nil)
+	view := model.View()
+	if !strings.Contains(view, "Health:") || !strings.Contains(view, "Hunger:") {
+		t.Errorf("TUI View missing Health or Hunger in header: %q", view)
+	}
+}

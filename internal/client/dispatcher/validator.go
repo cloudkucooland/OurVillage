@@ -28,6 +28,8 @@ var ValidActionTypes = map[string]struct{}{
 	"GIVE":          {},
 	"FORAGE":        {},
 	"COLLECT":       {},
+	"PLANT":         {},
+	"HARVEST":       {},
 	"CANCEL_ACTION": {},
 	"DROP":          {},
 	"PICKUP":        {},
@@ -59,7 +61,7 @@ func ValidateIntent(intent Intent) (Intent, error) {
 
 	actionUpper := strings.ToUpper(strings.TrimSpace(intent.Action))
 	if !IsValidAction(actionUpper) {
-		return intent, fmt.Errorf("invalid action enum %q: must be one of MOVE, TRAVEL, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, RESTOCK, EAT, DRINK, REST", intent.Action)
+		return intent, fmt.Errorf("invalid action enum %q: must be one of MOVE, TRAVEL, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, PLANT, HARVEST, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, RESTOCK, EAT, DRINK, REST", intent.Action)
 	}
 
 	if actionUpper == "COLLECT" {
@@ -77,9 +79,9 @@ func ValidateIntent(intent Intent) (Intent, error) {
 	switch actionUpper {
 	case "RESTOCK":
 		var p struct {
-			ItemID    string `json:"item_id"`
-			Quantity  int    `json:"quantity"`
-			PriceGold int    `json:"price_gold"`
+			ItemID    string          `json:"item_id"`
+			Quantity  json.RawMessage `json:"quantity"`
+			PriceGold int             `json:"price_gold"`
 		}
 		if err := json.Unmarshal(intent.Payload, &p); err != nil {
 			return intent, fmt.Errorf("invalid RESTOCK payload: %w", err)
@@ -87,12 +89,16 @@ func ValidateIntent(intent Intent) (Intent, error) {
 		if strings.TrimSpace(p.ItemID) == "" {
 			return intent, fmt.Errorf("RESTOCK requires non-empty item_id")
 		}
-		if p.Quantity <= 0 {
-			p.Quantity = 1
+		if len(p.Quantity) == 0 {
+			return intent, fmt.Errorf("RESTOCK requires quantity > 0")
+		}
+		quantity, err := positiveIntOrDefault(p.Quantity, 1)
+		if err != nil {
+			return intent, fmt.Errorf("RESTOCK quantity %w", err)
 		}
 		cleanPayload, _ := json.Marshal(map[string]interface{}{
 			"item_id":    strings.TrimSpace(p.ItemID),
-			"quantity":   p.Quantity,
+			"quantity":   quantity,
 			"price_gold": p.PriceGold,
 		})
 		intent.Payload = cleanPayload
@@ -108,7 +114,7 @@ func ValidateIntent(intent Intent) (Intent, error) {
 			return intent, fmt.Errorf("BUY requires item_id")
 		}
 		if p.Quantity <= 0 {
-			p.Quantity = 1
+			return intent, fmt.Errorf("BUY requires quantity > 0")
 		}
 		cleanPayload, _ := json.Marshal(map[string]interface{}{
 			"item_id":  strings.TrimSpace(p.ItemID),
@@ -164,8 +170,8 @@ func ValidateIntent(intent Intent) (Intent, error) {
 
 	case "FORAGE":
 		var p struct {
-			TargetResource string `json:"target_resource"`
-			DurationTicks  int    `json:"duration_ticks"`
+			TargetResource string          `json:"target_resource"`
+			DurationTicks  json.RawMessage `json:"duration_ticks"`
 		}
 		if err := json.Unmarshal(intent.Payload, &p); err != nil {
 			return intent, fmt.Errorf("invalid FORAGE payload: %w", err)
@@ -173,22 +179,61 @@ func ValidateIntent(intent Intent) (Intent, error) {
 		if strings.TrimSpace(p.TargetResource) == "" {
 			return intent, fmt.Errorf("FORAGE requires non-empty target_resource")
 		}
-		if p.DurationTicks <= 0 {
-			p.DurationTicks = 60
+		durationTicks, err := positiveIntOrDefault(p.DurationTicks, 60)
+		if err != nil {
+			return intent, fmt.Errorf("FORAGE duration_ticks %w", err)
 		}
-		cleanPayload, _ := json.Marshal(p)
+		cleanPayload, _ := json.Marshal(map[string]interface{}{
+			"target_resource": strings.TrimSpace(p.TargetResource),
+			"duration_ticks":  durationTicks,
+		})
 		intent.Payload = cleanPayload
 
-	case "CANCEL_ACTION", "UNEQUIP", "LOOK", "STATUS":
-		// Empty payload is valid
-		if len(intent.Payload) == 0 {
-			intent.Payload = json.RawMessage("{}")
+	case "PLANT":
+		var p struct {
+			PlotID string `json:"plot_id"`
+			CropID string `json:"crop_id"`
 		}
+		if err := json.Unmarshal(intent.Payload, &p); err != nil {
+			return intent, fmt.Errorf("invalid PLANT payload: %w", err)
+		}
+		if strings.TrimSpace(p.PlotID) == "" || strings.TrimSpace(p.CropID) == "" {
+			return intent, fmt.Errorf("PLANT requires non-empty plot_id and crop_id")
+		}
+		intent.Payload, _ = json.Marshal(map[string]string{
+			"plot_id": strings.TrimSpace(p.PlotID),
+			"crop_id": strings.TrimSpace(p.CropID),
+		})
+
+	case "HARVEST":
+		var p struct {
+			PlotID string `json:"plot_id"`
+		}
+		if err := json.Unmarshal(intent.Payload, &p); err != nil {
+			return intent, fmt.Errorf("invalid HARVEST payload: %w", err)
+		}
+		if strings.TrimSpace(p.PlotID) == "" {
+			return intent, fmt.Errorf("HARVEST requires non-empty plot_id")
+		}
+		intent.Payload, _ = json.Marshal(map[string]string{"plot_id": strings.TrimSpace(p.PlotID)})
+
+	case "CANCEL_ACTION", "UNEQUIP", "LOOK", "STATUS":
+		if len(intent.Payload) == 0 {
+			return intent, fmt.Errorf("%s requires an empty payload object", actionUpper)
+		}
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(intent.Payload, &payload); err != nil {
+			return intent, fmt.Errorf("invalid %s payload: %w", actionUpper, err)
+		}
+		if payload == nil || len(payload) != 0 {
+			return intent, fmt.Errorf("%s requires an empty payload object", actionUpper)
+		}
+		intent.Payload = json.RawMessage("{}")
 
 	case "DROP", "PICKUP", "EAT":
 		var p struct {
-			ItemID   string `json:"item_id"`
-			Quantity int    `json:"quantity"`
+			ItemID   string          `json:"item_id"`
+			Quantity json.RawMessage `json:"quantity"`
 		}
 		if err := json.Unmarshal(intent.Payload, &p); err != nil {
 			return intent, fmt.Errorf("invalid %s payload: %w", actionUpper, err)
@@ -196,21 +241,28 @@ func ValidateIntent(intent Intent) (Intent, error) {
 		if strings.TrimSpace(p.ItemID) == "" {
 			return intent, fmt.Errorf("%s requires non-empty item_id", actionUpper)
 		}
-		if p.Quantity <= 0 {
-			p.Quantity = 1
+		quantity, err := positiveIntOrDefault(p.Quantity, 1)
+		if err != nil {
+			return intent, fmt.Errorf("%s quantity %w", actionUpper, err)
 		}
-		cleanPayload, _ := json.Marshal(p)
+		cleanPayload, _ := json.Marshal(map[string]interface{}{
+			"item_id":  strings.TrimSpace(p.ItemID),
+			"quantity": quantity,
+		})
 		intent.Payload = cleanPayload
 
 	case "REST":
 		var p struct {
-			DurationTicks int `json:"duration_ticks"`
+			DurationTicks json.RawMessage `json:"duration_ticks"`
 		}
-		_ = json.Unmarshal(intent.Payload, &p)
-		if p.DurationTicks <= 0 {
-			p.DurationTicks = 30
+		if err := json.Unmarshal(intent.Payload, &p); err != nil {
+			return intent, fmt.Errorf("invalid REST payload: %w", err)
 		}
-		cleanPayload, _ := json.Marshal(p)
+		durationTicks, err := positiveIntOrDefault(p.DurationTicks, 30)
+		if err != nil {
+			return intent, fmt.Errorf("REST duration_ticks %w", err)
+		}
+		cleanPayload, _ := json.Marshal(map[string]int{"duration_ticks": durationTicks})
 		intent.Payload = cleanPayload
 
 	case "EQUIP":
@@ -241,4 +293,19 @@ func ValidateIntent(intent Intent) (Intent, error) {
 	}
 
 	return intent, nil
+}
+
+func positiveIntOrDefault(raw json.RawMessage, defaultValue int) (int, error) {
+	if len(raw) == 0 {
+		return defaultValue, nil
+	}
+
+	var value int
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return 0, fmt.Errorf("must be a positive integer: %w", err)
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("must be greater than zero")
+	}
+	return value, nil
 }

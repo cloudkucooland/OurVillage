@@ -11,6 +11,28 @@ import (
 	"github.com/mochi-mqtt/server/v2/packets"
 )
 
+func TestForageRejectsNonPositiveDuration(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	srv, err := NewServer(database, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	directChan := make(chan []byte, 1)
+	if err := srv.mqttServer.Subscribe("world/agents/eldon_millwright/direct", 0, func(_ *mqtt.Client, _ packets.Subscription, pk packets.Packet) {
+		directChan <- pk.Payload
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srv.handleForage("eldon_millwright", "req_forage_invalid", json.RawMessage(`{"target_resource":"firewood","duration_ticks":0}`))
+	assertInvalidPayloadError(t, <-directChan)
+}
+
 func TestOverburdenedMovementRejection(t *testing.T) {
 	database, err := db.InitDB(":memory:")
 	if err != nil {
