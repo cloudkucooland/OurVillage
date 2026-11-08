@@ -8,7 +8,20 @@ import (
 	"agentmud/internal/client/memory"
 	"agentmud/internal/client/spatial"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
+
+func TestHeaderFitsTerminalWidth(t *testing.T) {
+	status := "Agent: Luke the Farmer | Location: Village Field (village_field) | Gold: 10 | Energy: 48 | Health: 100 | Hunger: 51 | Status: IDLE | Time: 04:00 | Weather: clear"
+	for _, width := range []int{80, 120, 160} {
+		header := renderHeader("AgentMUD Client TUI", status, width)
+		for i, line := range strings.Split(header, "\n") {
+			if lineWidth := lipgloss.Width(line); lineWidth > width {
+				t.Errorf("header line %d at width %d is %d cells wide", i+1, width, lineWidth)
+			}
+		}
+	}
+}
 
 func TestTUIParamTuning(t *testing.T) {
 	ctx := context.Background()

@@ -127,7 +127,7 @@ func (m PlayerModel) View() string {
 		m.ctxMgr.Gold(), m.ctxMgr.Energy(), m.ctxMgr.Health(), m.ctxMgr.Hunger(), m.ctxMgr.Status(),
 		m.ctxMgr.LastInGameTime(), m.ctxMgr.LastWeather(),
 	)
-	header := headerBoxStyle.Render(titleStyle.Render("OurVillage Player TUI") + "\n" + headerText)
+	header := renderHeader("OurVillage Player TUI", headerText, m.width)
 
 	tabs := []string{"Sensory Log", "Inventory", "Commands"}
 	renderedTabs := make([]string, 0, len(tabs))

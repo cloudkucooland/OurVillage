@@ -48,6 +48,17 @@ var (
 				Padding(0, 1)
 )
 
+func renderHeader(title, status string, terminalWidth int) string {
+	if terminalWidth <= 0 {
+		terminalWidth = 80
+	}
+	contentWidth := terminalWidth - 4
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+	return headerBoxStyle.Width(contentWidth).Render(titleStyle.Render(title) + "\n" + status)
+}
+
 func (m TUIModel) View() string {
 	if m.quitting {
 		return "Shutting down AgentMUD TUI...\n"
@@ -67,7 +78,7 @@ func (m TUIModel) View() string {
 
 	headerText := fmt.Sprintf("Agent: %s | Location: %s (%s) | Gold: %d | Energy: %d | Health: %d | Hunger: %d | Status: %s | Time: %s | Weather: %s",
 		name, locName, locID, gold, energy, health, hunger, status, timeStr, weather)
-	header := headerBoxStyle.Render(titleStyle.Render("AgentMUD Client TUI") + "\n" + headerText)
+	header := renderHeader("AgentMUD Client TUI", headerText, m.width)
 
 	// 2. Tabs
 	tabs := []string{"Sensory Log", "Inventory", "Relationships", "Self Identity", "Projects", "Locations"}
