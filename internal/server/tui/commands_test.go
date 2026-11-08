@@ -38,7 +38,7 @@ func TestCreateCharacterPasswordIsNotStoredInCommandHistory(t *testing.T) {
 	}
 	defer database.Close()
 
-	model := NewModel(database, admin.NewAdminCommandExecutor(database, nil), nil)
+	model := NewModel(database, admin.NewAdminCommandExecutor(database, nil, nil), nil)
 	model.state = adminTab
 	model = model.executeCommand(`create-character test_agent "Test Agent" Tester town_square "A test persona."`)
 
@@ -69,7 +69,7 @@ func TestCreateItemCommandProperties(t *testing.T) {
 	}
 	defer database.Close()
 
-	model := NewModel(database, admin.NewAdminCommandExecutor(database, nil), nil)
+	model := NewModel(database, admin.NewAdminCommandExecutor(database, nil, nil), nil)
 	model = model.executeCommand(`create-item bread "Fresh Bread" 0.3 "A warm loaf." --consumable 25`)
 	model = model.executeCommand(`create-item basket "Woven Basket" 0.5 "A carrying basket." --container 30 8`)
 
@@ -117,7 +117,7 @@ func TestConfigureResourceAndShopCommands(t *testing.T) {
 	}
 	defer database.Close()
 
-	model := NewModel(database, admin.NewAdminCommandExecutor(database, nil), nil)
+	model := NewModel(database, admin.NewAdminCommandExecutor(database, nil, nil), nil)
 	model = model.executeCommand("set-resource prairie wild_grain 25 80 10")
 	model = model.executeCommand("set-shop-item bakery bread 2 14")
 
@@ -159,7 +159,7 @@ func TestSetLocationParameterCommands(t *testing.T) {
 	}
 	defer database.Close()
 
-	model := NewModel(database, admin.NewAdminCommandExecutor(database, nil), nil)
+	model := NewModel(database, admin.NewAdminCommandExecutor(database, nil, nil), nil)
 	model = model.executeCommand("set-public tavern public")
 	model = model.executeCommand("set-indoor tavern outdoor")
 	model = model.executeCommand("set-access tavern foot_only")
@@ -208,7 +208,7 @@ func TestWeatherCommandSupportsNewWeatherTypes(t *testing.T) {
 	weather := ""
 	model := NewModel(database, admin.NewAdminCommandExecutor(database, func(value string) {
 		weather = value
-	}), nil)
+	}, nil), nil)
 	for _, test := range []struct {
 		input string
 		want  string

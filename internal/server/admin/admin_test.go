@@ -19,8 +19,12 @@ func TestAdminCommands(t *testing.T) {
 	setWeather := func(w string) {
 		weatherUpdated = w
 	}
+	var tempUpdated float64
+	setTemp := func(t float64) {
+		tempUpdated = t
+	}
 
-	adm := NewAdminCommandExecutor(database, setWeather)
+	adm := NewAdminCommandExecutor(database, setWeather, setTemp)
 
 	// 1. Test SetWeather
 	for _, weather := range []string{"clear", "rain", "snow", "storm", "fog", "cloudy", "hail", "windy", "heatwave", "drought", "frost"} {
@@ -37,6 +41,22 @@ func TestAdminCommands(t *testing.T) {
 
 	if err := adm.SetWeather("hurricane"); err == nil {
 		t.Errorf("expected error for invalid weather 'hurricane', got nil")
+	}
+
+	// Test SetTemperature
+	if err := adm.SetTemperature("22.5"); err != nil || tempUpdated != 22.5 {
+		t.Errorf("expected temp 22.5, got %v (err: %v)", tempUpdated, err)
+	}
+	if err := adm.SetTemperature("0"); err != nil || tempUpdated != 0 {
+		t.Errorf("expected temp 0, got %v (err: %v)", tempUpdated, err)
+	}
+	for _, invalidTemperature := range []string{"invalid", "NaN", "Inf", "-Inf"} {
+		if err := adm.SetTemperature(invalidTemperature); err == nil {
+			t.Errorf("expected error for invalid temperature %q, got nil", invalidTemperature)
+		}
+		if tempUpdated != 0 {
+			t.Errorf("invalid temperature %q changed value to %v", invalidTemperature, tempUpdated)
+		}
 	}
 
 	// 2. Test SetLocationDescription

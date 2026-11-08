@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,14 +14,16 @@ import (
 )
 
 type AdminCommandExecutor struct {
-	db         *sql.DB
-	setWeather func(string)
+	db             *sql.DB
+	setWeather     func(string)
+	setTemperature func(float64)
 }
 
-func NewAdminCommandExecutor(db *sql.DB, setWeather func(string)) *AdminCommandExecutor {
+func NewAdminCommandExecutor(db *sql.DB, setWeather func(string), setTemperature func(float64)) *AdminCommandExecutor {
 	return &AdminCommandExecutor{
-		db:         db,
-		setWeather: setWeather,
+		db:             db,
+		setWeather:     setWeather,
+		setTemperature: setTemperature,
 	}
 }
 
@@ -33,6 +36,20 @@ func (a *AdminCommandExecutor) SetWeather(weather string) error {
 	}
 	if a.setWeather != nil {
 		a.setWeather(w)
+	}
+	return nil
+}
+
+func (a *AdminCommandExecutor) SetTemperature(tempStr string) error {
+	t, err := strconv.ParseFloat(strings.TrimSpace(tempStr), 64)
+	if err != nil {
+		return fmt.Errorf("invalid temperature %q (use a number, e.g. 21.5)", tempStr)
+	}
+	if math.IsNaN(t) || math.IsInf(t, 0) {
+		return fmt.Errorf("invalid temperature %q (must be finite)", tempStr)
+	}
+	if a.setTemperature != nil {
+		a.setTemperature(t)
 	}
 	return nil
 }

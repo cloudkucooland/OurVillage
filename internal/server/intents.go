@@ -72,7 +72,11 @@ type RestockPayload struct {
 	PriceGold int    `json:"price_gold"`
 }
 
-const minimumRestDurationTicks = 10
+const (
+	minimumRestDurationTicks    = 10
+	zeroEnergyRestDurationTicks = 30
+	zeroHealthRestDurationTicks = 60
+)
 
 type DirectResponse struct {
 	IntentID  string `json:"intent_id"`
@@ -277,6 +281,7 @@ func (s *Server) handleMove(agentID string, intentID string, rawPayload json.Raw
 	})
 	_ = s.mqttServer.Publish("world/global/spatial/move", spatialPayload, false, 0)
 
+	s.forceRestForDepletedCharacters(s.GetTickCount())
 	s.handleLook(agentID, intentID, fmt.Sprintf("Moved to %s", locName))
 }
 

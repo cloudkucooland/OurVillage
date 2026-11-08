@@ -22,20 +22,22 @@ import (
 )
 
 type Server struct {
-	mqttServer *mqtt.Server
-	db         *sql.DB
-	authHook   *DBAuthHook
-	mu         sync.RWMutex
-	tickCount  uint64
-	weather    string
+	mqttServer  *mqtt.Server
+	db          *sql.DB
+	authHook    *DBAuthHook
+	mu          sync.RWMutex
+	tickCount   uint64
+	weather     string
+	temperature float64
 }
 
 type TickPayload struct {
-	Tick       uint64    `json:"tick"`
-	Timestamp  time.Time `json:"timestamp"`
-	InGameTime string    `json:"in_game_time"`
-	IsNight    bool      `json:"is_night"`
-	Weather    string    `json:"weather"`
+	Tick        uint64    `json:"tick"`
+	Timestamp   time.Time `json:"timestamp"`
+	InGameTime  string    `json:"in_game_time"`
+	IsNight     bool      `json:"is_night"`
+	Weather     string    `json:"weather"`
+	Temperature float64   `json:"temperature"`
 }
 
 func NewServer(database *sql.DB, listenAddr ...string) (*Server, error) {
@@ -70,11 +72,21 @@ func NewServer(database *sql.DB, listenAddr ...string) (*Server, error) {
 		}
 	}
 
+	loadedTick, err := db.GetServerTick(database)
+	if err != nil {
+		log.Printf("[Server] Failed to load persisted tick count: %v", err)
+	}
+
 	srv := &Server{
-		mqttServer: mqttServer,
-		db:         database,
-		authHook:   authHook,
-		weather:    "clear",
+		mqttServer:  mqttServer,
+		db:          database,
+		authHook:    authHook,
+		tickCount:   loadedTick,
+		weather:     "clear",
+		temperature: 20.0,
+	}
+	if loadedTick > 0 {
+		log.Printf("[Server] Resuming from persisted tick count: %d", loadedTick)
 	}
 
 	// Reset any stuck character statuses and online flags on server startup
@@ -105,7 +117,17 @@ func (s *Server) Start() error {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	<-sigChan
 
+	return s.Shutdown()
+}
+
+func (s *Server) Shutdown() error {
 	log.Println("Shutting down AgentMUD server...")
+	s.mu.RLock()
+	currentTick := s.tickCount
+	s.mu.RUnlock()
+	if err := db.SaveServerTick(s.db, currentTick); err != nil {
+		log.Printf("Failed to save tick %d on shutdown: %v", currentTick, err)
+	}
 	return s.mqttServer.Close()
 }
 
@@ -125,7 +147,7 @@ func (s *Server) StartTUI() error {
 	logChannel := tui.NewLogChannel()
 	log.SetOutput(io.MultiWriter(logFile, tui.NewLogWriter(logChannel)))
 
-	tuiModel := tui.NewModel(s.db, admin.NewAdminCommandExecutor(s.db, s.SetWeather), s)
+	tuiModel := tui.NewModel(s.db, admin.NewAdminCommandExecutor(s.db, s.SetWeather, s.SetTemperature), s)
 	tuiModel.SetLogChannel(logChannel)
 
 	// Start MQTT server in background
@@ -144,8 +166,7 @@ func (s *Server) StartTUI() error {
 		log.Printf("[TUI Error] %v", err)
 	}
 
-	log.Println("Shutting down AgentMUD server...")
-	return s.mqttServer.Close()
+	return s.Shutdown()
 }
 
 func (s *Server) GetTickCount() uint64 {
@@ -175,6 +196,18 @@ func (s *Server) SetWeather(w string) {
 	s.weather = w
 }
 
+func (s *Server) GetTemperature() float64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.temperature
+}
+
+func (s *Server) SetTemperature(t float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.temperature = t
+}
+
 func (s *Server) runClock() {
 	interval := 90 * time.Second // default: 90 seconds per tick to give LLM agents time to process
 	if envInterval := os.Getenv("AGENTMUD_TICK_INTERVAL"); envInterval != "" {
@@ -197,7 +230,13 @@ func (s *Server) ProcessTick() {
 	s.tickCount++
 	currentTick := s.tickCount
 	weather := s.weather
+	temperature := s.temperature
 	s.mu.Unlock()
+
+	// Persist current tick to database
+	if err := db.SaveServerTick(s.db, currentTick); err != nil {
+		log.Printf("Failed to persist tick %d: %v", currentTick, err)
+	}
 
 	now := time.Now()
 
@@ -222,16 +261,36 @@ func (s *Server) ProcessTick() {
 		WHERE status = 'IDLE'
 	`)
 
+	// Characters at zero hunger lose health each tick, regardless of action status.
+	_, _ = s.db.Exec(`
+		UPDATE characters
+		SET health = MAX(0, health - 1)
+		WHERE hunger <= 0
+	`)
+
+	// 1.6. Apply environmental temperature health decay if too cold (< 10) or too hot (> 30) for characters outdoors
+	if temperature < 10.0 || temperature > 30.0 {
+		_, _ = s.db.Exec(`
+			UPDATE characters 
+			SET health = MAX(0, health - 1)
+			WHERE current_location IN (SELECT id FROM locations WHERE is_indoor = 0)
+		`)
+	}
+
+	s.forceRestForDepletedCharacters(currentTick)
+
 	// 2. Resolve temporal action locks (RFC 007 Section 6: Stateful Temporal Foraging Engine)
 	s.resolveCompletedActions(currentTick, weather)
+	s.forceRestForDepletedCharacters(currentTick)
 
 	// 3. Publish Master Time broadcast
 	payload := TickPayload{
-		Tick:       currentTick,
-		Timestamp:  now,
-		InGameTime: timeStr,
-		IsNight:    isNight,
-		Weather:    weather,
+		Tick:        currentTick,
+		Timestamp:   now,
+		InGameTime:  timeStr,
+		IsNight:     isNight,
+		Weather:     weather,
+		Temperature: temperature,
 	}
 
 	data, err := json.Marshal(payload)
@@ -245,7 +304,95 @@ func (s *Server) ProcessTick() {
 	if err != nil {
 		log.Printf("Failed to publish tick: %v", err)
 	} else {
-		log.Printf("[Tick %d] Time: %s, Night: %v, Weather: %s", currentTick, timeStr, isNight, weather)
+		log.Printf("[Tick %d] Time: %s, Night: %v, Weather: %s, Temp: %.1f°C", currentTick, timeStr, isNight, weather, temperature)
+	}
+}
+
+func (s *Server) forceRestForDepletedCharacters(currentTick uint64) {
+	rows, err := s.db.Query(`
+		SELECT id, current_location, energy, health, action_intent_id
+		FROM characters
+		WHERE status != 'RESTING' AND (energy <= 0 OR health <= 0)
+	`)
+	if err != nil {
+		log.Printf("Failed to query characters needing forced rest: %v", err)
+		return
+	}
+
+	type depletedCharacter struct {
+		id, location, intentID string
+		energy, health         int
+	}
+	var depleted []depletedCharacter
+	for rows.Next() {
+		var character depletedCharacter
+		if err := rows.Scan(&character.id, &character.location, &character.energy, &character.health, &character.intentID); err != nil {
+			log.Printf("Failed to scan character needing forced rest: %v", err)
+			continue
+		}
+		depleted = append(depleted, character)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("Failed while reading characters needing forced rest: %v", err)
+	}
+	if err := rows.Close(); err != nil {
+		log.Printf("Failed to close depleted character query: %v", err)
+	}
+
+	for _, character := range depleted {
+		duration := zeroEnergyRestDurationTicks
+		cause := "energy"
+		if character.health <= 0 {
+			duration = zeroHealthRestDurationTicks
+			cause = "health"
+		}
+
+		result, err := s.db.Exec(`
+			UPDATE characters
+			SET status = 'RESTING', action_start_tick = ?, action_end_tick = ?,
+				action_target = current_location, action_intent_id = ''
+			WHERE id = ? AND status != 'RESTING' AND (energy <= 0 OR health <= 0)
+		`, currentTick, currentTick+uint64(duration), character.id)
+		if err != nil {
+			log.Printf("Failed to start forced rest for %s: %v", character.id, err)
+			continue
+		}
+		updated, err := result.RowsAffected()
+		if err != nil {
+			log.Printf("Failed to check forced rest update for %s: %v", character.id, err)
+			continue
+		}
+		if updated == 0 {
+			continue
+		}
+
+		if character.intentID != "" {
+			s.sendDirectError(character.id, character.intentID, "FORCED_REST", fmt.Sprintf("Your action was interrupted because your %s reached zero.", cause))
+		}
+		message := fmt.Sprintf("%s has been forced to rest for %d ticks because their %s reached zero.", character.id, duration, cause)
+		systemTopic := fmt.Sprintf("world/locations/%s/system", character.location)
+		if err := s.mqttServer.Publish(systemTopic, []byte(message), false, 0); err != nil {
+			log.Printf("Failed to publish forced rest for %s: %v", character.id, err)
+		}
+
+		response := map[string]interface{}{
+			"intent_id":      "",
+			"status":         "SUCCESS",
+			"action":         "REST",
+			"forced":         true,
+			"duration_ticks": duration,
+			"message":        fmt.Sprintf("You were forced to rest for %d ticks because your %s reached zero.", duration, cause),
+		}
+		s.includeCharacterSync(character.id, response)
+		payload, err := json.Marshal(response)
+		if err != nil {
+			log.Printf("Failed to marshal forced rest response for %s: %v", character.id, err)
+			continue
+		}
+		directTopic := fmt.Sprintf("world/agents/%s/direct", character.id)
+		if err := s.mqttServer.Publish(directTopic, payload, false, 0); err != nil {
+			log.Printf("Failed to publish forced rest response for %s: %v", character.id, err)
+		}
 	}
 }
 

@@ -142,3 +142,46 @@ func TestInitDBWithoutSeed(t *testing.T) {
 		t.Errorf("Expected 22 locations after manual seeding, got %d", locCount)
 	}
 }
+
+func TestServerTickPersistence(t *testing.T) {
+	database, err := InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to initialize in-memory DB: %v", err)
+	}
+	defer database.Close()
+
+	// Initial tick should be 0
+	tick, err := GetServerTick(database)
+	if err != nil {
+		t.Fatalf("Failed to get server tick: %v", err)
+	}
+	if tick != 0 {
+		t.Errorf("Expected initial tick 0, got %d", tick)
+	}
+
+	// Save tick 42
+	if err := SaveServerTick(database, 42); err != nil {
+		t.Fatalf("Failed to save server tick: %v", err)
+	}
+
+	tick, err = GetServerTick(database)
+	if err != nil {
+		t.Fatalf("Failed to get server tick: %v", err)
+	}
+	if tick != 42 {
+		t.Errorf("Expected tick 42, got %d", tick)
+	}
+
+	// Overwrite with tick 100
+	if err := SaveServerTick(database, 100); err != nil {
+		t.Fatalf("Failed to save server tick: %v", err)
+	}
+
+	tick, err = GetServerTick(database)
+	if err != nil {
+		t.Fatalf("Failed to get server tick: %v", err)
+	}
+	if tick != 100 {
+		t.Errorf("Expected tick 100, got %d", tick)
+	}
+}

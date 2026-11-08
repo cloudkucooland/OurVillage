@@ -236,6 +236,12 @@ CREATE TABLE IF NOT EXISTS event_logs (
 CREATE INDEX IF NOT EXISTS idx_event_logs_actor ON event_logs(actor_id);
 CREATE INDEX IF NOT EXISTS idx_event_logs_target ON event_logs(target_id);
 CREATE INDEX IF NOT EXISTS idx_event_logs_location ON event_logs(location_id);
+
+-- Server State Table
+CREATE TABLE IF NOT EXISTS server_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 `
 
 	_, err = db.Exec(schema)
@@ -296,6 +302,8 @@ CREATE INDEX IF NOT EXISTS idx_event_logs_location ON event_logs(location_id);
 }
 
 func migrateSchema(db *sql.DB) error {
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS server_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)`)
+
 	columnsToAdd := []struct {
 		table  string
 		column string
@@ -430,4 +438,27 @@ func SeedDB(db *sql.DB) error {
 		return fmt.Errorf("failed to seed shop inventory: %w", err)
 	}
 	return nil
+}
+
+// GetServerTick retrieves the saved server tick from the database, returning 0 if not found.
+func GetServerTick(db *sql.DB) (uint64, error) {
+	var val string
+	err := db.QueryRow("SELECT value FROM server_state WHERE key = 'current_tick'").Scan(&val)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	var tick uint64
+	_, err = fmt.Sscanf(val, "%d", &tick)
+	return tick, err
+}
+
+// SaveServerTick stores the current server tick in the database.
+func SaveServerTick(db *sql.DB, tick uint64) error {
+	_, err := db.Exec(`
+		INSERT OR REPLACE INTO server_state (key, value) VALUES ('current_tick', ?)
+	`, fmt.Sprintf("%d", tick))
+	return err
 }

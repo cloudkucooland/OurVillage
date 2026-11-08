@@ -12,6 +12,7 @@ Characters maintain health indicators in SQLite:
 - `warmth`: 0 - 100 (Thermal insulation based on shelter, clothing, and fire proximity).
 
 3. Environmental Exposure & Contraction Conditions
+- Ambient Temperature: Outdoor characters lose 1 health per server tick when the temperature is below 10° C or above 30° C. Indoor characters do not take this temperature damage. At exactly 10° C or 30° C, no temperature damage is applied.
 - Freezing Cold (< 0° C, Snow): Idling outdoors without a wool cloak or active hearth decreases `warmth` by 5 per hour. When `warmth < 20`, character contracts `CHILL` or `HYPOTHERMIA`.
 - Heavy Rain & Storms: Increases illness contraction probability by 3x during outdoor foraging.
 - Eating Near-Spoiled / Rotting Food: 40% chance of contracting `FOOD_POISONING`.

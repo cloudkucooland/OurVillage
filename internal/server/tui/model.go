@@ -30,6 +30,7 @@ const maxDisplayedLogLines = 500
 type ServerStateProvider interface {
 	GetTickCount() uint64
 	GetWeather() string
+	GetTemperature() float64
 }
 
 type Model struct {
@@ -40,9 +41,10 @@ type Model struct {
 	width, height int
 
 	// Status Info
-	tickCount uint64
-	weather   string
-	startTime time.Time
+	tickCount   uint64
+	weather     string
+	temperature float64
+	startTime   time.Time
 
 	// Admin Console
 	textInput       textinput.Model
@@ -130,6 +132,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.tickCount = msg.tick
 		m.weather = msg.weather
+		m.temperature = msg.temperature
 		return m, m.refreshStats()
 
 	case logMsg:
@@ -175,19 +178,22 @@ func (m Model) listenLogs() tea.Cmd {
 }
 
 type tickMsg struct {
-	tick    uint64
-	weather string
+	tick        uint64
+	weather     string
+	temperature float64
 }
 
 func (m Model) refreshStats() tea.Cmd {
 	return tea.Tick(time.Second*1, func(t time.Time) tea.Msg {
 		var tick uint64
 		var weather string = "clear"
+		var temperature float64 = 20.0
 		if m.provider != nil {
 			tick = m.provider.GetTickCount()
 			weather = m.provider.GetWeather()
+			temperature = m.provider.GetTemperature()
 		}
-		return tickMsg{tick: tick, weather: weather}
+		return tickMsg{tick: tick, weather: weather, temperature: temperature}
 	})
 }
 
@@ -214,6 +220,7 @@ func (m Model) executeCommand(cmdStr string) Model {
 	case "help":
 		output = "Available commands:\n" +
 			"  weather <type> - set world weather (clear, cloudy, drought, fog, frost, hail, heatwave, rain, snow, storm, windy)\n" +
+			"  temp <celsius> - set environmental temperature in degrees Celsius\n" +
 			"  set-desc <loc_id> <desc> - set location description\n" +
 			"  set-owner <loc_id> <char_id|none> - set or clear location owner\n" +
 			"  set-public <loc_id> <public|private> - set property visibility\n" +
@@ -237,6 +244,15 @@ func (m Model) executeCommand(cmdStr string) Model {
 		} else {
 			err = m.admin.SetWeather(args[0])
 			output = fmt.Sprintf("Weather set to %s", args[0])
+		}
+	case "temp", "temperature":
+		if len(args) < 1 {
+			err = fmt.Errorf("usage: temp <celsius>")
+		} else {
+			err = m.admin.SetTemperature(args[0])
+			if err == nil {
+				output = fmt.Sprintf("Temperature set to %s°C", args[0])
+			}
 		}
 	case "set-desc":
 		if len(args) < 2 {
@@ -550,6 +566,7 @@ func (m Model) View() string {
 	case statusTab:
 		sb.WriteString(fmt.Sprintf("Server Master Tick: %d\n", m.tickCount))
 		sb.WriteString(fmt.Sprintf("Current Weather:    %s\n", m.weather))
+		sb.WriteString(fmt.Sprintf("Current Temp:       %.1f°C\n", m.temperature))
 		sb.WriteString(fmt.Sprintf("Uptime:             %v\n", time.Since(m.startTime).Truncate(time.Second)))
 		sb.WriteString(fmt.Sprintf("Recent log lines:    %d (open Logs tab)\n", len(m.logLines)))
 		sb.WriteString("\n[Instructions]\n- Press Tab to switch tabs.\n- Switch to the Admin Console tab to run system administration commands.\n")
