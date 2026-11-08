@@ -1191,12 +1191,13 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 	if cm.smallSystem {
 		sb.WriteString("- Pick actions based on your current location, inventory, and desires.\n")
 		sb.WriteString("- Use exact item/location IDs and quantities.\n")
-		sb.WriteString("- For multi-step journeys, use TRAVEL with target location ID.\n")
-		sb.WriteString("- Output MUST be valid JSON only: {\"thought\":\"<reasoning>\",\"action\":\"CHAT|MOVE|FORAGE|PLANT|HARVEST|REST\",\"payload\":{\"message\":\"<text>\"}}\n")
+		sb.WriteString("- For one connected step, use MOVE; for multi-step journeys, use TRAVEL with the final destination ID.\n")
+		sb.WriteString("- Supported actions: CHAT, MOVE, TRAVEL, FORAGE, PLANT, HARVEST, REST. Match the payload to the action; MOVE and TRAVEL require target_location.\n")
+		sb.WriteString("- Output MUST be valid JSON only with thought, action, and payload fields.\n")
 	} else {
 		sb.WriteString("Choose actions from your own desires, values, memories, and current observations; prioritize replying when addressed. Use exact observed IDs and quantities, move to a listed connected exit, drop only by choice and within carried quantities, and base foraging, purchases, and crafting on available resources, shop stock, inventory capacity, and known recipes.\n")
 		sb.WriteString("For an optional multi-step trip, choose TRAVEL with the final destination location ID; the system will handle the route. Choose MOVE only when you intend to move one connected step.\n")
-		sb.WriteString("Output MUST be valid JSON only, with thought, action, and payload fields. Keep thought private; for CHAT, use {\"thought\":\"<your private reasoning>\",\"action\":\"CHAT\",\"payload\":{\"message\":\"<your spoken dialogue>\"}}.\n")
+		sb.WriteString("Output MUST be valid JSON only: {\"thought\":\"<private reasoning>\",\"action\":\"<supported action>\",\"payload\":{...}}. Keep thought private; for CHAT, use {\"thought\":\"<your private reasoning>\",\"action\":\"CHAT\",\"payload\":{\"message\":\"<your spoken dialogue>\"}}.\n")
 	}
 	return sb.String()
 }

@@ -71,6 +71,9 @@ func TestContextManager_PromptAssembly(t *testing.T) {
 		!strings.Contains(prompt, "choose TRAVEL with the final destination location ID") {
 		t.Error("prompt missing concise, observation-grounded action guidance")
 	}
+	if !strings.Contains(prompt, `"action":"<supported action>"`) || !strings.Contains(prompt, "TRAVEL") {
+		t.Error("prompt missing the generic action schema or TRAVEL guidance")
+	}
 
 	// Verify psychological safety section (RFC 017)
 	if !strings.Contains(prompt, "=== COGNITIVE ENVIRONMENT & PSYCHOLOGICAL SAFETY ===") {
@@ -107,6 +110,23 @@ func TestContextManager_PromptAssembly(t *testing.T) {
 		!strings.Contains(prompt, `"payload":{"message":"<your spoken dialogue>"}`) ||
 		strings.Contains(prompt, "Never use a default destination") {
 		t.Error("prompt missing JSON and CHAT format instructions")
+	}
+}
+
+func TestSmallSystemPromptSupportsTravel(t *testing.T) {
+	cm := NewContextManager(ContextManagerConfig{
+		AgentID:         "eldon_millwright",
+		AgentName:       "Eldon",
+		InitialLocation: "town_mill",
+		SmallSystem:     true,
+	})
+
+	prompt := cm.BuildPrompt(nil, nil)
+	if !strings.Contains(prompt, "use TRAVEL with the final destination ID") {
+		t.Fatal("small-system prompt missing TRAVEL guidance")
+	}
+	if !strings.Contains(prompt, "Supported actions: CHAT, MOVE, TRAVEL, FORAGE, PLANT, HARVEST, REST") {
+		t.Fatal("small-system prompt action list missing TRAVEL")
 	}
 }
 

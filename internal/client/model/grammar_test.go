@@ -100,6 +100,12 @@ func TestSanitizeAndExtractJSON(t *testing.T) {
 			wantErr:    false,
 		},
 		{
+			name:       "TRAVEL action",
+			input:      `{"thought": "Heading to tavern", "action": "TRAVEL", "payload": {"target_location": "tavern"}}`,
+			wantAction: "TRAVEL",
+			wantErr:    false,
+		},
+		{
 			name:       "Markdown code fence with lowercase action",
 			input:      "Here is what I decided to do:\n```json\n{\n  \"thought\": \"Saying hi\",\n  \"action\": \"chat\",\n  \"payload\": \"Hi everyone!\"\n}\n```\nHope that helps!",
 			wantAction: "CHAT",

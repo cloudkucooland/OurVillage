@@ -20,6 +20,17 @@ func TestParseAndRepairIntent(t *testing.T) {
 		}
 	})
 
+	t.Run("TRAVEL is accepted for client-side route handling", func(t *testing.T) {
+		input := `{"thought":"I want to visit the tavern","action":"TRAVEL","payload":{"target_location":"tavern"}}`
+		intent, err := ParseAndRepairIntent(input)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if intent.Action != "TRAVEL" {
+			t.Errorf("expected TRAVEL, got %s", intent.Action)
+		}
+	})
+
 	t.Run("CHAT missing message is rejected instead of using thought", func(t *testing.T) {
 		input := `{"thought": "Hello Martha, nice weather!", "action": "CHAT", "payload": ""}`
 		intent, err := ParseAndRepairIntent(input)

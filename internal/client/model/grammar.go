@@ -100,6 +100,7 @@ type ParsedIntent struct {
 
 var validActions = map[string]struct{}{
 	"MOVE":          {},
+	"TRAVEL":        {},
 	"CHAT":          {},
 	"TRANSFER":      {},
 	"GIVE":          {},
@@ -167,7 +168,7 @@ func SanitizeAndExtractJSON(raw string) (string, error) {
 
 	actionUpper := strings.ToUpper(strings.TrimSpace(actionStr))
 	if _, valid := validActions[actionUpper]; !valid {
-		return "", fmt.Errorf("invalid action %q in model output (expected one of MOVE, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, PLANT, HARVEST, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, RESTOCK, EAT, DRINK, REST)", actionStr)
+		return "", fmt.Errorf("invalid action %q in model output (expected one of MOVE, TRAVEL, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, PLANT, HARVEST, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, LOOK, STATUS, BUY, RESTOCK, EAT, DRINK, REST)", actionStr)
 	}
 
 	if actionUpper == "COLLECT" {
