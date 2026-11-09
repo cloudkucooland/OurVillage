@@ -166,6 +166,15 @@ func (a *AdminCommandExecutor) SetCharacterGold(charID string, amount int) error
 	return updateExisting(a.db, "characters", charID, "UPDATE characters SET gold = ? WHERE id = ?", amount, charID)
 }
 
+func (a *AdminCommandExecutor) FullHealCharacter(charID string) error {
+	return updateExisting(a.db, "characters", charID, `
+		UPDATE characters
+		SET health = 100, hunger = 100, status = 'IDLE',
+			action_target = '', action_start_tick = 0, action_end_tick = 0, action_intent_id = ''
+		WHERE id = ?
+	`, charID)
+}
+
 func (a *AdminCommandExecutor) SetLocationResource(locationID, resourceID string, currentStock, maxStock, replenishRate int) error {
 	if !validID(locationID) || !validID(resourceID) {
 		return fmt.Errorf("location and resource ids must contain only letters, numbers, underscores, and hyphens")

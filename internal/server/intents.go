@@ -66,6 +66,11 @@ type BuyPayload struct {
 	Quantity int    `json:"quantity"`
 }
 
+type SellPayload struct {
+	ItemID   string `json:"item_id"`
+	Quantity int    `json:"quantity"`
+}
+
 type RestockPayload struct {
 	ItemID    string `json:"item_id"`
 	Quantity  int    `json:"quantity"`
@@ -131,6 +136,8 @@ func (s *Server) SetupIntentHandlers() error {
 			s.handleCraft(agentID, intent.IntentID, intent.Payload)
 		case "BUY":
 			s.handleBuy(agentID, intent.IntentID, intent.Payload)
+		case "SELL":
+			s.handleSell(agentID, intent.IntentID, intent.Payload)
 		case "RESTOCK":
 			s.handleRestock(agentID, intent.IntentID, intent.Payload)
 		case "EAT":
@@ -815,6 +822,56 @@ func (s *Server) handleBuy(agentID string, intentID string, rawPayload json.RawM
 	s.handleLook(agentID, intentID, msg)
 }
 
+func (s *Server) handleSell(agentID string, intentID string, rawPayload json.RawMessage) {
+	var payload SellPayload
+	if err := json.Unmarshal(rawPayload, &payload); err != nil || strings.TrimSpace(payload.ItemID) == "" || payload.Quantity <= 0 {
+		s.sendDirectError(agentID, intentID, "INVALID_PAYLOAD", "Invalid or missing SELL payload (item_id and positive quantity required)")
+		return
+	}
+	payload.ItemID = strings.TrimSpace(payload.ItemID)
+
+	var currentLocation string
+	if err := s.db.QueryRow("SELECT current_location FROM characters WHERE id = ?", agentID).Scan(&currentLocation); err != nil {
+		s.sendDirectError(agentID, intentID, "CHARACTER_NOT_FOUND", "Character not found")
+		return
+	}
+
+	totalGold, err := db.SellItem(s.db, agentID, payload.ItemID, payload.Quantity)
+	if err != nil {
+		errorCode := "SELL_FAILED"
+		for _, code := range []string{
+			"CHARACTER_BUSY",
+			"ITEM_NOT_BOUGHT",
+			"INSUFFICIENT_INVENTORY",
+			"SHOP_NO_OWNER",
+			"CANNOT_SELL_TO_OWN_SHOP",
+			"SHOP_INSUFFICIENT_GOLD",
+			"SALE_VALUE_TOO_LARGE",
+		} {
+			if strings.Contains(err.Error(), code) {
+				errorCode = code
+				break
+			}
+		}
+		s.sendDirectError(agentID, intentID, errorCode, err.Error())
+		return
+	}
+
+	eventPayload := map[string]any{
+		"item_id": payload.ItemID, "quantity": payload.Quantity, "gold_received": totalGold,
+	}
+	if _, err := db.RecordEventLog(s.db, s.GetTickCount(), "SELL", agentID, "", currentLocation, eventPayload); err != nil {
+		log.Printf("[Server Warning] Failed to record sale event for %s: %v", agentID, err)
+	}
+
+	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
+	sysMsg := fmt.Sprintf("%s sold %d x %s for %d gold.", agentID, payload.Quantity, payload.ItemID, totalGold)
+	_ = s.mqttServer.Publish(sysTopic, []byte(sysMsg), false, 0)
+
+	msg := fmt.Sprintf("Sold %d x %s for %d gold", payload.Quantity, payload.ItemID, totalGold)
+	s.handleLook(agentID, intentID, msg)
+}
+
 func (s *Server) handleCraft(agentID string, intentID string, rawPayload json.RawMessage) {
 	var payload CraftPayload
 	if err := json.Unmarshal(rawPayload, &payload); err != nil {
@@ -1134,6 +1191,24 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 		return
 	}
 
+	var freshnessPercent int = 100
+	_ = s.db.QueryRow("SELECT COALESCE(freshness_percent, 100) FROM inventories WHERE character_id = ? AND item_id = ?", agentID, payload.ItemID).Scan(&freshnessPercent)
+
+	effectiveHungerRestore := hungerRestore
+	healthPenalty := 0
+	switch {
+	case freshnessPercent >= 75:
+		effectiveHungerRestore = hungerRestore
+	case freshnessPercent >= 25:
+		effectiveHungerRestore = int(float64(hungerRestore) * 0.75)
+	case freshnessPercent > 0:
+		effectiveHungerRestore = int(float64(hungerRestore) * 0.5)
+		healthPenalty = 10
+	default:
+		effectiveHungerRestore = 0
+		healthPenalty = 25
+	}
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
@@ -1174,8 +1249,13 @@ func (s *Server) handleEat(agentID string, intentID string, rawPayload json.RawM
 		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
 		return
 	}
-	newHunger := consumableRestoredValue(currentHunger, hungerRestore, quantity)
-	newHealth := consumableRestoredValue(currentHealth, healthRestore, quantity)
+	newHunger := consumableRestoredValue(currentHunger, effectiveHungerRestore, quantity)
+	poisoningDamage := healthPenalty * quantity
+	newHealth := currentHealth - poisoningDamage
+	if newHealth < 0 {
+		newHealth = 0
+	}
+	newHealth = consumableRestoredValue(newHealth, healthRestore, quantity)
 	hungerActuallyRestored := newHunger - currentHunger
 	healthActuallyRestored := newHealth - currentHealth
 

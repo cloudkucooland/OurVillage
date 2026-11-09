@@ -198,6 +198,49 @@ func TestSetLocationParameterCommands(t *testing.T) {
 	}
 }
 
+func TestFullHealCommandRestoresHealthAndHunger(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("failed to initialize database: %v", err)
+	}
+	defer database.Close()
+
+	if _, err := database.Exec(`
+		UPDATE characters
+		SET health = 0, hunger = 0, status = 'RESTING',
+			action_target = 'town_mill', action_start_tick = 10, action_end_tick = 70,
+			action_intent_id = ''
+		WHERE id = 'eldon_millwright'
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	model := NewModel(database, admin.NewAdminCommandExecutor(database, nil, nil), nil)
+	model = model.executeCommand("full-heal eldon_millwright")
+
+	var health, hunger, startTick, endTick int
+	var status, target, intentID string
+	if err := database.QueryRow(`
+		SELECT health, hunger, status, action_target, action_start_tick, action_end_tick, action_intent_id
+		FROM characters WHERE id = 'eldon_millwright'
+	`).Scan(&health, &hunger, &status, &target, &startTick, &endTick, &intentID); err != nil {
+		t.Fatal(err)
+	}
+	if health != 100 || hunger != 100 || status != "IDLE" ||
+		target != "" || startTick != 0 || endTick != 0 || intentID != "" {
+		t.Errorf("full-heal state = health %d, hunger %d, status %q, action %q/%d-%d/%q",
+			health, hunger, status, target, startTick, endTick, intentID)
+	}
+	if !strings.Contains(strings.Join(model.history, "\n"), "Restored health and hunger for eldon_millwright") {
+		t.Errorf("expected full-heal command success, got %q", strings.Join(model.history, "\n"))
+	}
+
+	model = model.executeCommand("full-heal missing_character")
+	if !strings.Contains(strings.Join(model.history, "\n"), "not found") {
+		t.Errorf("expected unknown character to be rejected, got %q", strings.Join(model.history, "\n"))
+	}
+}
+
 func TestWeatherCommandSupportsNewWeatherTypes(t *testing.T) {
 	database, err := db.InitDB(":memory:")
 	if err != nil {

@@ -88,6 +88,16 @@ func TestGetCharacterPerception(t *testing.T) {
 	if perception.Location.ID != "town_mill" {
 		t.Errorf("expected location ID town_mill, got %s", perception.Location.ID)
 	}
+	foundWheatBuyOffer := false
+	for _, item := range perception.Location.ShopItems {
+		if item.ItemID == "wheat" {
+			foundWheatBuyOffer = item.BuyPriceGold == 1 && item.StockQty == 0
+			break
+		}
+	}
+	if !foundWheatBuyOffer {
+		t.Errorf("expected perception to show the mill's wheat buy offer: %+v", perception.Location.ShopItems)
+	}
 	if perception.Location.Name != "The Town Mill" {
 		t.Errorf("expected location name The Town Mill, got %s", perception.Location.Name)
 	}

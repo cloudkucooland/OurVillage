@@ -39,6 +39,7 @@ var ValidActionTypes = map[string]struct{}{
 	"LOOK":          {},
 	"STATUS":        {},
 	"BUY":           {},
+	"SELL":          {},
 	"RESTOCK":       {},
 	"EAT":           {},
 	"DRINK":         {},
@@ -61,7 +62,7 @@ func ValidateIntent(intent Intent) (Intent, error) {
 
 	actionUpper := strings.ToUpper(strings.TrimSpace(intent.Action))
 	if !IsValidAction(actionUpper) {
-		return intent, fmt.Errorf("invalid action enum %q: must be one of MOVE, TRAVEL, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, PLANT, HARVEST, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, RESTOCK, EAT, DRINK, REST", intent.Action)
+		return intent, fmt.Errorf("invalid action enum %q: must be one of MOVE, TRAVEL, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, PLANT, HARVEST, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, SELL, RESTOCK, EAT, DRINK, REST", intent.Action)
 	}
 
 	if actionUpper == "COLLECT" {
@@ -119,6 +120,29 @@ func ValidateIntent(intent Intent) (Intent, error) {
 		cleanPayload, _ := json.Marshal(map[string]interface{}{
 			"item_id":  strings.TrimSpace(p.ItemID),
 			"quantity": p.Quantity,
+		})
+		intent.Payload = cleanPayload
+	case "SELL":
+		var p struct {
+			ItemID   string          `json:"item_id"`
+			Quantity json.RawMessage `json:"quantity"`
+		}
+		if err := json.Unmarshal(intent.Payload, &p); err != nil {
+			return intent, fmt.Errorf("invalid SELL payload: %w", err)
+		}
+		if strings.TrimSpace(p.ItemID) == "" {
+			return intent, fmt.Errorf("SELL requires item_id")
+		}
+		if len(p.Quantity) == 0 {
+			return intent, fmt.Errorf("SELL requires quantity > 0")
+		}
+		quantity, err := positiveIntOrDefault(p.Quantity, 1)
+		if err != nil {
+			return intent, fmt.Errorf("SELL quantity %w", err)
+		}
+		cleanPayload, _ := json.Marshal(map[string]interface{}{
+			"item_id":  strings.TrimSpace(p.ItemID),
+			"quantity": quantity,
 		})
 		intent.Payload = cleanPayload
 	case "MOVE", "TRAVEL":

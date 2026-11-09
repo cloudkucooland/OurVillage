@@ -31,6 +31,37 @@ func TestSeedCrafting(t *testing.T) {
 	}
 }
 
+func TestScotusKnowsMillFlourAfterProgressionInitialization(t *testing.T) {
+	database, err := InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	if _, err := database.Exec(`
+		INSERT INTO characters (
+			id, name, persona_prompt, occupation, gold, hunger, energy,
+			current_location, home_location_id, controller_type, mqtt_password
+		) VALUES ('scotus', 'Scotus', '', 'Monk', 0, 100, 100, 'town_mill', 'town_mill', 'agent', 'test')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := InitializeAllCharacterProgression(database); err != nil {
+		t.Fatal(err)
+	}
+
+	var known int
+	if err := database.QueryRow(`
+		SELECT COUNT(*) FROM character_known_recipes
+		WHERE character_id = 'scotus' AND recipe_id = 'mill_flour'
+	`).Scan(&known); err != nil {
+		t.Fatal(err)
+	}
+	if known != 1 {
+		t.Fatalf("Scotus has mill_flour knowledge count %d, want 1", known)
+	}
+}
+
 func TestCanCraftRecipeValidation(t *testing.T) {
 	database, err := InitDB(":memory:")
 	if err != nil {

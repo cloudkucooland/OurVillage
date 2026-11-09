@@ -38,6 +38,14 @@ func TestValidateIntent_AllActions(t *testing.T) {
 			wantAction: "TRAVEL",
 		},
 		{
+			name: "Valid SELL",
+			intent: Intent{
+				Action:  "sell",
+				Payload: json.RawMessage(`{"item_id":"wheat","quantity":2}`),
+			},
+			wantAction: "SELL",
+		},
+		{
 			name: "TRAVEL with empty destination",
 			intent: Intent{
 				Action:  "TRAVEL",
@@ -255,6 +263,8 @@ func TestValidateIntentRejectsNonPositiveParameters(t *testing.T) {
 		{name: "PLANT empty crop", action: "PLANT", payload: `{"plot_id":"field_plot_1","crop_id":" "}`},
 		{name: "HARVEST empty plot", action: "HARVEST", payload: `{"plot_id":" "}`},
 		{name: "BUY quantity", action: "BUY", payload: `{"item_id":"bread","quantity":0}`},
+		{name: "SELL quantity", action: "SELL", payload: `{"item_id":"wheat","quantity":0}`},
+		{name: "SELL missing item", action: "SELL", payload: `{"quantity":1}`},
 		{name: "RESTOCK quantity", action: "RESTOCK", payload: `{"item_id":"bread","quantity":-1}`},
 		{name: "RESTOCK missing quantity", action: "RESTOCK", payload: `{"item_id":"bread"}`},
 		{name: "DROP quantity", action: "DROP", payload: `{"item_id":"bread","quantity":0}`},

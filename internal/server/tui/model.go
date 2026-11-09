@@ -231,6 +231,7 @@ func (m Model) executeCommand(cmdStr string) Model {
 			"  add-item <char_id> <item_id> <qty> - give item to character\n" +
 			"  drop-item <char_id> <item_id> <qty> - remove item from character\n" +
 			"  set-gold <char_id> <amount> - set character gold\n" +
+			"  full-heal <character_id> - restore health and hunger to full\n" +
 			"  create-item <id> <name> <weight_kg> <description> [--consumable <hunger_restore>] [--container <capacity_kg> <slot_limit>]\n" +
 			"  set-resource <loc_id> <resource_id> <current_stock> <max_stock> <replenish_per_day>\n" +
 			"  set-shop-item <loc_id> <item_id> <price_gold> <stock_quantity>\n" +
@@ -365,6 +366,15 @@ func (m Model) executeCommand(cmdStr string) Model {
 			} else {
 				err = m.admin.SetCharacterGold(args[0], amount)
 				output = fmt.Sprintf("Gold for %s set to %d", args[0], amount)
+			}
+		}
+	case "full-heal":
+		if len(args) != 1 {
+			err = fmt.Errorf("usage: full-heal <character_id>")
+		} else {
+			err = m.admin.FullHealCharacter(args[0])
+			if err == nil {
+				output = fmt.Sprintf("Restored health and hunger for %s", args[0])
 			}
 		}
 	case "create-item":
@@ -631,6 +641,7 @@ func (m Model) View() string {
 			"add-item <char_id> <item_id> <qty>",
 			"drop-item <char_id> <item_id> <qty>",
 			"set-gold <char_id> <amount>",
+			"full-heal <character_id>",
 			"create-item <id> <name> <weight_kg> <description> [--consumable <hunger_restore>] [--container <capacity_kg> <slot_limit>]",
 			"set-resource <loc_id> <resource_id> <current_stock> <max_stock> <replenish_per_day>",
 			"set-shop-item <loc_id> <item_id> <price_gold> <stock_quantity>",

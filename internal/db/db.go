@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS location_shop_items (
     item_id TEXT NOT NULL,
     price_gold INTEGER NOT NULL,
     stock_quantity INTEGER NOT NULL DEFAULT 10,
+    buy_price_gold INTEGER,
     PRIMARY KEY (location_id, item_id),
     FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE,
     FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
@@ -295,6 +296,15 @@ CREATE TABLE IF NOT EXISTS server_state (
 			if err := SeedFarming(db); err != nil {
 				return nil, fmt.Errorf("failed to migrate communal farming data: %w", err)
 			}
+			if err := ensureMillingData(db); err != nil {
+				return nil, fmt.Errorf("failed to migrate milling data: %w", err)
+			}
+			if err := initializeMillingRecipeKnowledge(db); err != nil {
+				return nil, fmt.Errorf("initialize milling recipe knowledge: %w", err)
+			}
+			if err := seedMillingShopItems(db); err != nil {
+				return nil, fmt.Errorf("failed to migrate mill shop items: %w", err)
+			}
 		}
 	}
 
@@ -325,6 +335,11 @@ func migrateSchema(db *sql.DB) error {
 		{"items", "capacity_kg", "REAL DEFAULT 0.0"},
 		{"items", "slot_limit", "INTEGER DEFAULT 0"},
 		{"items", "health_restore", "INTEGER DEFAULT 0"},
+		{"items", "is_perishable", "BOOLEAN DEFAULT 0"},
+		{"items", "shelf_life_ticks", "INTEGER DEFAULT 96"},
+		{"items", "spoilage_item_id", "TEXT DEFAULT 'rotting_waste'"},
+		{"inventories", "freshness_percent", "INTEGER NOT NULL DEFAULT 100"},
+		{"location_shop_items", "buy_price_gold", "INTEGER"},
 	}
 
 	for _, col := range columnsToAdd {

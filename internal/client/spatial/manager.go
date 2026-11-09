@@ -969,13 +969,13 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 	sb.WriteString("Needs: REST recovers energy; EAT restorative food when hungry; EAT medicine for health, with REST also helping recovery when needed.\n\n")
 
 	if cm.health < 40 {
-		sb.WriteString(fmt.Sprintf("[CRITICAL HEALTH WARNING]: Your health is critically low (%d/100)! You are suffering from injury or illness. You MUST EAT medicine (such as willowbark_tea or charcoal_draught) or restorative food, and REST immediately to survive!\n\n", cm.health))
+		sb.WriteString(fmt.Sprintf("[HEALTH GUIDANCE]: Your health is low (%d/100). Take care of yourself by consuming medicine or restorative food and resting so you can return to your craft and pursuits safely.\n\n", cm.health))
 	}
 	if cm.hunger < 30 {
-		sb.WriteString(fmt.Sprintf("[HUNGER WARNING]: Your hunger is low (%d/100)! You are starving. EAT food (such as bread, roasted_mutton, or vegetable_basket) immediately to restore your strength!\n\n", cm.hunger))
+		sb.WriteString(fmt.Sprintf("[HUNGER GUIDANCE]: Your hunger is low (%d/100). Eat a nourishing meal (such as bread, roasted_mutton, or vegetable_basket) to restore your vitality for your daily work.\n\n", cm.hunger))
 	}
 	if cm.energy < 25 {
-		sb.WriteString(fmt.Sprintf("[ENERGY WARNING]: Your energy is low (%d/100)! You are exhausted. REST immediately to recover your energy!\n\n", cm.energy))
+		sb.WriteString(fmt.Sprintf("[ENERGY GUIDANCE]: Your energy is low (%d/100). Rest to recover your strength so you can pursue your goals with a clear mind.\n\n", cm.energy))
 	}
 
 	hour := 12
@@ -1124,6 +1124,15 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 		sb.WriteString("\n")
 	}
 
+	if !cm.smallSystem {
+		sb.WriteString("=== LONG-TERM PLANNING & AMBITIONS ===\n")
+		if len(cm.personalProjects) == 0 {
+			sb.WriteString("You have the freedom to form long-term plans across multiple days: mastering a trade or craft, contributing to communal farming, accumulating resources, building lasting relationships, or exploring the village. Think beyond the immediate moment and choose a meaningful path to pursue.\n\n")
+		} else {
+			sb.WriteString("Remember your broader ambitions: connect your immediate actions today to your personal projects and long-term mastery.\n\n")
+		}
+	}
+
 	if len(cm.personalProjects) > 0 {
 		if cm.smallSystem {
 			sb.WriteString("=== OPTIONAL PROJECTS (NOT DUTIES) ===\n")
@@ -1195,7 +1204,7 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 		sb.WriteString("- Supported actions: CHAT, MOVE, TRAVEL, FORAGE, PLANT, HARVEST, REST. Match the payload to the action; MOVE and TRAVEL require target_location.\n")
 		sb.WriteString("- Output MUST be valid JSON only with thought, action, and payload fields.\n")
 	} else {
-		sb.WriteString("Choose actions from your own desires, values, memories, and current observations; prioritize replying when addressed. Use exact observed IDs and quantities, move to a listed connected exit, drop only by choice and within carried quantities, and base foraging, purchases, and crafting on available resources, shop stock, inventory capacity, and known recipes.\n")
+		sb.WriteString("Choose actions from your own desires, values, memories, and current observations; prioritize replying when addressed. Use exact observed IDs and quantities, move to a listed connected exit, drop only by choice and within carried quantities, and base foraging, purchases, and crafting on available resources, shop stock, inventory capacity, and known recipes; base sales on posted shop buy prices.\n")
 		sb.WriteString("For an optional multi-step trip, choose TRAVEL with the final destination location ID; the system will handle the route. Choose MOVE only when you intend to move one connected step.\n")
 		sb.WriteString("Output MUST be valid JSON only: {\"thought\":\"<private reasoning>\",\"action\":\"<supported action>\",\"payload\":{...}}. Keep thought private; for CHAT, use {\"thought\":\"<your private reasoning>\",\"action\":\"CHAT\",\"payload\":{\"message\":\"<your spoken dialogue>\"}}.\n")
 	}

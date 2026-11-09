@@ -2,10 +2,12 @@ package client
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -85,6 +87,11 @@ func BuildIntentMessage(actionCfg ActionConfig) ([]byte, error) {
 			"plot_id": actionCfg.PlotID,
 		})
 	case "BUY":
+		payload, err = json.Marshal(map[string]interface{}{
+			"item_id":  actionCfg.Item,
+			"quantity": actionCfg.Qty,
+		})
+	case "SELL":
 		payload, err = json.Marshal(map[string]interface{}{
 			"item_id":  actionCfg.Item,
 			"quantity": actionCfg.Qty,
@@ -494,6 +501,14 @@ func RunClient(ctx context.Context, cfg *Config) error {
 
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(cfg.Client.BrokerURL)
+	if parsedURL, err := url.Parse(cfg.Client.BrokerURL); err == nil {
+		scheme := strings.ToLower(parsedURL.Scheme)
+		if scheme == "ssl" || scheme == "tcps" || scheme == "tls" || scheme == "wss" {
+			opts.SetTLSConfig(&tls.Config{
+				InsecureSkipVerify: true,
+			})
+		}
+	}
 	opts.SetClientID(clientID)
 	opts.SetUsername(cfg.Client.AgentID)
 	opts.SetPassword(cfg.Client.Password)

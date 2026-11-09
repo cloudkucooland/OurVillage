@@ -175,6 +175,20 @@ func TestBuildIntentMessage(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "SELL action",
+			action: ActionConfig{
+				Action: "SELL",
+				Item:   "wheat",
+				Qty:    2,
+			},
+			wantAction: "SELL",
+			checkFunc: func(t *testing.T, p map[string]interface{}) {
+				if p["item_id"] != "wheat" || int(p["quantity"].(float64)) != 2 {
+					t.Errorf("unexpected SELL payload: %#v", p)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

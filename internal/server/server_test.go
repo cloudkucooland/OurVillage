@@ -1,6 +1,7 @@
 package server
 
 import (
+	"os"
 	"testing"
 
 	"agentmud/internal/db"
@@ -202,7 +203,7 @@ func TestDepletedCharactersAreForcedToRest(t *testing.T) {
 	}
 }
 
-func TestZeroHungerDrainsHealthAndTriggersLongRest(t *testing.T) {
+func TestZeroHungerCollapseTriggersEmergencyRecovery(t *testing.T) {
 	database, err := db.InitDB(":memory:")
 	if err != nil {
 		t.Fatalf("Failed to initialize DB: %v", err)
@@ -226,23 +227,63 @@ func TestZeroHungerDrainsHealthAndTriggersLongRest(t *testing.T) {
 	srv.SetTickCount(10)
 	srv.ProcessTick()
 
-	var health int
+	var health, hunger int
+	var location string
 	var status string
 	var startTick, endTick uint64
 	err = database.QueryRow(`
-		SELECT health, status, action_start_tick, action_end_tick
+		SELECT health, hunger, current_location, status, action_start_tick, action_end_tick
 		FROM characters WHERE id = 'eldon_millwright'
-	`).Scan(&health, &status, &startTick, &endTick)
+	`).Scan(&health, &hunger, &location, &status, &startTick, &endTick)
 	if err != nil {
 		t.Fatalf("Failed to read character state: %v", err)
 	}
-	if health != 0 {
-		t.Errorf("health = %d after zero-hunger tick, want 0", health)
+	if health != 100 || hunger != 100 {
+		t.Errorf("health/hunger after collapse recovery = %d/%d, want 100/100", health, hunger)
 	}
 	if status != "RESTING" {
 		t.Fatalf("status = %q after hunger depletion, want RESTING", status)
 	}
-	if duration := endTick - startTick; duration != 60 {
-		t.Errorf("rest duration = %d ticks, want 60", duration)
+	if location != "eldons_room" {
+		t.Errorf("location after collapse recovery = %q, want eldons_room", location)
 	}
+	if duration := endTick - startTick; duration != collapseRecoveryRestDurationTicks {
+		t.Errorf("rest duration = %d ticks, want %d", duration, collapseRecoveryRestDurationTicks)
+	}
+}
+
+func TestEnsureDefaultCertificateAndTLS(t *testing.T) {
+	certFile := "test_server.crt"
+	keyFile := "test_server.key"
+	defer os.Remove(certFile)
+	defer os.Remove(keyFile)
+
+	if err := EnsureDefaultCertificate(certFile, keyFile); err != nil {
+		t.Fatalf("EnsureDefaultCertificate failed: %v", err)
+	}
+
+	if _, err := os.Stat(certFile); err != nil {
+		t.Errorf("Expected cert file %s to exist: %v", certFile, err)
+	}
+	if _, err := os.Stat(keyFile); err != nil {
+		t.Errorf("Expected key file %s to exist: %v", keyFile, err)
+	}
+
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to initialize DB: %v", err)
+	}
+	defer database.Close()
+
+	cfg := DefaultConfig()
+	cfg.Server.MQTTAddr = ""
+	cfg.Server.MQTTTLSAddr = "127.0.0.1:0"
+	cfg.Server.TLSCert = certFile
+	cfg.Server.TLSKey = keyFile
+
+	srv, err := NewServerWithConfig(database, cfg, "")
+	if err != nil {
+		t.Fatalf("Failed to create server with TLS config: %v", err)
+	}
+	defer srv.Shutdown()
 }

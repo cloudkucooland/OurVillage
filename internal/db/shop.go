@@ -11,6 +11,7 @@ type ShopItemSeed struct {
 	ItemID        string
 	PriceGold     int
 	StockQuantity int
+	BuyPriceGold  int
 }
 
 var DefaultShopItems = []ShopItemSeed{
@@ -28,15 +29,17 @@ var DefaultShopItems = []ShopItemSeed{
 	{LocationID: "herbalist", ItemID: "elderflowers", PriceGold: 2, StockQuantity: 15},
 	{LocationID: "herbalist", ItemID: "wild_mint", PriceGold: 2, StockQuantity: 12},
 	{LocationID: "herbalist", ItemID: "honey_jar", PriceGold: 5, StockQuantity: 8},
+	{LocationID: "town_mill", ItemID: "wheat", PriceGold: 2, StockQuantity: 0, BuyPriceGold: 1},
+	{LocationID: "town_mill", ItemID: "flour", PriceGold: 3, StockQuantity: 0},
 }
 
 func SeedShopInventory(db *sql.DB) error {
 	query := `
-	INSERT INTO location_shop_items (location_id, item_id, price_gold, stock_quantity)
-	VALUES (?, ?, ?, ?)
+	INSERT INTO location_shop_items (location_id, item_id, price_gold, stock_quantity, buy_price_gold)
+	VALUES (?, ?, ?, ?, NULLIF(?, 0))
 	ON CONFLICT(location_id, item_id) DO UPDATE SET
 		price_gold = excluded.price_gold,
-		stock_quantity = excluded.stock_quantity;
+		buy_price_gold = excluded.buy_price_gold;
 	`
 	stmt, err := db.Prepare(query)
 	if err != nil {
@@ -45,12 +48,29 @@ func SeedShopInventory(db *sql.DB) error {
 	defer stmt.Close()
 
 	for _, item := range DefaultShopItems {
-		_, err := stmt.Exec(item.LocationID, item.ItemID, item.PriceGold, item.StockQuantity)
+		_, err := stmt.Exec(item.LocationID, item.ItemID, item.PriceGold, item.StockQuantity, item.BuyPriceGold)
 		if err != nil {
 			return fmt.Errorf("failed to seed shop item %s at %s: %w", item.ItemID, item.LocationID, err)
 		}
 	}
 	log.Printf("Successfully seeded %d shop inventory items.", len(DefaultShopItems))
+	return nil
+}
+
+func seedMillingShopItems(db *sql.DB) error {
+	for _, item := range DefaultShopItems {
+		if item.LocationID != "town_mill" {
+			continue
+		}
+		if _, err := db.Exec(`
+			INSERT INTO location_shop_items (location_id, item_id, price_gold, stock_quantity, buy_price_gold)
+			VALUES (?, ?, ?, ?, NULLIF(?, 0))
+			ON CONFLICT(location_id, item_id) DO UPDATE SET
+				buy_price_gold = excluded.buy_price_gold
+		`, item.LocationID, item.ItemID, item.PriceGold, item.StockQuantity, item.BuyPriceGold); err != nil {
+			return fmt.Errorf("ensure mill shop item %s: %w", item.ItemID, err)
+		}
+	}
 	return nil
 }
 
@@ -152,6 +172,130 @@ func BuyItem(db *sql.DB, characterID string, itemID string, quantity int) error 
 	}
 
 	return tx.Commit()
+}
+
+// SellItem sells items to the current location's shop at its posted buy price.
+func SellItem(db *sql.DB, characterID, itemID string, quantity int) (int64, error) {
+	if quantity <= 0 {
+		return 0, fmt.Errorf("quantity must be greater than 0")
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var locationID, status string
+	var ownerID sql.NullString
+	err = tx.QueryRow(`
+		SELECT c.current_location, c.status, l.owner_id
+		FROM characters c
+		JOIN locations l ON l.id = c.current_location
+		WHERE c.id = ?
+	`, characterID).Scan(&locationID, &status, &ownerID)
+	if err != nil {
+		return 0, fmt.Errorf("character or current location not found: %w", err)
+	}
+	if status != "IDLE" {
+		return 0, fmt.Errorf("CHARACTER_BUSY: character is currently %s", status)
+	}
+	if !ownerID.Valid || ownerID.String == "" {
+		return 0, fmt.Errorf("SHOP_NO_OWNER: this shop has no owner to pay for items")
+	}
+	if ownerID.String == characterID {
+		return 0, fmt.Errorf("CANNOT_SELL_TO_OWN_SHOP: use RESTOCK to list items in your shop")
+	}
+
+	var buyPrice sql.NullInt64
+	err = tx.QueryRow(`
+		SELECT buy_price_gold
+		FROM location_shop_items
+		WHERE location_id = ? AND item_id = ?
+	`, locationID, itemID).Scan(&buyPrice)
+	if err == sql.ErrNoRows {
+		return 0, fmt.Errorf("ITEM_NOT_BOUGHT: item '%s' is not wanted at this location", itemID)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to query shop buy price: %w", err)
+	}
+	if !buyPrice.Valid || buyPrice.Int64 <= 0 {
+		return 0, fmt.Errorf("ITEM_NOT_BOUGHT: item '%s' is not wanted at this location", itemID)
+	}
+
+	var inventoryQuantity int
+	err = tx.QueryRow(`
+		SELECT quantity FROM inventories WHERE character_id = ? AND item_id = ?
+	`, characterID, itemID).Scan(&inventoryQuantity)
+	if err == sql.ErrNoRows || inventoryQuantity < quantity {
+		return 0, fmt.Errorf("INSUFFICIENT_INVENTORY: not enough %s to sell", itemID)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to query character inventory: %w", err)
+	}
+
+	maxInt64 := int64(^uint64(0) >> 1)
+	if int64(quantity) > maxInt64/buyPrice.Int64 {
+		return 0, fmt.Errorf("SALE_VALUE_TOO_LARGE: sale total exceeds supported gold amount")
+	}
+	totalGold := buyPrice.Int64 * int64(quantity)
+
+	result, err := tx.Exec(`
+		UPDATE characters SET gold = gold - ?
+		WHERE id = ? AND gold >= ?
+	`, totalGold, ownerID.String, totalGold)
+	if err != nil {
+		return 0, fmt.Errorf("failed to debit shop owner: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to check shop owner funds: %w", err)
+	}
+	if rowsAffected == 0 {
+		return 0, fmt.Errorf("SHOP_INSUFFICIENT_GOLD: shop owner cannot afford this purchase")
+	}
+
+	if inventoryQuantity == quantity {
+		result, err = tx.Exec(`DELETE FROM inventories WHERE character_id = ? AND item_id = ? AND quantity = ?`, characterID, itemID, quantity)
+	} else {
+		result, err = tx.Exec(`
+			UPDATE inventories SET quantity = quantity - ?
+			WHERE character_id = ? AND item_id = ? AND quantity >= ?
+		`, quantity, characterID, itemID, quantity)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to deduct sold items: %w", err)
+	}
+	rowsAffected, err = result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to check sold item deduction: %w", err)
+	}
+	if rowsAffected == 0 {
+		return 0, fmt.Errorf("INSUFFICIENT_INVENTORY: not enough %s to sell", itemID)
+	}
+
+	if _, err := tx.Exec(`UPDATE characters SET gold = gold + ? WHERE id = ?`, totalGold, characterID); err != nil {
+		return 0, fmt.Errorf("failed to credit seller: %w", err)
+	}
+	result, err = tx.Exec(`
+		UPDATE location_shop_items SET stock_quantity = stock_quantity + ?
+		WHERE location_id = ? AND item_id = ? AND buy_price_gold = ?
+	`, quantity, locationID, itemID, buyPrice.Int64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to add sold items to shop stock: %w", err)
+	}
+	rowsAffected, err = result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("failed to check shop stock update: %w", err)
+	}
+	if rowsAffected == 0 {
+		return 0, fmt.Errorf("ITEM_NOT_BOUGHT: item '%s' is no longer wanted at this location", itemID)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("failed to commit sale: %w", err)
+	}
+	return totalGold, nil
 }
 
 // RestockShopItem transfers items from a character's personal inventory into a location's shop inventory.

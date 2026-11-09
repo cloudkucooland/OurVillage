@@ -177,7 +177,7 @@ func CommonFlags() []cli.Flag {
 		// Action flags
 		&cli.StringFlag{
 			Name:    "action",
-			Usage:   "Intent action to submit (MOVE, CHAT, TRANSFER, FORAGE, PLANT, HARVEST, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT)",
+			Usage:   "Intent action to submit (MOVE, CHAT, TRANSFER, FORAGE, PLANT, HARVEST, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, SELL, RESTOCK)",
 			Sources: cli.EnvVars("AGENTMUD_ACTION"),
 		},
 		&cli.StringFlag{

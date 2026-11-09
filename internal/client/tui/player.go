@@ -211,6 +211,7 @@ const playerHelpText = `=== PLAYER COMMANDS ===
 /unequip                        Unequip the current item
 /craft <recipe_id>              Craft a recipe available here
 /buy <item> [qty]               Buy a shop item
+/sell <item> [qty]              Sell to a shop buying that item
 /restock <item> <qty> <price>   Restock a shop
 /eat <item> [qty]               Eat an item
 /drink <item> [qty]             Alias for /eat
@@ -354,6 +355,12 @@ func buildPlayerIntent(input string) (dispatcher.Intent, error) {
 			return dispatcher.Intent{}, err
 		}
 		action, payload = "BUY", map[string]any{"item_id": item, "quantity": quantity}
+	case "sell":
+		item, quantity, err := itemAndQuantity(2)
+		if err != nil {
+			return dispatcher.Intent{}, err
+		}
+		action, payload = "SELL", map[string]any{"item_id": item, "quantity": quantity}
 	case "restock":
 		if err := require(3, 3, "/restock <item_id> <quantity> <price_gold>"); err != nil {
 			return dispatcher.Intent{}, err

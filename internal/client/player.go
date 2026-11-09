@@ -2,8 +2,10 @@ package client
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -38,9 +40,17 @@ func RunPlayer(ctx context.Context, cfg *Config) error {
 		clientID = fmt.Sprintf("player_%s_%d", cfg.Client.AgentID, time.Now().UnixNano())
 	}
 
-	opts := mqtt.NewClientOptions().
-		AddBroker(cfg.Client.BrokerURL).
-		SetClientID(clientID).
+	opts := mqtt.NewClientOptions()
+	opts.AddBroker(cfg.Client.BrokerURL)
+	if parsedURL, err := url.Parse(cfg.Client.BrokerURL); err == nil {
+		scheme := strings.ToLower(parsedURL.Scheme)
+		if scheme == "ssl" || scheme == "tcps" || scheme == "tls" || scheme == "wss" {
+			opts.SetTLSConfig(&tls.Config{
+				InsecureSkipVerify: true,
+			})
+		}
+	}
+	opts.SetClientID(clientID).
 		SetUsername(cfg.Client.AgentID).
 		SetPassword(cfg.Client.Password)
 	if cfg.Client.KeepAliveSeconds > 0 {

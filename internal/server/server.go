@@ -1,11 +1,19 @@
 package server
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"database/sql"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
+	"net"
 	"os"
 	"os/signal"
 	"sync"
@@ -25,6 +33,7 @@ type Server struct {
 	mqttServer  *mqtt.Server
 	db          *sql.DB
 	authHook    *DBAuthHook
+	config      *ServerConfig
 	mu          sync.RWMutex
 	tickCount   uint64
 	weather     string
@@ -40,7 +49,84 @@ type TickPayload struct {
 	Temperature float64   `json:"temperature"`
 }
 
+const collapseRecoveryRestDurationTicks uint64 = 60
+
+func EnsureDefaultCertificate(certPath, keyPath string) error {
+	if _, err := os.Stat(certPath); err == nil {
+		if _, err := os.Stat(keyPath); err == nil {
+			return nil
+		}
+	}
+
+	log.Printf("[Server] Generating default self-signed TLS certificate (%s, %s)...", certPath, keyPath)
+
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return fmt.Errorf("failed to generate private key: %w", err)
+	}
+
+	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
+	if err != nil {
+		return fmt.Errorf("failed to generate serial number: %w", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			CommonName:   "OurVillage MQTT Server",
+			Organization: []string{"OurVillage"},
+		},
+		NotBefore:             time.Now().Add(-1 * time.Hour),
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+		DNSNames:              []string{"localhost", "ourvillage"},
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		return fmt.Errorf("failed to create certificate: %w", err)
+	}
+
+	certOut, err := os.OpenFile(certPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to open cert path for writing: %w", err)
+	}
+	defer certOut.Close()
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
+		return fmt.Errorf("failed to encode certificate PEM: %w", err)
+	}
+
+	keyOut, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to open key path for writing: %w", err)
+	}
+	defer keyOut.Close()
+	privBytes := x509.MarshalPKCS1PrivateKey(priv)
+	if err := pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: privBytes}); err != nil {
+		return fmt.Errorf("failed to encode private key PEM: %w", err)
+	}
+
+	log.Printf("[Server] Successfully generated self-signed TLS certificate.")
+	return nil
+}
+
 func NewServer(database *sql.DB, listenAddr ...string) (*Server, error) {
+	cfg, err := LoadConfig("")
+	if err != nil {
+		cfg = DefaultConfig()
+	}
+	return NewServerWithConfig(database, cfg, listenAddr...)
+}
+
+func NewServerWithConfig(database *sql.DB, cfg *ServerConfig, listenAddr ...string) (*Server, error) {
+	if cfg == nil {
+		cfg = DefaultConfig()
+	}
 	mqttServer := mqtt.New(&mqtt.Options{
 		InlineClient: true,
 	})
@@ -52,12 +138,34 @@ func NewServer(database *sql.DB, listenAddr ...string) (*Server, error) {
 		return nil, fmt.Errorf("failed to add db auth hook: %w", err)
 	}
 
-	address := ":1883"
+	certPath := cfg.Server.TLSCert
+	if certPath == "" {
+		certPath = "server.crt"
+	}
+	keyPath := cfg.Server.TLSKey
+	if keyPath == "" {
+		keyPath = "server.key"
+	}
+
+	if err := EnsureDefaultCertificate(certPath, keyPath); err != nil {
+		log.Printf("[Server] Warning: failed to ensure default TLS certificate: %v", err)
+	}
+
+	address := cfg.Server.MQTTAddr
 	if envAddr := os.Getenv("AGENTMUD_MQTT_ADDR"); envAddr != "" {
 		address = envAddr
 	}
+
+	tlsAddress := cfg.Server.MQTTTLSAddr
+	if envTLSAddr := os.Getenv("AGENTMUD_MQTT_TLS_ADDR"); envTLSAddr != "" {
+		tlsAddress = envTLSAddr
+	}
+
 	if len(listenAddr) > 0 {
 		address = listenAddr[0]
+		if len(listenAddr[0]) == 0 && os.Getenv("AGENTMUD_MQTT_TLS_ADDR") == "" {
+			tlsAddress = ""
+		}
 	}
 
 	if address != "" {
@@ -72,18 +180,49 @@ func NewServer(database *sql.DB, listenAddr ...string) (*Server, error) {
 		}
 	}
 
+	if tlsAddress != "" {
+		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			log.Printf("[Server] Warning: failed to load TLS key pair from %s and %s: %v", certPath, keyPath, err)
+		} else {
+			tlsConfig := &tls.Config{
+				Certificates: []tls.Certificate{cert},
+			}
+			tlsListener := listeners.NewTCP(listeners.Config{
+				ID:        "t2",
+				Address:   tlsAddress,
+				TLSConfig: tlsConfig,
+			})
+			err = mqttServer.AddListener(tlsListener)
+			if err != nil {
+				return nil, fmt.Errorf("failed to add mqtt tls listener: %w", err)
+			}
+			log.Printf("[Server] MQTT TLS listener started on %s", tlsAddress)
+		}
+	}
+
 	loadedTick, err := db.GetServerTick(database)
 	if err != nil {
 		log.Printf("[Server] Failed to load persisted tick count: %v", err)
+	}
+
+	defWeather := cfg.Weather.DefaultWeather
+	if defWeather == "" {
+		defWeather = "clear"
+	}
+	defTemp := cfg.Weather.DefaultTemp
+	if defTemp == 0 {
+		defTemp = 20.0
 	}
 
 	srv := &Server{
 		mqttServer:  mqttServer,
 		db:          database,
 		authHook:    authHook,
+		config:      cfg,
 		tickCount:   loadedTick,
-		weather:     "clear",
-		temperature: 20.0,
+		weather:     defWeather,
+		temperature: defTemp,
 	}
 	if loadedTick > 0 {
 		log.Printf("[Server] Resuming from persisted tick count: %d", loadedTick)
@@ -209,7 +348,10 @@ func (s *Server) SetTemperature(t float64) {
 }
 
 func (s *Server) runClock() {
-	interval := 90 * time.Second // default: 90 seconds per tick to give LLM agents time to process
+	interval := 90 * time.Second
+	if s.config != nil && s.config.Clock.TickInterval > 0 {
+		interval = s.config.Clock.TickInterval
+	}
 	if envInterval := os.Getenv("AGENTMUD_TICK_INTERVAL"); envInterval != "" {
 		if parsed, err := time.ParseDuration(envInterval); err == nil && parsed > 0 {
 			interval = parsed
@@ -253,28 +395,59 @@ func (s *Server) ProcessTick() {
 		_ = db.ReplenishLocationResources(s.db, weather)
 	}
 
+	// 1.4. Process Spoilage & Perishability Ticks (RFC 009)
+	if err := db.ProcessSpoilageTicks(s.db, currentTick); err != nil {
+		log.Printf("Failed to process spoilage ticks: %v", err)
+	}
+
+	hungerRate := 1
+	energyRate := 1
+	starvationRate := 1
+	weatherRate := 1
+	minTemp := 10.0
+	maxTemp := 30.0
+
+	if s.config != nil {
+		if s.config.Decay.HungerRate > 0 {
+			hungerRate = s.config.Decay.HungerRate
+		}
+		if s.config.Decay.EnergyRate > 0 {
+			energyRate = s.config.Decay.EnergyRate
+		}
+		if s.config.Decay.StarvationHealthRate > 0 {
+			starvationRate = s.config.Decay.StarvationHealthRate
+		}
+		if s.config.Decay.WeatherHealthRate > 0 {
+			weatherRate = s.config.Decay.WeatherHealthRate
+		}
+		if s.config.Weather.MinSafeTemp != 0 || s.config.Weather.MaxSafeTemp != 0 {
+			minTemp = s.config.Weather.MinSafeTemp
+			maxTemp = s.config.Weather.MaxSafeTemp
+		}
+	}
+
 	// 1.5. Apply passive hunger and energy decay per tick for idle characters
-	_, _ = s.db.Exec(`
+	_, _ = s.db.Exec(fmt.Sprintf(`
 		UPDATE characters 
-		SET hunger = MAX(0, hunger - 1), 
-		    energy = MAX(0, energy - 1)
+		SET hunger = MAX(0, hunger - %d),
+		    energy = MAX(0, energy - %d)
 		WHERE status = 'IDLE'
-	`)
+	`, hungerRate, energyRate))
 
 	// Characters at zero hunger lose health each tick, regardless of action status.
-	_, _ = s.db.Exec(`
+	_, _ = s.db.Exec(fmt.Sprintf(`
 		UPDATE characters
-		SET health = MAX(0, health - 1)
+		SET health = MAX(0, health - %d)
 		WHERE hunger <= 0
-	`)
+	`, starvationRate))
 
-	// 1.6. Apply environmental temperature health decay if too cold (< 10) or too hot (> 30) for characters outdoors
-	if temperature < 10.0 || temperature > 30.0 {
-		_, _ = s.db.Exec(`
+	// 1.6. Apply environmental temperature health decay if too cold (< minTemp) or too hot (> maxTemp) for characters outdoors
+	if temperature < minTemp || temperature > maxTemp {
+		_, _ = s.db.Exec(fmt.Sprintf(`
 			UPDATE characters 
-			SET health = MAX(0, health - 1)
+			SET health = MAX(0, health - %d)
 			WHERE current_location IN (SELECT id FROM locations WHERE is_indoor = 0)
-		`)
+		`, weatherRate))
 	}
 
 	s.forceRestForDepletedCharacters(currentTick)
@@ -310,9 +483,10 @@ func (s *Server) ProcessTick() {
 
 func (s *Server) forceRestForDepletedCharacters(currentTick uint64) {
 	rows, err := s.db.Query(`
-		SELECT id, current_location, energy, health, action_intent_id
+		SELECT id, current_location, energy, health, hunger, action_intent_id
 		FROM characters
-		WHERE status != 'RESTING' AND (energy <= 0 OR health <= 0)
+		WHERE (health <= 0 AND hunger <= 0)
+			OR (status != 'RESTING' AND (energy <= 0 OR health <= 0))
 	`)
 	if err != nil {
 		log.Printf("Failed to query characters needing forced rest: %v", err)
@@ -321,12 +495,12 @@ func (s *Server) forceRestForDepletedCharacters(currentTick uint64) {
 
 	type depletedCharacter struct {
 		id, location, intentID string
-		energy, health         int
+		energy, health, hunger int
 	}
 	var depleted []depletedCharacter
 	for rows.Next() {
 		var character depletedCharacter
-		if err := rows.Scan(&character.id, &character.location, &character.energy, &character.health, &character.intentID); err != nil {
+		if err := rows.Scan(&character.id, &character.location, &character.energy, &character.health, &character.hunger, &character.intentID); err != nil {
 			log.Printf("Failed to scan character needing forced rest: %v", err)
 			continue
 		}
@@ -340,10 +514,34 @@ func (s *Server) forceRestForDepletedCharacters(currentTick uint64) {
 	}
 
 	for _, character := range depleted {
-		duration := zeroEnergyRestDurationTicks
+		if character.health <= 0 && character.hunger <= 0 {
+			location, recovered, err := s.reviveCollapsedCharacter(character.id, character.location, currentTick)
+			if err != nil {
+				log.Printf("Failed to revive collapsed character %s: %v", character.id, err)
+				continue
+			}
+			if !recovered {
+				continue
+			}
+			s.publishCollapseRecovery(character.id, character.intentID, character.location, location)
+			continue
+		}
+
+		energyDuration := zeroEnergyRestDurationTicks
+		healthDuration := zeroHealthRestDurationTicks
+		if s.config != nil {
+			if s.config.Rest.ZeroEnergyDurationTicks > 0 {
+				energyDuration = s.config.Rest.ZeroEnergyDurationTicks
+			}
+			if s.config.Rest.ZeroHealthDurationTicks > 0 {
+				healthDuration = s.config.Rest.ZeroHealthDurationTicks
+			}
+		}
+
+		duration := energyDuration
 		cause := "energy"
 		if character.health <= 0 {
-			duration = zeroHealthRestDurationTicks
+			duration = healthDuration
 			cause = "health"
 		}
 
@@ -366,13 +564,24 @@ func (s *Server) forceRestForDepletedCharacters(currentTick uint64) {
 			continue
 		}
 
-		if character.intentID != "" {
-			s.sendDirectError(character.id, character.intentID, "FORCED_REST", fmt.Sprintf("Your action was interrupted because your %s reached zero.", cause))
+		var message string
+		if cause == "energy" {
+			message = fmt.Sprintf("%s has slumped over and fallen asleep due to exhaustion.", character.id)
+		} else {
+			message = fmt.Sprintf("%s has collapsed from severe injury or illness.", character.id)
 		}
-		message := fmt.Sprintf("%s has been forced to rest for %d ticks because their %s reached zero.", character.id, duration, cause)
 		systemTopic := fmt.Sprintf("world/locations/%s/system", character.location)
 		if err := s.mqttServer.Publish(systemTopic, []byte(message), false, 0); err != nil {
 			log.Printf("Failed to publish forced rest for %s: %v", character.id, err)
+		}
+
+		directReason := "exhaustion"
+		if cause == "health" {
+			directReason = "severe injury or illness"
+		}
+
+		if character.intentID != "" {
+			s.sendDirectError(character.id, character.intentID, "FORCED_REST", fmt.Sprintf("Your action was interrupted as you collapsed from %s.", directReason))
 		}
 
 		response := map[string]interface{}{
@@ -381,7 +590,7 @@ func (s *Server) forceRestForDepletedCharacters(currentTick uint64) {
 			"action":         "REST",
 			"forced":         true,
 			"duration_ticks": duration,
-			"message":        fmt.Sprintf("You were forced to rest for %d ticks because your %s reached zero.", duration, cause),
+			"message":        fmt.Sprintf("You collapsed from %s and must rest for %d ticks to recover.", directReason, duration),
 		}
 		s.includeCharacterSync(character.id, response)
 		payload, err := json.Marshal(response)
@@ -554,6 +763,106 @@ func (s *Server) resolveCompletedActions(currentTick uint64, weather string) {
 			}
 		}
 
+	}
+}
+
+func (s *Server) reviveCollapsedCharacter(characterID, currentLocation string, currentTick uint64) (string, bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return "", false, fmt.Errorf("begin collapse recovery transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var hunger, health int
+	if err := tx.QueryRow("SELECT hunger, health FROM characters WHERE id = ?", characterID).Scan(&hunger, &health); err != nil {
+		return "", false, fmt.Errorf("read character condition: %w", err)
+	}
+	if hunger > 0 || health > 0 {
+		return "", false, nil
+	}
+
+	var homeLocation string
+	if err := tx.QueryRow("SELECT home_location_id FROM characters WHERE id = ?", characterID).Scan(&homeLocation); err != nil {
+		return "", false, fmt.Errorf("read character home location: %w", err)
+	}
+	location := ""
+	if homeLocation != "" {
+		err = tx.QueryRow("SELECT id FROM locations WHERE id = ?", homeLocation).Scan(&location)
+		if err != nil && err != sql.ErrNoRows {
+			return "", false, fmt.Errorf("verify character's room: %w", err)
+		}
+	}
+	if location == "" {
+		err = tx.QueryRow("SELECT id FROM locations WHERE owner_id = ? ORDER BY id LIMIT 1", characterID).Scan(&location)
+		if err != nil && err != sql.ErrNoRows {
+			return "", false, fmt.Errorf("find character's owned room: %w", err)
+		}
+	}
+	if location == "" || err == sql.ErrNoRows {
+		location = currentLocation
+		log.Printf("Character %s has no room to return to; reviving in place at %s", characterID, currentLocation)
+	}
+
+	result, err := tx.Exec(`
+		UPDATE characters
+		SET current_location = ?, health = 100, hunger = 100, status = 'RESTING',
+			action_target = ?, action_start_tick = ?, action_end_tick = ?,
+			action_intent_id = ''
+		WHERE id = ? AND health <= 0 AND hunger <= 0
+	`, location, location, currentTick, currentTick+collapseRecoveryRestDurationTicks, characterID)
+	if err != nil {
+		return "", false, fmt.Errorf("restore collapsed character: %w", err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return "", false, fmt.Errorf("check collapse recovery: %w", err)
+	}
+	if updated == 0 {
+		return "", false, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return "", false, fmt.Errorf("commit collapse recovery: %w", err)
+	}
+	return location, true, nil
+}
+
+func (s *Server) publishCollapseRecovery(characterID, intentID, previousLocation, location string) {
+	message := fmt.Sprintf("%s collapsed and was returned home to recover.", characterID)
+	for _, locationID := range []string{previousLocation, location} {
+		topic := fmt.Sprintf("world/locations/%s/system", locationID)
+		if err := s.mqttServer.Publish(topic, []byte(message), false, 0); err != nil {
+			log.Printf("Failed to publish collapse recovery for %s at %s: %v", characterID, locationID, err)
+		}
+		if previousLocation == location {
+			break
+		}
+	}
+
+	if intentID != "" {
+		s.sendDirectError(characterID, intentID, "FORCED_REST", "Your action was interrupted after you collapsed. You were returned home and revived.")
+	}
+
+	response := map[string]interface{}{
+		"intent_id":        "",
+		"status":           "SUCCESS",
+		"action":           "REST",
+		"forced":           true,
+		"duration_ticks":   collapseRecoveryRestDurationTicks,
+		"health":           100,
+		"hunger":           100,
+		"message":          "You collapsed and were returned to your room, restored, and made to rest for 60 ticks.",
+		"narrative_log":    "You were revived at home and must rest for 60 ticks.",
+		"current_location": location,
+	}
+	s.includeCharacterSync(characterID, response)
+	payload, err := json.Marshal(response)
+	if err != nil {
+		log.Printf("Failed to marshal collapse recovery response for %s: %v", characterID, err)
+		return
+	}
+	topic := fmt.Sprintf("world/agents/%s/direct", characterID)
+	if err := s.mqttServer.Publish(topic, payload, false, 0); err != nil {
+		log.Printf("Failed to publish collapse recovery response for %s: %v", characterID, err)
 	}
 }
 

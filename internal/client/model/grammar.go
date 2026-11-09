@@ -11,8 +11,8 @@ import (
 // DefaultAgentIntentGrammar returns the built-in canonical GBNF grammar for RFC 002 agent intents.
 func DefaultAgentIntentGrammar() string {
 	return `root ::= "{" ws "\"thought\"" ws ":" ws string ws "," ws "\"action\"" ws ":" ws action-type ws "," ws "\"payload\"" ws ":" ws payload ws "}"
-action-type ::= "\"MOVE\"" | "\"TRAVEL\"" | "\"CHAT\"" | "\"TRANSFER\"" | "\"GIVE\"" | "\"FORAGE\"" | "\"COLLECT\"" | "\"PLANT\"" | "\"HARVEST\"" | "\"CANCEL_ACTION\"" | "\"DROP\"" | "\"PICKUP\"" | "\"EQUIP\"" | "\"UNEQUIP\"" | "\"CRAFT\"" | "\"LOOK\"" | "\"STATUS\"" | "\"BUY\"" | "\"RESTOCK\"" | "\"EAT\"" | "\"DRINK\"" | "\"REST\""
-payload ::= move-payload | travel-payload | chat-payload | transfer-payload | forage-payload | plant-payload | harvest-payload | empty-payload | item-payload | craft-payload | buy-payload | restock-payload | rest-payload
+action-type ::= "\"MOVE\"" | "\"TRAVEL\"" | "\"CHAT\"" | "\"TRANSFER\"" | "\"GIVE\"" | "\"FORAGE\"" | "\"COLLECT\"" | "\"PLANT\"" | "\"HARVEST\"" | "\"CANCEL_ACTION\"" | "\"DROP\"" | "\"PICKUP\"" | "\"EQUIP\"" | "\"UNEQUIP\"" | "\"CRAFT\"" | "\"LOOK\"" | "\"STATUS\"" | "\"BUY\"" | "\"SELL\"" | "\"RESTOCK\"" | "\"EAT\"" | "\"DRINK\"" | "\"REST\""
+payload ::= move-payload | travel-payload | chat-payload | transfer-payload | forage-payload | plant-payload | harvest-payload | empty-payload | item-payload | craft-payload | buy-payload | sell-payload | restock-payload | rest-payload
 move-payload ::= "{" ws "\"target_location\"" ws ":" ws string ws "}"
 travel-payload ::= "{" ws "\"target_location\"" ws ":" ws string ws "}"
 chat-payload ::= "{" ws "\"message\"" ws ":" ws string ws "}"
@@ -24,6 +24,7 @@ empty-payload ::= "{" ws "}"
 item-payload ::= "{" ws "\"item_id\"" ws ":" ws string ws ("," ws "\"quantity\"" ws ":" ws integer ws)? "}"
 craft-payload ::= "{" ws "\"recipe_id\"" ws ":" ws string ws "}"
 buy-payload ::= "{" ws "\"item_id\"" ws ":" ws string ws "," ws "\"quantity\"" ws ":" ws integer ws "}"
+sell-payload ::= "{" ws "\"item_id\"" ws ":" ws string ws "," ws "\"quantity\"" ws ":" ws integer ws "}"
 restock-payload ::= "{" ws "\"item_id\"" ws ":" ws string ws "," ws "\"quantity\"" ws ":" ws integer ws ("," ws "\"price_gold\"" ws ":" ws integer ws)? "}"
 rest-payload ::= "{" ws ("\"duration_ticks\"" ws ":" ws integer ws)? "}"
 string ::= "\"" ([^"\\] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]))* "\""
@@ -117,6 +118,7 @@ var validActions = map[string]struct{}{
 	"LOOK":          {},
 	"STATUS":        {},
 	"BUY":           {},
+	"SELL":          {},
 	"RESTOCK":       {},
 	"EAT":           {},
 	"DRINK":         {},
@@ -168,7 +170,7 @@ func SanitizeAndExtractJSON(raw string) (string, error) {
 
 	actionUpper := strings.ToUpper(strings.TrimSpace(actionStr))
 	if _, valid := validActions[actionUpper]; !valid {
-		return "", fmt.Errorf("invalid action %q in model output (expected one of MOVE, TRAVEL, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, PLANT, HARVEST, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, LOOK, STATUS, BUY, RESTOCK, EAT, DRINK, REST)", actionStr)
+		return "", fmt.Errorf("invalid action %q in model output (expected one of MOVE, TRAVEL, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, PLANT, HARVEST, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, LOOK, STATUS, BUY, SELL, RESTOCK, EAT, DRINK, REST)", actionStr)
 	}
 
 	if actionUpper == "COLLECT" {

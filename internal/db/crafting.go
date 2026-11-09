@@ -295,6 +295,82 @@ func SeedCrafting(db *sql.DB) error {
 	return nil
 }
 
+func ensureMillingData(database *sql.DB) error {
+	for _, itemID := range []string{"wheat", "flour"} {
+		if err := ensureFarmItem(database, itemID); err != nil {
+			return fmt.Errorf("ensure milling item %q: %w", itemID, err)
+		}
+	}
+
+	foundStation := false
+	for _, station := range DefaultWorkstations {
+		if station.ID != "millstones" {
+			continue
+		}
+		foundStation = true
+		if _, err := database.Exec(`
+			INSERT INTO workstations (id, name, location_id, equipment_present, crafting_domain)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO NOTHING
+		`, station.ID, station.Name, station.LocationID, station.EquipmentPresent, station.CraftingDomain); err != nil {
+			return fmt.Errorf("ensure milling workstation: %w", err)
+		}
+		break
+	}
+	if !foundStation {
+		return fmt.Errorf("default millstones workstation is missing")
+	}
+
+	foundRecipe := false
+	for _, recipe := range DefaultRecipes {
+		if recipe.ID != "mill_flour" {
+			continue
+		}
+		foundRecipe = true
+		if _, err := database.Exec(`
+			INSERT INTO recipes (
+				id, name, required_station, output_item_id, output_quantity, duration_ticks,
+				energy_cost, required_skill_id, min_skill_level
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO NOTHING
+		`, recipe.ID, recipe.Name, recipe.RequiredStation, recipe.OutputItemID, recipe.OutputQuantity,
+			recipe.DurationTicks, recipe.EnergyCost, recipe.RequiredSkillID, recipe.MinSkillLevel); err != nil {
+			return fmt.Errorf("ensure milling recipe: %w", err)
+		}
+		for _, ingredient := range recipe.Ingredients {
+			if _, err := database.Exec(`
+				INSERT INTO recipe_ingredients (recipe_id, item_id, quantity)
+				VALUES (?, ?, ?)
+				ON CONFLICT(recipe_id, item_id) DO NOTHING
+			`, recipe.ID, ingredient.ItemID, ingredient.Quantity); err != nil {
+				return fmt.Errorf("ensure ingredient %q for milling recipe: %w", ingredient.ItemID, err)
+			}
+		}
+		break
+	}
+	if !foundRecipe {
+		return fmt.Errorf("default mill_flour recipe is missing")
+	}
+	return nil
+}
+
+func initializeMillingRecipeKnowledge(database *sql.DB) error {
+	for _, characterID := range []string{"eldon_millwright", "scotus"} {
+		var occupation string
+		err := database.QueryRow(`SELECT occupation FROM characters WHERE id = ?`, characterID).Scan(&occupation)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("query occupation for %s: %w", characterID, err)
+		}
+		if err := InitializeCharacterProgression(database, characterID, occupation); err != nil {
+			return fmt.Errorf("initialize progression for %s: %w", characterID, err)
+		}
+	}
+	return nil
+}
+
 // InitializeCharacterProgression gives a character baseline skills and occupation-appropriate recipe knowledge.
 func InitializeCharacterProgression(q Queryable, characterID, occupation string) error {
 	for _, skillID := range []string{"foraging", "woodcutting", "herbalism", "crafting"} {
@@ -320,6 +396,9 @@ func InitializeCharacterProgression(q Queryable, characterID, occupation string)
 		recipes = append(recipes, "mill_flour", "bake_bread")
 	case strings.Contains(role, "herbalist"), strings.Contains(role, "apothecary"):
 		recipes = append(recipes, "brew_elderflower_syrup", "brew_mint_tea")
+	}
+	if characterID == "scotus" {
+		recipes = append(recipes, "mill_flour")
 	}
 
 	for _, recipeID := range recipes {

@@ -7,16 +7,19 @@ import (
 )
 
 type ItemSeed struct {
-	ID            string
-	Name          string
-	Description   string
-	WeightKg      float64
-	IsConsumable  bool
-	HungerRestore int
-	HealthRestore int
-	IsContainer   bool
-	CapacityKg    float64
-	SlotLimit     int
+	ID             string
+	Name           string
+	Description    string
+	WeightKg       float64
+	IsConsumable   bool
+	HungerRestore  int
+	HealthRestore  int
+	IsContainer    bool
+	CapacityKg     float64
+	SlotLimit      int
+	IsPerishable   bool
+	ShelfLifeTicks int
+	SpoilageItemID string
 }
 
 type CharacterSeed struct {
@@ -36,17 +39,20 @@ type CharacterSeed struct {
 }
 
 var DefaultItems = []ItemSeed{
+	// Spoilage waste item (RFC 009)
+	{ID: "rotting_waste", Name: "Rotting Waste", Description: "Spoiled organic matter emitting a foul odor.", WeightKg: 0.2, IsConsumable: false, HungerRestore: 0},
+
 	// Existing village items with metric mass (RFC 007)
 	{ID: "wheat", Name: "Sack of Wheat", Description: "Raw grain that can be planted or milled into flour.", WeightKg: 0.5, IsConsumable: false, HungerRestore: 0},
 	{ID: "flour", Name: "Bag of Flour", Description: "Fine milled flour ready for baking bread.", WeightKg: 0.5, IsConsumable: false, HungerRestore: 0},
-	{ID: "bread", Name: "Fresh Loaf of Bread", Description: "Warm, crusty bread that restores hunger.", WeightKg: 0.3, IsConsumable: true, HungerRestore: 25},
-	{ID: "ale_mug", Name: "Mug of Ale", Description: "Foamy, refreshing village ale.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 10},
-	{ID: "roasted_mutton", Name: "Roasted Mutton", Description: "Hearty cooked meat.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 50},
+	{ID: "bread", Name: "Fresh Loaf of Bread", Description: "Warm, crusty bread that restores hunger.", WeightKg: 0.3, IsConsumable: true, HungerRestore: 25, IsPerishable: true, ShelfLifeTicks: 96, SpoilageItemID: "rotting_waste"},
+	{ID: "ale_mug", Name: "Mug of Ale", Description: "Foamy, refreshing village ale.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 10, IsPerishable: true, ShelfLifeTicks: 96, SpoilageItemID: "rotting_waste"},
+	{ID: "roasted_mutton", Name: "Roasted Mutton", Description: "Hearty cooked meat.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 50, IsPerishable: true, ShelfLifeTicks: 96, SpoilageItemID: "rotting_waste"},
 	{ID: "iron_wrench", Name: "Iron Wrench", Description: "A sturdy tool for maintaining mill machinery.", WeightKg: 2.0, IsConsumable: false, HungerRestore: 0},
 	{ID: "iron_ingot", Name: "Iron Ingot", Description: "Raw metal for forging tools and weapons.", WeightKg: 3.0, IsConsumable: false, HungerRestore: 0},
 	{ID: "smithing_hammer", Name: "Smithing Hammer", Description: "Heavy hammer for blacksmithing work.", WeightKg: 2.5, IsConsumable: false, HungerRestore: 0},
 	{ID: "coal", Name: "Lump of Coal", Description: "Fuel for the forge and heaters.", WeightKg: 1.0, IsConsumable: false, HungerRestore: 0},
-	{ID: "vegetable_basket", Name: "Basket of Vegetables", Description: "Fresh carrots, potatoes, and greens.", WeightKg: 1.0, IsConsumable: true, HungerRestore: 15},
+	{ID: "vegetable_basket", Name: "Basket of Vegetables", Description: "Fresh carrots, potatoes, and greens.", WeightKg: 1.0, IsConsumable: true, HungerRestore: 15, IsPerishable: true, ShelfLifeTicks: 96, SpoilageItemID: "rotting_waste"},
 	{ID: "vegetable_seeds", Name: "Vegetable Seeds", Description: "Seeds for planting a mixed vegetable crop in a communal field plot.", WeightKg: 0.1},
 	{ID: "parchment", Name: "Parchment & Quill", Description: "Materials for official clerk records and letters.", WeightKg: 0.1, IsConsumable: false, HungerRestore: 0},
 	{ID: "ink_bottle", Name: "Bottle of Black Ink", Description: "Standard writing ink.", WeightKg: 0.2, IsConsumable: false, HungerRestore: 0},
@@ -62,23 +68,23 @@ var DefaultItems = []ItemSeed{
 	{ID: "firewood", Name: "Firewood Bundle", Description: "Dry split logs essential for heating and cooking.", WeightKg: 1.0},
 	{ID: "wood_log", Name: "Wood Log", Description: "Heavy raw timber felled from trees.", WeightKg: 5.0},
 	{ID: "logs", Name: "Logs", Description: "Heavy raw timber felled from trees.", WeightKg: 5.0},
-	{ID: "wild_mushrooms", Name: "Wild Mushrooms", Description: "Edible forest fungi gathered from damp decaying bark.", WeightKg: 0.2, IsConsumable: true, HungerRestore: 5},
+	{ID: "wild_mushrooms", Name: "Wild Mushrooms", Description: "Edible forest fungi gathered from damp decaying bark.", WeightKg: 0.2, IsConsumable: true, HungerRestore: 5, IsPerishable: true, ShelfLifeTicks: 96, SpoilageItemID: "rotting_waste"},
 	{ID: "bird_feather", Name: "Bird Feather", Description: "A soft plumage fallen from the overhead forest canopy.", WeightKg: 0.05},
 	{ID: "animal_fodder", Name: "Animal Fodder", Description: "Dry grasses and roughage suitable for feeding livestock.", WeightKg: 0.5},
 	{ID: "wild_grain", Name: "Wild Grain", Description: "Uncultivated cereal grains gathered from the prairie.", WeightKg: 0.5},
-	{ID: "field_berries", Name: "Field Berries", Description: "Sweet, juicy wild berries picked from meadow brambles.", WeightKg: 0.2, IsConsumable: true, HungerRestore: 10},
+	{ID: "field_berries", Name: "Field Berries", Description: "Sweet, juicy wild berries picked from meadow brambles.", WeightKg: 0.2, IsConsumable: true, HungerRestore: 10, IsPerishable: true, ShelfLifeTicks: 96, SpoilageItemID: "rotting_waste"},
 	{ID: "medicinal_herbs", Name: "Medicinal Herbs", Description: "Fragrant wild herbs with soothing and healing properties.", WeightKg: 0.1},
 	{ID: "clay_lumps", Name: "Clay Lumps", Description: "Malleable natural clay dug from the riverbed.", WeightKg: 1.0},
-	{ID: "fresh_water", Name: "Fresh Water", Description: "Clean, cool drinking water drawn from the river.", WeightKg: 1.0, IsConsumable: true, HungerRestore: 5},
+	{ID: "fresh_water", Name: "Fresh Water", Description: "Clean, cool drinking water drawn from the river.", WeightKg: 1.0, IsConsumable: true, HungerRestore: 5, IsPerishable: true, ShelfLifeTicks: 96, SpoilageItemID: "rotting_waste"},
 	{ID: "freshwater_pearl", Name: "Freshwater Pearl", Description: "A rare, lustrous pearl discovered inside a riverbed mussel.", WeightKg: 0.05},
 	{ID: "river_reeds", Name: "River Reeds", Description: "Long, pliable reeds harvested along the shoreline.", WeightKg: 0.2},
 
 	// RFC 008 Crafting Items
 	{ID: "iron_ore", Name: "Iron Ore", Description: "Raw unrefined iron rock dug from hillside quarries.", WeightKg: 2.0},
-	{ID: "berry_wine", Name: "Jug of Berry Wine", Description: "Sweet fermented wine made from wild prairie berries.", WeightKg: 1.0, IsConsumable: true, HungerRestore: 10},
+	{ID: "berry_wine", Name: "Jug of Berry Wine", Description: "Sweet fermented wine made from wild prairie berries.", WeightKg: 1.0, IsConsumable: true, HungerRestore: 10, IsPerishable: true, ShelfLifeTicks: 192, SpoilageItemID: "rotting_waste"},
 	{ID: "elderflowers", Name: "Elderflower Blossoms", Description: "Delicate white elderflower blossoms picked from river hedgerows.", WeightKg: 0.1, IsConsumable: false, HungerRestore: 0},
 	{ID: "wild_mint", Name: "Wild Mint Leaves", Description: "Fragrant fresh green mint leaves with a cooling aroma.", WeightKg: 0.05, IsConsumable: false, HungerRestore: 0},
-	{ID: "honey_jar", Name: "Jar of Wildflower Honey", Description: "Golden, sweet honey harvested from forest beehives.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 20},
+	{ID: "honey_jar", Name: "Jar of Wildflower Honey", Description: "Golden, sweet honey harvested from forest beehives.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 20, IsPerishable: true, ShelfLifeTicks: 192, SpoilageItemID: "rotting_waste"},
 	{ID: "spiced_elderflower_syrup", Name: "Spiced Elderflower Syrup", Description: "Sweet, aromatic cordial brewed from elderflowers, honey, and river spices.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 15},
 	{ID: "mint_tea", Name: "Mug of Mint Tea", Description: "A warm, soothing herbal infusion of wild mint and fresh water.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 10},
 	{ID: "elderflower_wine", Name: "Jug of Elderflower Wine", Description: "Delicate floral fruit wine with hints of honey and elder blossoms.", WeightKg: 1.0, IsConsumable: true, HungerRestore: 15},
@@ -168,8 +174,8 @@ var DefaultCharacters = []CharacterSeed{
 func SeedItemsAndCharacters(db *sql.DB) error {
 	// Seed Items
 	itemQuery := `
-	INSERT INTO items (id, name, description, weight_kg, is_consumable, hunger_restore, health_restore, is_container, capacity_kg, slot_limit)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO items (id, name, description, weight_kg, is_consumable, hunger_restore, health_restore, is_container, capacity_kg, slot_limit, is_perishable, shelf_life_ticks, spoilage_item_id)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		name=excluded.name,
 		description=excluded.description,
@@ -179,7 +185,10 @@ func SeedItemsAndCharacters(db *sql.DB) error {
 		health_restore=excluded.health_restore,
 		is_container=excluded.is_container,
 		capacity_kg=excluded.capacity_kg,
-		slot_limit=excluded.slot_limit;
+		slot_limit=excluded.slot_limit,
+		is_perishable=excluded.is_perishable,
+		shelf_life_ticks=excluded.shelf_life_ticks,
+		spoilage_item_id=excluded.spoilage_item_id;
 	`
 	itemStmt, err := db.Prepare(itemQuery)
 	if err != nil {
@@ -196,7 +205,19 @@ func SeedItemsAndCharacters(db *sql.DB) error {
 		if item.IsContainer {
 			containerVal = 1
 		}
-		_, err := itemStmt.Exec(item.ID, item.Name, item.Description, item.WeightKg, consumableVal, item.HungerRestore, item.HealthRestore, containerVal, item.CapacityKg, item.SlotLimit)
+		perishableVal := 0
+		if item.IsPerishable {
+			perishableVal = 1
+		}
+		shelfLife := item.ShelfLifeTicks
+		if shelfLife <= 0 && item.IsPerishable {
+			shelfLife = 96
+		}
+		spoilageID := item.SpoilageItemID
+		if spoilageID == "" {
+			spoilageID = "rotting_waste"
+		}
+		_, err := itemStmt.Exec(item.ID, item.Name, item.Description, item.WeightKg, consumableVal, item.HungerRestore, item.HealthRestore, containerVal, item.CapacityKg, item.SlotLimit, perishableVal, shelfLife, spoilageID)
 		if err != nil {
 			return fmt.Errorf("failed to seed item %s: %w", item.ID, err)
 		}

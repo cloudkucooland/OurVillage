@@ -320,6 +320,59 @@ func TestRestEnforcesMinimumDuration(t *testing.T) {
 	}
 }
 
+func TestCollapsedCharacterIsRevivedAtHomeAndForcedToRest(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	srv, err := NewServer(database, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Shutdown()
+
+	if _, err := database.Exec(`
+		UPDATE characters
+		SET health = 0, hunger = 0, energy = 0,
+			current_location = 'town_mill', status = 'RESTING',
+			action_start_tick = 10, action_end_tick = 70, action_intent_id = ''
+		WHERE id = 'eldon_millwright'
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	srv.SetTickCount(69)
+	srv.ProcessTick()
+
+	var health, hunger, energy int
+	var location, status string
+	var startTick, endTick uint64
+	if err := database.QueryRow(`
+		SELECT health, hunger, energy, current_location, status, action_start_tick, action_end_tick
+		FROM characters WHERE id = 'eldon_millwright'
+	`).Scan(&health, &hunger, &energy, &location, &status, &startTick, &endTick); err != nil {
+		t.Fatal(err)
+	}
+	if health != 100 || hunger != 100 || energy != 0 || location != "eldons_room" || status != "RESTING" {
+		t.Fatalf("revived state = health %d, hunger %d, energy %d, location %q, status %q",
+			health, hunger, energy, location, status)
+	}
+	if startTick != 70 || endTick-startTick != collapseRecoveryRestDurationTicks {
+		t.Fatalf("forced rest ticks = %d-%d, want start at 70 and duration %d", startTick, endTick, collapseRecoveryRestDurationTicks)
+	}
+
+	srv.SetTickCount(endTick - 1)
+	srv.ProcessTick()
+	if err := database.QueryRow("SELECT status FROM characters WHERE id = 'eldon_millwright'").Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "IDLE" {
+		t.Fatalf("status after 60-tick rest = %q, want IDLE", status)
+	}
+}
+
 func TestRestRejectsMalformedOrNonPositiveDuration(t *testing.T) {
 	database, err := db.InitDB(":memory:")
 	if err != nil {

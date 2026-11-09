@@ -31,6 +31,7 @@ func TestBuildPlayerIntentSupportsDirectWorldActions(t *testing.T) {
 		{"/unequip", "UNEQUIP"},
 		{"/craft mill_flour", "CRAFT"},
 		{"/buy bread 2", "BUY"},
+		{"/sell wheat 2", "SELL"},
 		{"/restock bread 3 2", "RESTOCK"},
 		{"/eat bread", "EAT"},
 		{"/drink water_flask", "EAT"},

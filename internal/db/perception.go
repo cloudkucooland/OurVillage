@@ -92,11 +92,12 @@ type AvailableRecipeEntry struct {
 
 // ShopItemEntry captures items available for purchase at a location storefront.
 type ShopItemEntry struct {
-	ItemID    string  `json:"item_id"`
-	Name      string  `json:"name"`
-	PriceGold int     `json:"price_gold"`
-	StockQty  int     `json:"stock_quantity"`
-	WeightKg  float64 `json:"weight_kg"`
+	ItemID       string  `json:"item_id"`
+	Name         string  `json:"name"`
+	PriceGold    int     `json:"price_gold"`
+	BuyPriceGold int     `json:"buy_price_gold,omitempty"`
+	StockQty     int     `json:"stock_quantity"`
+	WeightKg     float64 `json:"weight_kg"`
 }
 
 // ConnectedLocationEntry captures adjacent graph nodes and travel ticks.
@@ -377,10 +378,10 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 
 	// 9. Query Shop Items at Location
 	shopRows, err := database.Query(`
-		SELECT si.item_id, itm.name, si.price_gold, si.stock_quantity, itm.weight_kg
+		SELECT si.item_id, itm.name, si.price_gold, COALESCE(si.buy_price_gold, 0), si.stock_quantity, itm.weight_kg
 		FROM location_shop_items si
 		JOIN items itm ON si.item_id = itm.id
-		WHERE si.location_id = ? AND si.stock_quantity > 0
+		WHERE si.location_id = ? AND (si.stock_quantity > 0 OR si.buy_price_gold > 0)
 		ORDER BY itm.name ASC
 	`, char.CurrentLocation)
 	if err == nil {
@@ -388,7 +389,7 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 		loc.ShopItems = make([]ShopItemEntry, 0)
 		for shopRows.Next() {
 			var si ShopItemEntry
-			if err := shopRows.Scan(&si.ItemID, &si.Name, &si.PriceGold, &si.StockQty, &si.WeightKg); err == nil {
+			if err := shopRows.Scan(&si.ItemID, &si.Name, &si.PriceGold, &si.BuyPriceGold, &si.StockQty, &si.WeightKg); err == nil {
 				loc.ShopItems = append(loc.ShopItems, si)
 			}
 		}
