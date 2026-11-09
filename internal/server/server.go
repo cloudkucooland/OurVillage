@@ -368,6 +368,7 @@ func (s *Server) runClock() {
 
 // ProcessTick executes a single server clock cycle, resolving actions and broadcasting time.
 func (s *Server) ProcessTick() {
+	startTime := time.Now()
 	s.mu.Lock()
 	s.tickCount++
 	currentTick := s.tickCount
@@ -477,7 +478,7 @@ func (s *Server) ProcessTick() {
 	if err != nil {
 		log.Printf("Failed to publish tick: %v", err)
 	} else {
-		log.Printf("[Tick %d] Time: %s, Night: %v, Weather: %s, Temp: %.1f°C", currentTick, timeStr, isNight, weather, temperature)
+		log.Printf("[Tick %d] Time: %s, Night: %v, Weather: %s, Temp: %.1f°C (Processed in %v)", currentTick, timeStr, isNight, weather, temperature, time.Since(startTime))
 	}
 }
 

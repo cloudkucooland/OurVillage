@@ -104,6 +104,10 @@ func NewClientMemoryStore(dbPath string) (*ClientMemoryStore, error) {
 		event_type TEXT NOT NULL,
 		raw_payload TEXT NOT NULL,
 		reflection_processed BOOLEAN DEFAULT 0,
+		attempt_count INTEGER NOT NULL DEFAULT 0,
+		retry_after DATETIME,
+		project_processed BOOLEAN DEFAULT 0,
+		project_retry_after DATETIME,
 		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
@@ -455,12 +459,13 @@ func (m *ClientMemoryStore) DeferEvents(ids []int64, retryAfter time.Duration) e
 		args[i] = id
 		marks[i] = "?"
 	}
+	modifier := fmt.Sprintf("+%d seconds", int(retryAfter.Seconds()))
 	_, err := m.db.Exec(`
 		UPDATE client_event_history
 		SET attempt_count = attempt_count + 1,
-			retry_after = datetime('now', '+' || ? || ' seconds')
+			retry_after = datetime('now', ?)
 		WHERE reflection_processed = 0 AND id IN (`+strings.Join(marks, ",")+`)`,
-		append([]any{int(retryAfter.Seconds())}, args...)...)
+		append([]any{modifier}, args...)...)
 	return err
 }
 
@@ -519,12 +524,13 @@ func (m *ClientMemoryStore) DeferProjectEvents(ids []int64, retryAfter time.Dura
 		args[i] = id
 		marks[i] = "?"
 	}
+	modifier := fmt.Sprintf("+%d seconds", int(retryAfter.Seconds()))
 	_, err := m.db.Exec(`
 		UPDATE client_event_history
 		SET attempt_count = attempt_count + 1,
-			project_retry_after = datetime('now', '+' || ? || ' seconds')
+			project_retry_after = datetime('now', ?)
 		WHERE project_processed = 0 AND id IN (`+strings.Join(marks, ",")+`)`,
-		append([]any{int(retryAfter.Seconds())}, args...)...)
+		append([]any{modifier}, args...)...)
 	return err
 }
 

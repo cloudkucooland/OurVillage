@@ -173,11 +173,12 @@ type SyncFarmPlot struct {
 }
 
 type SyncShopItem struct {
-	ItemID    string  `json:"item_id"`
-	Name      string  `json:"name"`
-	PriceGold int     `json:"price_gold"`
-	StockQty  int     `json:"stock_quantity"`
-	WeightKg  float64 `json:"weight_kg"`
+	ItemID       string  `json:"item_id"`
+	Name         string  `json:"name"`
+	PriceGold    int     `json:"price_gold"`
+	BuyPriceGold int     `json:"buy_price_gold"`
+	StockQty     int     `json:"stock_quantity"`
+	WeightKg     float64 `json:"weight_kg"`
 }
 
 type SyncAvailableRecipe struct {
@@ -750,11 +751,22 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 				obsParts = append(obsParts, fmt.Sprintf("Communal Farm Plots: %s", strings.Join(plots, "; ")))
 			}
 			if len(msg.Location.ShopItems) > 0 {
-				var shopStrs []string
+				var sellStrs []string
+				var buyStrs []string
 				for _, si := range msg.Location.ShopItems {
-					shopStrs = append(shopStrs, fmt.Sprintf("%s (%s - %d gold, %.1f kg each, stock: %d)", si.Name, si.ItemID, si.PriceGold, si.WeightKg, si.StockQty))
+					if si.PriceGold > 0 {
+						sellStrs = append(sellStrs, fmt.Sprintf("%s (%s - %d gold, %.1f kg each, stock: %d)", si.Name, si.ItemID, si.PriceGold, si.WeightKg, si.StockQty))
+					}
+					if si.BuyPriceGold > 0 {
+						buyStrs = append(buyStrs, fmt.Sprintf("%s (%s - buys for %d gold)", si.Name, si.ItemID, si.BuyPriceGold))
+					}
 				}
-				obsParts = append(obsParts, fmt.Sprintf("Shop Items for Sale: %s", strings.Join(shopStrs, ", ")))
+				if len(sellStrs) > 0 {
+					obsParts = append(obsParts, fmt.Sprintf("Shop Items for Sale: %s", strings.Join(sellStrs, ", ")))
+				}
+				if len(buyStrs) > 0 {
+					obsParts = append(obsParts, fmt.Sprintf("Shop Buy Offers: %s", strings.Join(buyStrs, ", ")))
+				}
 			}
 			if len(msg.Location.AvailableRecipes) > 0 {
 				var recStrs []string
@@ -785,14 +797,27 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 			if cm.onLocationObserved != nil {
 				locID := msg.Location.ID
 				locName := msg.Location.Name
-				var shopStrs []string
+				var sellStrs []string
+				var buyStrs []string
 				for _, si := range msg.Location.ShopItems {
-					shopStrs = append(shopStrs, fmt.Sprintf("%s (%s - %d gold, %.1f kg each, stock: %d)", si.Name, si.ItemID, si.PriceGold, si.WeightKg, si.StockQty))
+					if si.PriceGold > 0 {
+						sellStrs = append(sellStrs, fmt.Sprintf("%s (%s - %d gold, %.1f kg each, stock: %d)", si.Name, si.ItemID, si.PriceGold, si.WeightKg, si.StockQty))
+					}
+					if si.BuyPriceGold > 0 {
+						buyStrs = append(buyStrs, fmt.Sprintf("%s (%s - buys for %d gold)", si.Name, si.ItemID, si.BuyPriceGold))
+					}
 				}
-				if len(shopStrs) == 0 {
+				var shopLines []string
+				if len(sellStrs) > 0 {
+					shopLines = append(shopLines, fmt.Sprintf("Sells: %s", strings.Join(sellStrs, ", ")))
+				}
+				if len(buyStrs) > 0 {
+					shopLines = append(shopLines, fmt.Sprintf("Buys: %s", strings.Join(buyStrs, ", ")))
+				}
+				if len(shopLines) == 0 {
 					cm.onLocationObserved(locID, locName, "shop", "No items currently listed.")
 				} else {
-					cm.onLocationObserved(locID, locName, "shop", fmt.Sprintf("Sells: %s", strings.Join(shopStrs, ", ")))
+					cm.onLocationObserved(locID, locName, "shop", strings.Join(shopLines, " | "))
 				}
 				var resStrs []string
 				for _, rp := range msg.Location.ResourcePools {

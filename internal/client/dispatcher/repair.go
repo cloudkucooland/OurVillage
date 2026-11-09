@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"agentmud/internal/client/model"
@@ -75,9 +76,13 @@ func GenerateIntentWithRetry(
 		}
 		intent, err := ParseAndRepairIntent(rawOutput)
 		if err == nil {
+			if attempt > 0 {
+				log.Printf("[Intent Repair] Success on retry attempt %d", attempt+1)
+			}
 			return intent, nil
 		}
 
+		log.Printf("[Intent Repair] Attempt %d failed validation: %v. Retrying with correction...", attempt+1, err)
 		lastErr = err
 		// Append corrective instruction for the next retry attempt
 		correction := fmt.Sprintf(

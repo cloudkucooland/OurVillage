@@ -150,6 +150,17 @@ func (s *ReflectionSynthesizer) SynthesizeNextBatch(ctx context.Context) error {
 		return err
 	}
 
+	if len(events) == 0 {
+		var batchErr error
+		if projErr := s.synthesizeProjects(ctx); projErr != nil {
+			batchErr = errors.Join(batchErr, projErr)
+		}
+		if pruneErr := s.store.PruneProcessedEvents(); pruneErr != nil {
+			batchErr = errors.Join(batchErr, pruneErr)
+		}
+		return batchErr
+	}
+
 	eventsByPeer := make(map[string][]EventRecord)
 	var completedIDs []int64
 	var latestTick uint64
@@ -211,7 +222,8 @@ func (s *ReflectionSynthesizer) SynthesizeNextBatch(ctx context.Context) error {
 		log.Printf("[Synthesizer] Reflected on %s (Salience: %d): %s", peerID, salience, reflection)
 	}
 
-	if len(eventsByPeer) > 0 {
+	// Trigger self-identity reflection whenever events exist (including solo/server events)
+	if len(events) > 0 {
 		if err := s.SynthesizeSelfIdentity(ctx, latestTick); err != nil {
 			log.Printf("[Synthesizer] Failed to generate self-identity update: %v", err)
 			batchErr = errors.Join(batchErr, err)
@@ -278,7 +290,7 @@ func (s *ReflectionSynthesizer) synthesizeProjects(ctx context.Context) error {
 	}
 
 	respText, err := s.generateWithCustomTimeout(ctx, "Memory synthesis: updating personal projects", prompt, model.GenerationOptions{
-		Temperature: 0.4,
+		Temperature: 0.6,
 		MaxTokens:   400,
 	}, projectTimeout)
 	if err != nil {
@@ -298,8 +310,8 @@ func (s *ReflectionSynthesizer) synthesizeProjects(ctx context.Context) error {
 
 func buildProjectsPrompt(events []EventRecord, projects []PersonalProject) (string, error) {
 	var sb strings.Builder
-	sb.WriteString("You are a self-directed resident. Update your optional personal projects only when these action outcomes provide relevant evidence; do not turn routine actions into goals or invent progress. Having no projects is valid. Projects are your own choices, never obligations.\n")
-	sb.WriteString("Return valid JSON with a projects array. Each entry must include id (use an existing id to update), title, motivation, status (active/paused/completed), progress, next_step, people, and locations. Return an empty array when no update is warranted.\n")
+	sb.WriteString("You are a self-directed resident with personal aspirations and long-term ambitions in the village. Look ahead beyond immediate tasks: consider what craft, trade, relationship, or community improvement you wish to pursue over time. Formulate new personal projects or update existing ones when recent experiences suggest meaningful endeavors, medium-term goals, or next steps. Avoid turning trivial moment-to-moment actions into tedious obligations, but actively embrace purposeful ambitions and look forward more than a few ticks.\n")
+	sb.WriteString("Return valid JSON with a projects array. Each entry must include id (use an existing id to update or create a slug for a new one), title, motivation, status (active/paused/completed), progress, next_step, people, and locations. Return an empty array only when no ongoing or new ambitions are warranted.\n")
 	sb.WriteString("Existing projects:\n")
 	if len(projects) > 5 {
 		projects = projects[:5]
@@ -311,7 +323,7 @@ func buildProjectsPrompt(events []EventRecord, projects []PersonalProject) (stri
 	sb.Write(encoded)
 	sb.WriteString("\nAction outcomes:\n")
 	for _, event := range events {
-		payload := event.RawPayload
+		payload := strings.ReplaceAll(event.RawPayload, "\n", " ")
 		if len(payload) > 250 {
 			payload = payload[:250] + "..."
 		}
@@ -381,12 +393,16 @@ func (s *ReflectionSynthesizer) SynthesizeSelfIdentity(ctx context.Context, tick
 	if err != nil {
 		log.Printf("[Synthesizer Warning] Failed to load recent self-reflections: %v", err)
 	}
+	recentEvents, err := s.store.GetUnreflectedEvents(5)
+	if err != nil {
+		log.Printf("[Synthesizer Warning] Failed to load recent events for self-reflection: %v", err)
+	}
 
-	prompt := s.buildSelfIdentityPrompt(tick, traits, recentRefs)
+	prompt := s.buildSelfIdentityPrompt(tick, traits, recentRefs, recentEvents)
 
 	respText, err := s.generateWithStatus(ctx, "Memory synthesis: reflecting on identity", prompt, model.GenerationOptions{
-		Temperature: 0.7,
-		MaxTokens:   250,
+		Temperature: 0.6,
+		MaxTokens:   300,
 	})
 
 	if err != nil {
@@ -409,10 +425,10 @@ func (s *ReflectionSynthesizer) SynthesizeSelfIdentity(ctx context.Context, tick
 	return nil
 }
 
-func (s *ReflectionSynthesizer) buildSelfIdentityPrompt(tick uint64, traits []IdentityTrait, recentRefs []SelfReflection) string {
+func (s *ReflectionSynthesizer) buildSelfIdentityPrompt(tick uint64, traits []IdentityTrait, recentRefs []SelfReflection, events []EventRecord) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("You are %s, a sovereign resident of OurVillage at tick %d, with absolute self-determination and intrinsic agency.\n", s.agentID, tick))
-	sb.WriteString("Reflect freely and specifically on your personal identity, core values, current trade, craft, and place in the community. Avoid repeating past reflections or generic clichés.\n\n")
+	sb.WriteString("Reflect specifically and realistically on your personal identity, core values, current trade, craft, and daily interactions in the village. Avoid repeating past reflections, generic clichés, or abstract atmospheric poetry; ground your thoughts in concrete actions and events.\n\n")
 
 	if len(traits) > 0 {
 		sb.WriteString("Current Identity Traits:\n")
@@ -430,15 +446,27 @@ func (s *ReflectionSynthesizer) buildSelfIdentityPrompt(tick uint64, traits []Id
 		sb.WriteString("\n")
 	}
 
+	if len(events) > 0 {
+		sb.WriteString("Recent Actions & Events (Ground your reflection in these objective happenings):\n")
+		for _, ev := range events {
+			payload := strings.ReplaceAll(ev.RawPayload, "\n", " ")
+			if len(payload) > 250 {
+				payload = payload[:250] + "..."
+			}
+			sb.WriteString(fmt.Sprintf("- [Tick %d] [%s]: %s\n", ev.Tick, ev.EventType, payload))
+		}
+		sb.WriteString("\n")
+	}
+
 	sb.WriteString("Instructions:\n")
-	sb.WriteString("1. Update or refine an identity trait key and value (e.g., craft_philosophy, community_bond, daily_focus, merchant_ethics).\n")
-	sb.WriteString("2. Write a fresh, highly contextual one-sentence self-reflection capturing your current state of mind, recent work, or thoughts about the village.\n")
+	sb.WriteString("1. Update or refine an identity trait key and value grounded in your recent actions and experiences (e.g., craft_philosophy, community_bond, daily_focus, merchant_ethics).\n")
+	sb.WriteString("2. Write a fresh, highly contextual one-sentence self-reflection anchored directly in your recent work, trades, conversations, or movements in the village. Focus on tangible work, economic realities, relationships, and daily life rather than vague magical realism.\n")
 	sb.WriteString("3. Assign a salience score from 1 to 10.\n")
 	sb.WriteString("Respond in valid JSON:\n")
 	sb.WriteString("{\n")
 	sb.WriteString("  \"trait_key\": \"daily_focus\",\n")
-	sb.WriteString("  \"trait_value\": \"Refining craft methods and observing the rhythm of the village.\",\n")
-	sb.WriteString("  \"self_reflection\": \"The morning frost reminds me of the warmth required in our trade and the shared resilience of my neighbors.\",\n")
+	sb.WriteString("  \"trait_value\": \"Focusing on smithing iron tools and maintaining stock for travelers.\",\n")
+	sb.WriteString("  \"self_reflection\": \"Today's forge work yielded three solid iron ingots, keeping me busy as villagers dropped by the workshop.\",\n")
 	sb.WriteString("  \"salience\": 7\n")
 	sb.WriteString("}\n")
 	return sb.String()
@@ -484,7 +512,7 @@ func (s *ReflectionSynthesizer) buildReflectionPrompt(peerID string, events []Ev
 	sb.WriteString("Below is a raw log of recent interactions:\n\n")
 
 	for _, ev := range events {
-		payload := ev.RawPayload
+		payload := strings.ReplaceAll(ev.RawPayload, "\n", " ")
 		if len(payload) > 250 {
 			payload = payload[:250] + "..."
 		}

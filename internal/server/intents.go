@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"agentmud/internal/db"
 
@@ -108,6 +109,7 @@ func (s *Server) SetupIntentHandlers() error {
 		}
 
 		log.Printf("[Intent] Received %s from agent %s (intent_id: %s)", intent.Action, agentID, intent.IntentID)
+		start := time.Now()
 
 		switch strings.ToUpper(intent.Action) {
 		case "MOVE":
@@ -149,6 +151,7 @@ func (s *Server) SetupIntentHandlers() error {
 		default:
 			s.sendDirectError(agentID, intent.IntentID, "UNKNOWN_ACTION", fmt.Sprintf("Unsupported action: %s", intent.Action))
 		}
+		log.Printf("[Intent Timing] Action %s for agent %s (intent_id: %s) resolved in %v", intent.Action, agentID, intent.IntentID, time.Since(start))
 	})
 
 	if err != nil {
