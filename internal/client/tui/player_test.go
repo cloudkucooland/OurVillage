@@ -6,6 +6,8 @@ import (
 
 	"agentmud/internal/client/dispatcher"
 	"agentmud/internal/client/spatial"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestBuildPlayerIntentSupportsDirectWorldActions(t *testing.T) {
@@ -94,5 +96,14 @@ func TestPlayerTUIHeaderDisplaysHealthAndHunger(t *testing.T) {
 	view := model.View()
 	if !strings.Contains(view, "Health:") || !strings.Contains(view, "Hunger:") {
 		t.Errorf("Player TUI View missing Health or Hunger in header: %q", view)
+	}
+}
+
+func TestControlLRefreshesPlayerTUI(t *testing.T) {
+	ctxMgr := spatial.NewContextManager(spatial.ContextManagerConfig{AgentID: "elda"})
+	model := NewPlayerModel(t.Context(), ctxMgr, nil)
+	_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	if cmd == nil {
+		t.Fatal("Ctrl+L did not return a command for player screen refresh")
 	}
 }

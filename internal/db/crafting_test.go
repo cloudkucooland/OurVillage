@@ -17,8 +17,8 @@ func TestSeedCrafting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to count workstations: %v", err)
 	}
-	if wsCount != 6 {
-		t.Errorf("Expected 6 seeded workstations, got %d", wsCount)
+	if wsCount != 7 {
+		t.Errorf("Expected 7 seeded workstations, got %d", wsCount)
 	}
 
 	var recCount int
@@ -26,8 +26,8 @@ func TestSeedCrafting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to count recipes: %v", err)
 	}
-	if recCount != 10 {
-		t.Errorf("Expected 10 seeded recipes, got %d", recCount)
+	if recCount != 14 {
+		t.Errorf("Expected 14 seeded recipes, got %d", recCount)
 	}
 }
 

@@ -166,3 +166,12 @@ func TestTUIHeaderDisplaysHealthAndHunger(t *testing.T) {
 		t.Errorf("TUI View missing Health or Hunger in header: %q", view)
 	}
 }
+
+func TestControlLRefreshesClientTUI(t *testing.T) {
+	ctxMgr := spatial.NewContextManager(spatial.ContextManagerConfig{AgentID: "elda"})
+	model := NewTUIModel(context.Background(), "elda", nil, nil, ctxMgr, nil, nil, nil, nil, nil, nil)
+	_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	if cmd == nil {
+		t.Fatal("Ctrl+L did not return a command for screen refresh")
+	}
+}

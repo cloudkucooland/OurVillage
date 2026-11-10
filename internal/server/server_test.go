@@ -64,8 +64,8 @@ func TestTemperatureHealthDecay(t *testing.T) {
 		t.Fatalf("GetTemperature() = %v after setting zero, want 0", got)
 	}
 
-	// Set character health to 100
-	_, err = database.Exec("UPDATE characters SET health = 100, current_location = 'town_square'")
+	// Set character health to 100 and online
+	_, err = database.Exec("UPDATE characters SET health = 100, is_online = 1, current_location = 'town_square'")
 	if err != nil {
 		t.Fatalf("Failed to update character health: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestTemperatureHealthDecayThresholds(t *testing.T) {
 
 	if _, err := database.Exec(`
 		UPDATE locations SET is_indoor = 0 WHERE id = 'town_square';
-		UPDATE characters SET health = 100, hunger = 100, current_location = 'town_square'
+		UPDATE characters SET health = 100, hunger = 100, is_online = 1, current_location = 'town_square'
 		WHERE id = 'eldon_millwright';
 	`); err != nil {
 		t.Fatalf("Failed to set outdoor character state: %v", err)
@@ -172,7 +172,7 @@ func TestDepletedCharactersAreForcedToRest(t *testing.T) {
 
 			if _, err := database.Exec(`
 				UPDATE characters
-				SET hunger = 100, energy = ?, health = ?
+				SET hunger = 100, energy = ?, health = ?, is_online = 1
 				WHERE id = 'eldon_millwright'
 			`, tt.energy, tt.health); err != nil {
 				t.Fatalf("Failed to set character stats: %v", err)
@@ -218,7 +218,7 @@ func TestZeroHungerCollapseTriggersEmergencyRecovery(t *testing.T) {
 
 	if _, err := database.Exec(`
 		UPDATE characters
-		SET hunger = 0, energy = 100, health = 1
+		SET hunger = 0, energy = 100, health = 1, is_online = 1
 		WHERE id = 'eldon_millwright'
 	`); err != nil {
 		t.Fatalf("Failed to set character stats: %v", err)
@@ -286,4 +286,84 @@ func TestEnsureDefaultCertificateAndTLS(t *testing.T) {
 		t.Fatalf("Failed to create server with TLS config: %v", err)
 	}
 	defer srv.Shutdown()
+}
+
+func TestOfflineCharactersDoNotDecay(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to initialize DB: %v", err)
+	}
+	defer database.Close()
+
+	srv, err := NewServer(database, "")
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+	defer srv.Shutdown()
+
+	// Set up two characters: one online at home, one offline
+	_, err = database.Exec(`
+		UPDATE characters SET hunger = 50, energy = 50, status = 'IDLE', current_location = home_location_id WHERE id = 'eldon_millwright';
+		UPDATE characters SET hunger = 50, energy = 50, status = 'IDLE' WHERE id = 'martha_barkeep';
+		UPDATE characters SET is_online = 1 WHERE id = 'eldon_millwright';
+		UPDATE characters SET is_online = 0 WHERE id = 'martha_barkeep';
+	`)
+	if err != nil {
+		t.Fatalf("Failed to setup test character states: %v", err)
+	}
+
+	srv.ProcessTick()
+
+	var eldonHunger, eldonEnergy int
+	var marthaHunger, marthaEnergy int
+
+	if err := database.QueryRow("SELECT hunger, energy FROM characters WHERE id = 'eldon_millwright'").Scan(&eldonHunger, &eldonEnergy); err != nil {
+		t.Fatalf("Failed to query eldon: %v", err)
+	}
+	if err := database.QueryRow("SELECT hunger, energy FROM characters WHERE id = 'martha_barkeep'").Scan(&marthaHunger, &marthaEnergy); err != nil {
+		t.Fatalf("Failed to query martha: %v", err)
+	}
+
+	// Online character at home (Eldon) should decay hunger to 49, but retain energy at 50
+	if eldonHunger != 49 || eldonEnergy != 50 {
+		t.Errorf("Expected online character Eldon at home to decay hunger to 49 and retain energy 50, got %d/%d", eldonHunger, eldonEnergy)
+	}
+
+	// Offline character (Martha) should NOT decay (remain 50/50)
+	if marthaHunger != 50 || marthaEnergy != 50 {
+		t.Errorf("Expected offline character Martha to retain 50/50 hunger/energy, got %d/%d", marthaHunger, marthaEnergy)
+	}
+}
+
+func TestAwayFromHomeEnergyDecay(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to initialize DB: %v", err)
+	}
+	defer database.Close()
+
+	srv, err := NewServer(database, "")
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+	defer srv.Shutdown()
+
+	_, err = database.Exec(`
+		UPDATE characters SET hunger = 50, energy = 50, status = 'IDLE', current_location = 'tavern' WHERE id = 'eldon_millwright';
+		UPDATE characters SET is_online = 1 WHERE id = 'eldon_millwright';
+	`)
+	if err != nil {
+		t.Fatalf("Failed to setup test character states: %v", err)
+	}
+
+	srv.ProcessTick()
+
+	var hunger, energy int
+	if err := database.QueryRow("SELECT hunger, energy FROM characters WHERE id = 'eldon_millwright'").Scan(&hunger, &energy); err != nil {
+		t.Fatalf("Failed to query eldon: %v", err)
+	}
+
+	if hunger != 49 || energy != 49 {
+		t.Errorf("Expected online character away from home to decay hunger and energy to 49/49, got %d/%d", hunger, energy)
+	}
 }

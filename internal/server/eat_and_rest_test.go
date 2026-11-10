@@ -410,3 +410,83 @@ func assertInvalidPayloadError(t *testing.T, raw []byte) {
 		t.Fatalf("response = %#v; want INVALID_PAYLOAD error", response)
 	}
 }
+
+func TestRestingEnergyDoesNotDecrement(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	srv, err := NewServer(database, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = database.Exec(`
+		UPDATE characters 
+		SET status = 'RESTING', energy = 30, is_online = 1, action_start_tick = 1, action_end_tick = 10 
+		WHERE id = 'eldon_millwright'
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv.SetTickCount(2)
+	srv.ProcessTick()
+
+	var energy int
+	_ = database.QueryRow("SELECT energy FROM characters WHERE id = 'eldon_millwright'").Scan(&energy)
+	if energy < 30 {
+		t.Fatalf("Energy decremented while resting: got %d, want >= 30", energy)
+	}
+}
+
+func TestRestingEnergyOverMultipleTicks(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	srv, err := NewServer(database, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = database.Exec("UPDATE characters SET energy = 10, is_online = 1, current_location = home_location_id WHERE id = 'eldon_millwright'")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restPayload, _ := json.Marshal(map[string]int{"duration_ticks": 30})
+	srv.handleRest("eldon_millwright", "req_rest_multi", restPayload)
+
+	var startTick, endTick uint64
+	_ = database.QueryRow("SELECT action_start_tick, action_end_tick FROM characters WHERE id = 'eldon_millwright'").Scan(&startTick, &endTick)
+
+	prevEnergy := 10
+	for tick := startTick + 1; tick <= endTick; tick++ {
+		srv.SetTickCount(tick)
+		srv.ProcessTick()
+
+		var energy int
+		var status string
+		_ = database.QueryRow("SELECT energy, status FROM characters WHERE id = 'eldon_millwright'").Scan(&energy, &status)
+		t.Logf("Tick %d: status=%s, energy=%d", tick, status, energy)
+		if status == "RESTING" && energy < prevEnergy {
+			t.Fatalf("At tick %d, resting character energy decremented from %d to %d", tick, prevEnergy, energy)
+		}
+		prevEnergy = energy
+	}
+
+	// Test one tick after rest completion (tick 31) while at home
+	srv.SetTickCount(endTick + 1)
+	srv.ProcessTick()
+
+	var finalEnergy int
+	_ = database.QueryRow("SELECT energy FROM characters WHERE id = 'eldon_millwright'").Scan(&finalEnergy)
+	if finalEnergy != 60 { // 10 + 50 restored, and no decay at home
+		t.Fatalf("Expected final energy 60 after resting at home, got %d", finalEnergy)
+	}
+}

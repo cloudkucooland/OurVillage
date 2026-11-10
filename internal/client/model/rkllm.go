@@ -175,7 +175,7 @@ func NewRkllmEngine(cfg RkllmEngineConfig) (*RkllmEngine, error) {
 	}
 	libPath := cfg.LibraryPath
 	if libPath == "" {
-		libPath = "/usr/lib/librkllm.so"
+		libPath = "/usr/lib/librkllmrt.so"
 	}
 
 	lib, err := purego.Dlopen(libPath, purego.RTLD_NOW)

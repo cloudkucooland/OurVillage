@@ -71,6 +71,8 @@ func (m PlayerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			m.quitting = true
 			return m, tea.Quit
+		case tea.KeyCtrlL:
+			return m, tea.ClearScreen
 		case tea.KeyTab:
 			m.tab = (m.tab + 1) % 3
 			return m, nil

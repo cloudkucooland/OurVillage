@@ -427,27 +427,32 @@ func (s *Server) ProcessTick() {
 		}
 	}
 
-	// 1.5. Apply passive hunger and energy decay per tick for idle characters
+	// 1.5. Apply passive hunger and energy decay per tick for idle online characters
 	_, _ = s.db.Exec(fmt.Sprintf(`
 		UPDATE characters 
-		SET hunger = MAX(0, hunger - %d),
-		    energy = MAX(0, energy - %d)
-		WHERE status = 'IDLE'
-	`, hungerRate, energyRate))
+		SET hunger = MAX(0, hunger - %d)
+		WHERE status = 'IDLE' AND is_online = 1
+	`, hungerRate))
 
-	// Characters at zero hunger lose health each tick, regardless of action status.
+	_, _ = s.db.Exec(fmt.Sprintf(`
+		UPDATE characters 
+		SET energy = MAX(0, energy - %d)
+		WHERE status = 'IDLE' AND is_online = 1 AND current_location != home_location_id
+	`, energyRate))
+
+	// Online characters at zero hunger lose health each tick, regardless of action status.
 	_, _ = s.db.Exec(fmt.Sprintf(`
 		UPDATE characters
 		SET health = MAX(0, health - %d)
-		WHERE hunger <= 0
+		WHERE hunger <= 0 AND is_online = 1
 	`, starvationRate))
 
-	// 1.6. Apply environmental temperature health decay if too cold (< minTemp) or too hot (> maxTemp) for characters outdoors
+	// 1.6. Apply environmental temperature health decay if too cold (< minTemp) or too hot (> maxTemp) for online characters outdoors
 	if temperature < minTemp || temperature > maxTemp {
 		_, _ = s.db.Exec(fmt.Sprintf(`
 			UPDATE characters 
 			SET health = MAX(0, health - %d)
-			WHERE current_location IN (SELECT id FROM locations WHERE is_indoor = 0)
+			WHERE current_location IN (SELECT id FROM locations WHERE is_indoor = 0) AND is_online = 1
 		`, weatherRate))
 	}
 

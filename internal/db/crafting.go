@@ -62,9 +62,67 @@ var DefaultWorkstations = []Workstation{
 	{ID: "brew_cask", Name: "Fermentation Cask", LocationID: "tavern", EquipmentPresent: "Fermentation casks & presses", CraftingDomain: "Ale, cider, fruit wine"},
 	{ID: "apothecary_kit", Name: "Apothecary Lab", LocationID: "herbalist", EquipmentPresent: "Mortar & pestle, alembic", CraftingDomain: "Remedies, tinctures, dried herbs"},
 	{ID: "timber_saw", Name: "Timber Pit Saw", LocationID: "lumberjack_lodge", EquipmentPresent: "Pit saws, shaping benches", CraftingDomain: "Planks, beams, firewood bundles"},
+	{ID: "carpenter_bench", Name: "Carpenter's Workbench", LocationID: "lumberjack_lodge", EquipmentPresent: "Carving benches, hand saws, planes", CraftingDomain: "Wooden furniture, wheelbarrows, buckets, bowls"},
 }
 
 var DefaultRecipes = []Recipe{
+	{
+		ID:              "craft_wheelbarrow",
+		Name:            "Crafting Wheelbarrow",
+		RequiredStation: "carpenter_bench",
+		OutputItemID:    "wheelbarrow",
+		OutputQuantity:  1,
+		DurationTicks:   20,
+		EnergyCost:      15,
+		RequiredSkillID: "crafting",
+		MinSkillLevel:   2,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "wood_log", Quantity: 2},
+			{ItemID: "iron_ingot", Quantity: 1},
+		},
+	},
+	{
+		ID:              "craft_bucket",
+		Name:            "Crafting Wooden Bucket",
+		RequiredStation: "carpenter_bench",
+		OutputItemID:    "bucket",
+		OutputQuantity:  1,
+		DurationTicks:   8,
+		EnergyCost:      6,
+		RequiredSkillID: "crafting",
+		MinSkillLevel:   1,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "wood_log", Quantity: 1},
+		},
+	},
+	{
+		ID:              "craft_stool",
+		Name:            "Crafting Wooden Stool",
+		RequiredStation: "carpenter_bench",
+		OutputItemID:    "wooden_stool",
+		OutputQuantity:  1,
+		DurationTicks:   10,
+		EnergyCost:      8,
+		RequiredSkillID: "crafting",
+		MinSkillLevel:   1,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "wood_log", Quantity: 1},
+		},
+	},
+	{
+		ID:              "craft_bowl",
+		Name:            "Carving Wooden Bowl",
+		RequiredStation: "carpenter_bench",
+		OutputItemID:    "wooden_bowl",
+		OutputQuantity:  2,
+		DurationTicks:   4,
+		EnergyCost:      3,
+		RequiredSkillID: "crafting",
+		MinSkillLevel:   1,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "wood_log", Quantity: 1},
+		},
+	},
 	{
 		ID:              "mill_flour",
 		Name:            "Milling Flour",

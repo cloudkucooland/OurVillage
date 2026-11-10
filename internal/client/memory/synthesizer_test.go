@@ -61,8 +61,18 @@ func TestReflectionSynthesizer_PersistsProjectUpdatesFromActionOutcomes(t *testi
 	if err := synth.SynthesizeNextBatch(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(statuses) != 2 || !strings.Contains(statuses[0], "started") || !strings.Contains(statuses[1], "complete") {
-		t.Fatalf("synthesis statuses = %#v; want start and completion", statuses)
+	hasProjectStarted := false
+	hasProjectComplete := false
+	for _, status := range statuses {
+		if strings.Contains(status, "updating personal projects — started") {
+			hasProjectStarted = true
+		}
+		if strings.Contains(status, "updating personal projects — complete") {
+			hasProjectComplete = true
+		}
+	}
+	if !hasProjectStarted || !hasProjectComplete {
+		t.Fatalf("synthesis statuses = %#v; want project update start and completion", statuses)
 	}
 	projects, err := store.GetProjects(true, 10)
 	if err != nil || len(projects) != 1 || projects[0].UpdatedTick != 30 {
@@ -149,5 +159,45 @@ func TestReflectionSynthesizer_SocialPresenceThrottling(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("expected 2 remaining events due to batch limit 1 throttling, got %d", count)
+	}
+}
+
+func TestReflectionSynthesizer_SkipsStalePeersNotEncounteredRecently(t *testing.T) {
+	store, err := NewClientMemoryStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	// Old event for mira at tick 10 (>96 ticks older than latestTick 150)
+	if err := store.AddEvent(10, "mira", "CHAT", "Old chat with Mira."); err != nil {
+		t.Fatal(err)
+	}
+	// Recent event to push latestTick to 150
+	if err := store.AddEvent(150, "gideon", "CHAT", "Recent chat with Gideon."); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := model.NewMockEngine()
+	generateCalled := 0
+	engine.SetGenerator(func(ctx context.Context, prompt string, opts model.GenerationOptions) (string, error) {
+		generateCalled++
+		if strings.Contains(prompt, "mira") {
+			t.Fatal("should not generate reflection for stale peer mira")
+		}
+		return `{"reflection":"Gideon is working at the forge.","salience":5,"summary":"Gideon works hard.","commitments":[]}`, nil
+	})
+
+	synth := NewReflectionSynthesizer(store, engine, "elda", 0, 0)
+	if err := synth.SynthesizeNextBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	var count int
+	if err := store.db.QueryRow("SELECT COUNT(*) FROM client_event_history").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("expected all events (including skipped old peer events) to be processed and pruned, got %d remaining", count)
 	}
 }

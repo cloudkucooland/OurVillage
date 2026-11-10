@@ -62,6 +62,9 @@ var DefaultItems = []ItemSeed{
 	{ID: "woven_basket", Name: "Woven Basket", Description: "Woven from river reeds; ideal for berries and herbs.", WeightKg: 0.5, IsContainer: true, CapacityKg: 30.0, SlotLimit: 8},
 	{ID: "leather_backpack", Name: "Leather Backpack", Description: "Crafted by Tanner/Tailor; worn in back slot.", WeightKg: 1.5, IsContainer: true, CapacityKg: 45.0, SlotLimit: 12},
 	{ID: "wheelbarrow", Name: "Wheelbarrow", Description: "Sturdy wooden wheelbarrow requiring two hands to push.", WeightKg: 8.0, IsContainer: true, CapacityKg: 100.0, SlotLimit: 20},
+	{ID: "bucket", Name: "Wooden Bucket", Description: "A sturdy wooden bucket bound with iron strips.", WeightKg: 1.5, IsContainer: true, CapacityKg: 10.0, SlotLimit: 2},
+	{ID: "wooden_stool", Name: "Wooden Stool", Description: "A simple, hand-crafted wooden stool for sitting.", WeightKg: 3.0},
+	{ID: "wooden_bowl", Name: "Wooden Bowl", Description: "A smooth carved wooden bowl for food or broth.", WeightKg: 0.5},
 	{ID: "draft_horse_cart", Name: "Draft Horse & Cart", Description: "A heavy cart hitched to a draft horse for hauling bulk goods.", WeightKg: 45.0, IsContainer: true, CapacityKg: 350.0, SlotLimit: 40},
 
 	// RFC 007 Foraging Primary and Secondary Items

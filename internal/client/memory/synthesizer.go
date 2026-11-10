@@ -178,6 +178,19 @@ func (s *ReflectionSynthesizer) SynthesizeNextBatch(ctx context.Context) error {
 
 	var batchErr error
 	for peerID, peerEvents := range eventsByPeer {
+		var peerMaxTick uint64
+		for _, ev := range peerEvents {
+			if ev.Tick > peerMaxTick {
+				peerMaxTick = ev.Tick
+			}
+		}
+
+		if latestTick >= 96 && latestTick-peerMaxTick > 96 {
+			log.Printf("[Synthesizer] Skipping reflection for %s: not encountered recently (latest event tick %d vs latest tick %d)", peerID, peerMaxTick, latestTick)
+			completedIDs = append(completedIDs, eventIDs(peerEvents)...)
+			continue
+		}
+
 		previous, getErr := s.store.GetRelationship(peerID)
 		if getErr != nil && !errors.Is(getErr, sql.ErrNoRows) {
 			batchErr = errors.Join(batchErr, fmt.Errorf("load relationship %s: %w", peerID, getErr))
