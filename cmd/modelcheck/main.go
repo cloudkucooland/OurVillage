@@ -104,12 +104,33 @@ func main() {
 
 	log.Printf("[ModelCheck] Found %d models for backend %s in %q", len(modelPaths), backend, *modelsDirFlag)
 
+	systemPromptHeader := `You are an AI agent in OurVillage. Respond ONLY with valid JSON matching the intent schema.
+Valid Action Enums: MOVE, TRAVEL, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, PLANT, HARVEST, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, LOOK, STATUS, BUY, SELL, RESTOCK, EAT, DRINK, REST.
+Schema format:
+{
+  "thought": "<reasoning>",
+  "action": "<ACTION_ENUM>",
+  "payload": { ... }
+}
+
+Examples:
+- Move: {"thought": "Walking to mill", "action": "MOVE", "payload": {"target_location": "grain_mill"}}
+- Chat: {"thought": "Greeting John", "action": "CHAT", "payload": {"message": "Hello John!"}}
+- Craft: {"thought": "Making workbench", "action": "CRAFT", "payload": {"recipe_id": "workbench"}}
+
+Task: `
+
 	// Test prompts suite based on OurVillage game data
-	prompts := []string{
-		`You are Martha the Miller in OurVillage. You are currently at village_square. You need to walk to the grain_mill to start grinding flour. Output valid JSON matching the intent schema with thought, action, and payload.`,
-		`You are Martha the Miller. You are at the forest_edge. You need to gather firewood to heat the mill. Output valid JSON matching the intent schema with thought, action, and payload.`,
-		`You are Martha the Miller. You are at the woodworking_shop. You have timber and tools. You need to craft a workbench. Output valid JSON matching the intent schema with thought, action, and payload.`,
-		`You are Martha the Miller. You encounter John the Blacksmith at the tavern. Send a friendly chat message asking about iron prices. Output valid JSON matching the intent schema with thought, action, and payload.`,
+	rawPrompts := []string{
+		`You are Martha the Miller in OurVillage. You are currently at village_square. You need to walk to the grain_mill to start grinding flour.`,
+		`You are Martha the Miller. You are at the forest_edge. You need to gather firewood to heat the mill.`,
+		`You are Martha the Miller. You are at the woodworking_shop. You have timber and tools. You need to craft a workbench.`,
+		`You are Martha the Miller. You encounter John the Blacksmith at the tavern. Send a friendly chat message asking about iron prices.`,
+	}
+
+	var prompts []string
+	for _, p := range rawPrompts {
+		prompts = append(prompts, systemPromptHeader+p)
 	}
 
 	contextSizes := []int{1024, 2048, 4096, 8192, 16384}
@@ -164,7 +185,7 @@ func main() {
 					Grammar:     grammarContent,
 				}
 
-				output, err := engine.Generate(ctx, prompt, genOpts)
+				output, _ := engine.Generate(ctx, prompt, genOpts)
 				duration := time.Since(startTime)
 				durationMs := duration.Milliseconds()
 
@@ -182,31 +203,19 @@ func main() {
 				}
 
 				jsonValid := false
-				var rawMap map[string]interface{}
-				if err == nil && json.Unmarshal([]byte(output), &rawMap) == nil {
+				intentValid := false
+				var valErrStr string
+
+				// Use production ParseAndRepairIntent and SanitizeAndExtractJSON
+				if _, parseErr := model.SanitizeAndExtractJSON(output); parseErr == nil {
 					jsonValid = true
 				}
 
-				intentValid := false
-				var valErrStr string
-				if jsonValid {
-					// Try validating via dispatcher.ValidateIntent
-					var intent dispatcher.Intent
-					if json.Unmarshal([]byte(output), &intent) == nil {
-						if _, vErr := dispatcher.ValidateIntent(intent); vErr == nil {
-							intentValid = true
-						} else {
-							valErrStr = vErr.Error()
-						}
-					} else {
-						valErrStr = "failed to unmarshal into dispatcher.Intent"
-					}
+				if _, valErr := dispatcher.ParseAndRepairIntent(output); valErr == nil {
+					jsonValid = true
+					intentValid = true
 				} else {
-					if err != nil {
-						valErrStr = err.Error()
-					} else {
-						valErrStr = "invalid json output"
-					}
+					valErrStr = valErr.Error()
 				}
 
 				results = append(results, BenchmarkResult{
