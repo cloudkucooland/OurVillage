@@ -61,19 +61,28 @@ func ValidateIntent(intent Intent) (Intent, error) {
 	}
 
 	actionUpper := strings.ToUpper(strings.TrimSpace(intent.Action))
+
+	switch actionUpper {
+	case "WALK", "WALK_TO", "MOVE_TO", "GO_TO":
+		actionUpper = "MOVE"
+	case "GATHER", "GATHER_FIREWOOD", "COLLECT":
+		actionUpper = "FORAGE"
+	case "GIVE":
+		actionUpper = "TRANSFER"
+	case "DRINK":
+		actionUpper = "EAT"
+	case "CHAT_MESSAGE", "APPROACH", "ASK":
+		actionUpper = "CHAT"
+	case "CHECK_INVENTORY":
+		actionUpper = "STATUS"
+	case "CRAFT_WORKBENCH":
+		actionUpper = "CRAFT"
+	}
+
 	if !IsValidAction(actionUpper) {
 		return intent, fmt.Errorf("invalid action enum %q: must be one of MOVE, TRAVEL, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, PLANT, HARVEST, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, SELL, RESTOCK, EAT, DRINK, REST", intent.Action)
 	}
 
-	if actionUpper == "COLLECT" {
-		actionUpper = "FORAGE"
-	}
-	if actionUpper == "GIVE" {
-		actionUpper = "TRANSFER"
-	}
-	if actionUpper == "DRINK" {
-		actionUpper = "EAT"
-	}
 	intent.Action = actionUpper
 
 	// Validate action-specific payload constraints
