@@ -84,7 +84,6 @@ func GenerateIntentWithRetry(
 
 		log.Printf("[Intent Repair] Attempt %d failed validation: %v. Retrying with correction...", attempt+1, err)
 		lastErr = err
-		// Append corrective instruction for the next retry attempt
 		correction := fmt.Sprintf(
 			"Your previous output failed validation: %s. Respond ONLY with valid JSON having 'thought', 'action', and 'payload'. Do not invent missing action parameters or substitute defaults; choose another action if the required information is unavailable.",
 			err.Error(),
@@ -95,7 +94,7 @@ func GenerateIntentWithRetry(
 		if intent.Action == "TRAVEL" {
 			correction += " For TRAVEL, choose the final destination's exact location ID; the system will plan each connected movement step."
 		}
-		currentPrompt = fmt.Sprintf("%s\n\n[CORRECTION REQUIRED - ATTEMPT %d]: %s", prompt, attempt+1, correction)
+		currentPrompt = fmt.Sprintf("%s\n\n[CORRECTION REQUIRED]: %s", prompt, correction)
 	}
 
 	return Intent{}, fmt.Errorf("intent generation failed after %d attempts: %w", maxRetries+1, lastErr)
