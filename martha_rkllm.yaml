@@ -10,19 +10,22 @@ model:
   provider: "rkllm"
   rkllm:
     library_path: "/usr/lib/librkllmrt.so"
-    model_path: "/home/scot/rkllama-models/qwen3-4b-16k/qwen3-4b.rkllm"
+    # model_path: "/home/scot/rkllama-models/qwen3-4b-16k/qwen3-4b.rkllm"
     # context_size: 16384
+    # model_path: "/home/scot/rkllama-models/smolvlm-instruct-Prince-1.rkllm"
     # context_size: 8192
+    model_path: "/home/scot/rkllama-models/qwen3.5-4b-4k-HanzoHuang.rkllm"
     context_size: 4096
-    temperature: 0.7
+    temperature: 0.2 # 0.7 for creativity, 0.1 if JSON gen fails
     top_p: 0.9
+    enable_thinking: false
 
 memory:
   db_path: "~/.agentmud/memory_martha.db"
-  max_reflections_per_peer: 7
+  max_reflections_per_peer: 5
 
 cognition:
-  tick_interval_debounce_ms: 2000
+  tick_interval_debounce_ms: 4000
   chat_response_probability: 0.90
-  max_sensory_log_lines: 10
-  reflection_interval_ticks: 60
+  max_sensory_log_lines: 10 
+  reflection_interval_ticks: 120
