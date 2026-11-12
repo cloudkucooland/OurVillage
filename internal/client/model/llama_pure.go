@@ -41,7 +41,7 @@ func NewLlamaPureEngine(cfg LlamaPureEngineConfig) (*LlamaPureEngine, error) {
 
 	libPath := cfg.LibraryPath
 	if libPath == "" {
-		libPath = "/usr/local/lib/libllama.so"
+		libPath = "/usr/local/lib/libllama.so.0.9.0"
 	}
 
 	// Initialize dynamic symbols via purego

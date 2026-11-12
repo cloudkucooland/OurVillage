@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -30,14 +31,16 @@ import (
 )
 
 type Server struct {
-	mqttServer  *mqtt.Server
-	db          *sql.DB
-	authHook    *DBAuthHook
-	config      *ServerConfig
-	mu          sync.RWMutex
-	tickCount   uint64
-	weather     string
-	temperature float64
+	mqttServer    *mqtt.Server
+	db            *sql.DB
+	authHook      *DBAuthHook
+	config        *ServerConfig
+	mu            sync.RWMutex
+	tickCount     uint64
+	weather       string
+	temperature   float64
+	weatherCtx    context.Context
+	weatherCancel context.CancelFunc
 }
 
 type TickPayload struct {
@@ -215,14 +218,18 @@ func NewServerWithConfig(database *sql.DB, cfg *ServerConfig, listenAddr ...stri
 		defTemp = 20.0
 	}
 
+	wCtx, wCancel := context.WithCancel(context.Background())
+
 	srv := &Server{
-		mqttServer:  mqttServer,
-		db:          database,
-		authHook:    authHook,
-		config:      cfg,
-		tickCount:   loadedTick,
-		weather:     defWeather,
-		temperature: defTemp,
+		mqttServer:    mqttServer,
+		db:            database,
+		authHook:      authHook,
+		config:        cfg,
+		tickCount:     loadedTick,
+		weather:       defWeather,
+		temperature:   defTemp,
+		weatherCtx:    wCtx,
+		weatherCancel: wCancel,
 	}
 	if loadedTick > 0 {
 		log.Printf("[Server] Resuming from persisted tick count: %d", loadedTick)
@@ -239,6 +246,9 @@ func NewServerWithConfig(database *sql.DB, cfg *ServerConfig, listenAddr ...stri
 }
 
 func (s *Server) Start() error {
+	// Start OpenWeatherMap weather polling worker
+	go s.startWeatherPolling(s.weatherCtx)
+
 	// Start MQTT server in background
 	go func() {
 		log.Println("Starting Mochi-MQTT broker on :1883...")
@@ -261,6 +271,9 @@ func (s *Server) Start() error {
 
 func (s *Server) Shutdown() error {
 	log.Println("Shutting down AgentMUD server...")
+	if s.weatherCancel != nil {
+		s.weatherCancel()
+	}
 	s.mu.RLock()
 	currentTick := s.tickCount
 	s.mu.RUnlock()
@@ -271,6 +284,9 @@ func (s *Server) Shutdown() error {
 }
 
 func (s *Server) StartTUI() error {
+	// Start OpenWeatherMap weather polling worker
+	go s.startWeatherPolling(s.weatherCtx)
+
 	logPath := os.Getenv("AGENTMUD_LOG")
 	if logPath == "" {
 		logPath = "agentmud-server.log"
@@ -401,10 +417,10 @@ func (s *Server) ProcessTick() {
 		log.Printf("Failed to process spoilage ticks: %v", err)
 	}
 
-	hungerRate := 1
-	energyRate := 1
-	starvationRate := 1
-	weatherRate := 1
+	hungerRate := 1.5
+	energyRate := 1.5
+	starvationRate := 1.0
+	weatherRate := 1.0
 	minTemp := 10.0
 	maxTemp := 30.0
 
@@ -430,13 +446,13 @@ func (s *Server) ProcessTick() {
 	// 1.5. Apply passive hunger and energy decay per tick for idle online characters
 	_, _ = s.db.Exec(fmt.Sprintf(`
 		UPDATE characters 
-		SET hunger = MAX(0, hunger - %d)
+		SET hunger = MAX(0, CAST(ROUND(CAST(hunger AS REAL) - %.2f) AS INTEGER))
 		WHERE status = 'IDLE' AND is_online = 1
 	`, hungerRate))
 
 	_, _ = s.db.Exec(fmt.Sprintf(`
 		UPDATE characters 
-		SET energy = MAX(0, energy - %d)
+		SET energy = MAX(0, CAST(ROUND(CAST(energy AS REAL) - %.2f) AS INTEGER))
 		WHERE status = 'IDLE' AND is_online = 1 AND current_location != home_location_id
 	`, energyRate))
 
@@ -445,7 +461,7 @@ func (s *Server) ProcessTick() {
 		UPDATE characters
 		SET health = MAX(0, health - %d)
 		WHERE hunger <= 0 AND is_online = 1
-	`, starvationRate))
+	`, int(starvationRate)))
 
 	// 1.6. Apply environmental temperature health decay if too cold (< minTemp) or too hot (> maxTemp) for online characters outdoors
 	if temperature < minTemp || temperature > maxTemp {
@@ -453,7 +469,7 @@ func (s *Server) ProcessTick() {
 			UPDATE characters 
 			SET health = MAX(0, health - %d)
 			WHERE current_location IN (SELECT id FROM locations WHERE is_indoor = 0) AND is_online = 1
-		`, weatherRate))
+		`, int(weatherRate)))
 	}
 
 	s.forceRestForDepletedCharacters(currentTick)

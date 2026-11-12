@@ -12,12 +12,20 @@ import (
 )
 
 type RkllmEngineConfig struct {
-	LibraryPath string
-	ModelPath   string
-	ContextSize int
-	Temperature float32
-	TopP        float32
-	MaxTokens   int
+	LibraryPath      string
+	ModelPath        string
+	ContextSize      int
+	Temperature      float32
+	TopP             float32
+	TopK             int
+	RepeatPenalty    float32
+	FrequencyPenalty float32
+	PresencePenalty  float32
+	NKeep            int
+	SkipSpecialToken bool
+	IgnoreEosToken   bool
+	MaxTokens        int
+	EnableThinking   bool
 }
 
 type LLMHandle unsafe.Pointer
@@ -220,6 +228,31 @@ func NewRkllmEngine(cfg RkllmEngineConfig) (*RkllmEngine, error) {
 	} else {
 		param.TopP = 0.9
 	}
+	if cfg.TopK > 0 {
+		param.TopK = int32(cfg.TopK)
+	} else if param.TopK == 0 {
+		param.TopK = 40
+	}
+	if cfg.RepeatPenalty > 0 {
+		param.RepeatPenalty = cfg.RepeatPenalty
+	} else if param.RepeatPenalty == 0 {
+		param.RepeatPenalty = 1.15
+	}
+	if cfg.FrequencyPenalty != 0 {
+		param.FrequencyPen = cfg.FrequencyPenalty
+	}
+	if cfg.PresencePenalty != 0 {
+		param.PresencePen = cfg.PresencePenalty
+	}
+	if cfg.NKeep > 0 {
+		param.NKeep = int32(cfg.NKeep)
+	}
+	if cfg.SkipSpecialToken {
+		param.SkipSpecialToken = true
+	}
+	if cfg.IgnoreEosToken {
+		param.IgnoreEosToken = true
+	}
 	// Enable NPU cores
 	param.ExtendParam[0] = 7
 
@@ -305,21 +338,30 @@ func (e *RkllmEngine) Stream(ctx context.Context, prompt string, opts Generation
 	defer runtime.KeepAlive(promptSlice)
 
 	input := RKLLMInput{
-		InputType:   RKLLM_INPUT_PROMPT,
-		PromptInput: promptPtr,
+		InputType:      RKLLM_INPUT_PROMPT,
+		PromptInput:    promptPtr,
+		EnableThinking: e.config.EnableThinking,
 	}
 
 	sampling := RKLLMSamplingParam{
-		Temperature:   opts.Temperature,
-		TopP:          opts.TopP,
-		RepeatPenalty: 1.15,
-		TopK:          40,
+		Temperature:      opts.Temperature,
+		TopP:             opts.TopP,
+		TopK:             int32(e.config.TopK),
+		RepeatPenalty:    e.config.RepeatPenalty,
+		FrequencyPenalty: e.config.FrequencyPenalty,
+		PresencePenalty:  e.config.PresencePenalty,
 	}
 	if sampling.Temperature == 0 {
 		sampling.Temperature = e.config.Temperature
 	}
 	if sampling.TopP == 0 {
 		sampling.TopP = e.config.TopP
+	}
+	if sampling.TopK == 0 {
+		sampling.TopK = 40
+	}
+	if sampling.RepeatPenalty == 0 {
+		sampling.RepeatPenalty = 1.15
 	}
 
 	inferParam := RKLLMInferParam{

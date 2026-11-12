@@ -33,18 +33,38 @@ type BenchmarkResult struct {
 }
 
 type ModelReport struct {
-	ModelName   string            `json:"model_name"`
-	Backend     string            `json:"backend"`
-	ContextSize int               `json:"context_size"`
-	Results     []BenchmarkResult `json:"results"`
+	ModelName        string            `json:"model_name"`
+	Backend          string            `json:"backend"`
+	ContextSize      int               `json:"context_size"`
+	Temperature      float64           `json:"temperature"`
+	TopP             float64           `json:"top_p"`
+	TopK             int               `json:"top_k"`
+	RepeatPenalty    float64           `json:"repeat_penalty"`
+	FrequencyPenalty float64           `json:"frequency_penalty"`
+	PresencePenalty  float64           `json:"presence_penalty"`
+	NKeep            int               `json:"n_keep"`
+	SkipSpecialToken bool              `json:"skip_special_token"`
+	IgnoreEosToken   bool              `json:"ignore_eos_token"`
+	MaxTokens        int               `json:"max_tokens"`
+	EnableThinking   bool              `json:"enable_thinking"`
+	Results          []BenchmarkResult `json:"results"`
 }
 
 func main() {
 	backendFlag := flag.String("backend", "", "Model backend: llama-pure or rkllm (required)")
 	modelsDirFlag := flag.String("models-dir", ".", "Directory containing model files (*.gguf or *.rkllm)")
 	outputDirFlag := flag.String("output-dir", ".", "Directory to save JSON output reports")
-	maxTokensFlag := flag.Int("max-tokens", 256, "Maximum completion tokens")
+	maxTokensFlag := flag.Int("max-tokens", 512, "Maximum completion tokens")
 	tempFlag := flag.Float64("temperature", 0.2, "Sampling temperature")
+	topPFlag := flag.Float64("top-p", 0.9, "Top-P sampling")
+	topKFlag := flag.Int("top-k", 40, "Top-K sampling")
+	repeatPenaltyFlag := flag.Float64("repeat-penalty", 1.15, "Repeat penalty")
+	freqPenaltyFlag := flag.Float64("frequency-penalty", 0.0, "Frequency penalty")
+	presPenaltyFlag := flag.Float64("presence-penalty", 0.0, "Presence penalty")
+	nKeepFlag := flag.Int("n-keep", 0, "Number of tokens to keep in context")
+	skipSpecialTokenFlag := flag.Bool("skip-special-token", false, "Skip special tokens")
+	ignoreEosFlag := flag.Bool("ignore-eos", false, "Ignore EOS token")
+	enableThinkingFlag := flag.Bool("enable-thinking", false, "Enable thinking/reasoning token generation")
 	grammarFileFlag := flag.String("grammar-file", "config/grammars/agent_intent.gbnf", "Path to GBNF grammar file")
 	flag.Parse()
 
@@ -104,7 +124,7 @@ func main() {
 
 	log.Printf("[ModelCheck] Found %d models for backend %s in %q", len(modelPaths), backend, *modelsDirFlag)
 
-	systemPromptHeader := `You are an AI agent in OurVillage. Respond ONLY with valid JSON matching the intent schema.
+	systemPromptHeader := `You are an AI agent in OurVillage. Respond ONLY with valid JSON matching the intent schema. Keep "thought" concise (under 15 words).
 Valid Action Enums: MOVE, TRAVEL, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, PLANT, HARVEST, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, LOOK, STATUS, BUY, SELL, RESTOCK, EAT, DRINK, REST.
 Schema format:
 {
@@ -162,10 +182,19 @@ Task: `
 				})
 			} else {
 				engine, loadErr = model.NewRkllmEngine(model.RkllmEngineConfig{
-					ModelPath:   modelPath,
-					ContextSize: ctxSize,
-					Temperature: float32(*tempFlag),
-					MaxTokens:   *maxTokensFlag,
+					ModelPath:        modelPath,
+					ContextSize:      ctxSize,
+					Temperature:      float32(*tempFlag),
+					TopP:             float32(*topPFlag),
+					TopK:             *topKFlag,
+					RepeatPenalty:    float32(*repeatPenaltyFlag),
+					FrequencyPenalty: float32(*freqPenaltyFlag),
+					PresencePenalty:  float32(*presPenaltyFlag),
+					NKeep:            *nKeepFlag,
+					SkipSpecialToken: *skipSpecialTokenFlag,
+					IgnoreEosToken:   *ignoreEosFlag,
+					MaxTokens:        *maxTokensFlag,
+					EnableThinking:   *enableThinkingFlag,
 				})
 			}
 
@@ -238,10 +267,21 @@ Task: `
 			engine.Close()
 
 			report := ModelReport{
-				ModelName:   modelName,
-				Backend:     backend,
-				ContextSize: ctxSize,
-				Results:     results,
+				ModelName:        modelName,
+				Backend:          backend,
+				ContextSize:      ctxSize,
+				Temperature:      *tempFlag,
+				TopP:             *topPFlag,
+				TopK:             *topKFlag,
+				RepeatPenalty:    *repeatPenaltyFlag,
+				FrequencyPenalty: *freqPenaltyFlag,
+				PresencePenalty:  *presPenaltyFlag,
+				NKeep:            *nKeepFlag,
+				SkipSpecialToken: *skipSpecialTokenFlag,
+				IgnoreEosToken:   *ignoreEosFlag,
+				MaxTokens:        *maxTokensFlag,
+				EnableThinking:   *enableThinkingFlag,
+				Results:          results,
 			}
 
 			outFilename := fmt.Sprintf("%s-%dk.json", modelName, ctxSize/1024)

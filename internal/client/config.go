@@ -50,11 +50,20 @@ type MemoryConfig struct {
 
 // RkllmConfig parameterizes NPU-accelerated inference via librkllm.
 type RkllmConfig struct {
-	LibraryPath string  `yaml:"library_path" json:"library_path"`
-	ModelPath   string  `yaml:"model_path" json:"model_path"`
-	ContextSize int     `yaml:"context_size" json:"context_size"`
-	Temperature float64 `yaml:"temperature" json:"temperature"`
-	TopP        float64 `yaml:"top_p" json:"top_p"`
+	LibraryPath      string  `yaml:"library_path" json:"library_path"`
+	ModelPath        string  `yaml:"model_path" json:"model_path"`
+	ContextSize      int     `yaml:"context_size" json:"context_size"`
+	Temperature      float64 `yaml:"temperature" json:"temperature"`
+	TopP             float64 `yaml:"top_p" json:"top_p"`
+	TopK             int     `yaml:"top_k" json:"top_k"`
+	RepeatPenalty    float64 `yaml:"repeat_penalty" json:"repeat_penalty"`
+	FrequencyPenalty float64 `yaml:"frequency_penalty" json:"frequency_penalty"`
+	PresencePenalty  float64 `yaml:"presence_penalty" json:"presence_penalty"`
+	NKeep            int     `yaml:"n_keep" json:"n_keep"`
+	SkipSpecialToken bool    `yaml:"skip_special_token" json:"skip_special_token"`
+	IgnoreEosToken   bool    `yaml:"ignore_eos_token" json:"ignore_eos_token"`
+	MaxTokens        int     `yaml:"max_tokens" json:"max_tokens"`
+	EnableThinking   bool    `yaml:"enable_thinking" json:"enable_thinking"`
 }
 
 // LlamaPureConfig parameterizes embedded local inference via go-llama-pure.

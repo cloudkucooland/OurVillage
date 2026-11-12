@@ -39,11 +39,20 @@ func NewEngine(cfg *Config) (model.InferenceEngine, error) {
 
 	case "rkllm":
 		return model.NewRkllmEngine(model.RkllmEngineConfig{
-			LibraryPath: cfg.Model.Rkllm.LibraryPath,
-			ModelPath:   cfg.Model.Rkllm.ModelPath,
-			ContextSize: cfg.Model.Rkllm.ContextSize,
-			Temperature: float32(cfg.Model.Rkllm.Temperature),
-			TopP:        float32(cfg.Model.Rkllm.TopP),
+			LibraryPath:      cfg.Model.Rkllm.LibraryPath,
+			ModelPath:        cfg.Model.Rkllm.ModelPath,
+			ContextSize:      cfg.Model.Rkllm.ContextSize,
+			Temperature:      float32(cfg.Model.Rkllm.Temperature),
+			TopP:             float32(cfg.Model.Rkllm.TopP),
+			TopK:             cfg.Model.Rkllm.TopK,
+			RepeatPenalty:    float32(cfg.Model.Rkllm.RepeatPenalty),
+			FrequencyPenalty: float32(cfg.Model.Rkllm.FrequencyPenalty),
+			PresencePenalty:  float32(cfg.Model.Rkllm.PresencePenalty),
+			NKeep:            cfg.Model.Rkllm.NKeep,
+			SkipSpecialToken: cfg.Model.Rkllm.SkipSpecialToken,
+			IgnoreEosToken:   cfg.Model.Rkllm.IgnoreEosToken,
+			MaxTokens:        cfg.Model.Rkllm.MaxTokens,
+			EnableThinking:   cfg.Model.Rkllm.EnableThinking,
 		})
 
 	case "cloud-gemini", "gemini":

@@ -2,6 +2,7 @@ package server
 
 import (
 	"os"
+	"strconv"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -29,17 +30,22 @@ type ClockSection struct {
 }
 
 type DecaySection struct {
-	HungerRate           int `yaml:"hunger_rate" json:"hunger_rate"`
-	EnergyRate           int `yaml:"energy_rate" json:"energy_rate"`
-	StarvationHealthRate int `yaml:"starvation_health_rate" json:"starvation_health_rate"`
-	WeatherHealthRate    int `yaml:"weather_health_rate" json:"weather_health_rate"`
+	HungerRate           float64 `yaml:"hunger_rate" json:"hunger_rate"`
+	EnergyRate           float64 `yaml:"energy_rate" json:"energy_rate"`
+	StarvationHealthRate float64 `yaml:"starvation_health_rate" json:"starvation_health_rate"`
+	WeatherHealthRate    float64 `yaml:"weather_health_rate" json:"weather_health_rate"`
 }
 
 type WeatherSection struct {
-	MinSafeTemp    float64 `yaml:"min_safe_temp" json:"min_safe_temp"`
-	MaxSafeTemp    float64 `yaml:"max_safe_temp" json:"max_safe_temp"`
-	DefaultTemp    float64 `yaml:"default_temp" json:"default_temp"`
-	DefaultWeather string  `yaml:"default_weather" json:"default_weather"`
+	APIKey          string        `yaml:"api_key" json:"api_key"`
+	Lat             float64       `yaml:"lat" json:"lat"`
+	Lon             float64       `yaml:"lon" json:"lon"`
+	PollIntervalStr string        `yaml:"poll_interval" json:"poll_interval"`
+	PollInterval    time.Duration `yaml:"-" json:"-"`
+	MinSafeTemp     float64       `yaml:"min_safe_temp" json:"min_safe_temp"`
+	MaxSafeTemp     float64       `yaml:"max_safe_temp" json:"max_safe_temp"`
+	DefaultTemp     float64       `yaml:"default_temp" json:"default_temp"`
+	DefaultWeather  string        `yaml:"default_weather" json:"default_weather"`
 }
 
 type RestSection struct {
@@ -61,16 +67,21 @@ func DefaultConfig() *ServerConfig {
 			TickInterval:    90 * time.Second,
 		},
 		Decay: DecaySection{
-			HungerRate:           1,
-			EnergyRate:           1,
-			StarvationHealthRate: 1,
-			WeatherHealthRate:    1,
+			HungerRate:           1.5,
+			EnergyRate:           1.5,
+			StarvationHealthRate: 1.0,
+			WeatherHealthRate:    1.0,
 		},
 		Weather: WeatherSection{
-			MinSafeTemp:    10.0,
-			MaxSafeTemp:    30.0,
-			DefaultTemp:    20.0,
-			DefaultWeather: "clear",
+			APIKey:          "",
+			Lat:             45.5152,
+			Lon:             -122.6784,
+			PollIntervalStr: "15m",
+			PollInterval:    15 * time.Minute,
+			MinSafeTemp:     10.0,
+			MaxSafeTemp:     30.0,
+			DefaultTemp:     20.0,
+			DefaultWeather:  "clear",
 		},
 		Rest: RestSection{
 			ZeroEnergyDurationTicks: 30,
@@ -108,11 +119,39 @@ func LoadConfig(configPath string) (*ServerConfig, error) {
 		}
 	}
 
+	// Parse weather poll interval
+	if cfg.Weather.PollIntervalStr != "" {
+		if parsed, err := time.ParseDuration(cfg.Weather.PollIntervalStr); err == nil && parsed > 0 {
+			cfg.Weather.PollInterval = parsed
+		}
+	}
+
 	// Environment variable overrides
 	if envInterval := os.Getenv("AGENTMUD_TICK_INTERVAL"); envInterval != "" {
 		if parsed, err := time.ParseDuration(envInterval); err == nil && parsed > 0 {
 			cfg.Clock.TickInterval = parsed
 			cfg.Clock.TickIntervalStr = envInterval
+		}
+	}
+	if envAPIKey := os.Getenv("AGENTMUD_OPENWEATHER_API_KEY"); envAPIKey != "" {
+		cfg.Weather.APIKey = envAPIKey
+	} else if envAPIKey2 := os.Getenv("OPENWEATHER_API_KEY"); envAPIKey2 != "" {
+		cfg.Weather.APIKey = envAPIKey2
+	}
+	if envLat := os.Getenv("AGENTMUD_WEATHER_LAT"); envLat != "" {
+		if parsed, err := strconv.ParseFloat(envLat, 64); err == nil {
+			cfg.Weather.Lat = parsed
+		}
+	}
+	if envLon := os.Getenv("AGENTMUD_WEATHER_LON"); envLon != "" {
+		if parsed, err := strconv.ParseFloat(envLon, 64); err == nil {
+			cfg.Weather.Lon = parsed
+		}
+	}
+	if envPoll := os.Getenv("AGENTMUD_WEATHER_POLL_INTERVAL"); envPoll != "" {
+		if parsed, err := time.ParseDuration(envPoll); err == nil && parsed > 0 {
+			cfg.Weather.PollInterval = parsed
+			cfg.Weather.PollIntervalStr = envPoll
 		}
 	}
 	if envAddr := os.Getenv("AGENTMUD_MQTT_ADDR"); envAddr != "" {
