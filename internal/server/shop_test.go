@@ -66,3 +66,59 @@ func TestSellIntentPaysSellerAndReturnsStateSync(t *testing.T) {
 		t.Errorf("sale balances: farmer=%d millwright=%d, want farmer=1 millwright=14", farmerGold, millwrightGold)
 	}
 }
+
+func TestBuyIntentPublishesSystemMessageAndReturnsStateSync(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	if _, err := database.Exec(`
+		UPDATE characters SET current_location = 'tavern', gold = 10
+		WHERE id = 'eldon_millwright'
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	srv, err := NewServer(database, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	directMessages := make(chan []byte, 1)
+	if err := srv.mqttServer.Subscribe("world/agents/eldon_millwright/direct", 0, func(_ *mqtt.Client, _ packets.Subscription, pk packets.Packet) {
+		directMessages <- pk.Payload
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	systemMessages := make(chan string, 1)
+	if err := srv.mqttServer.Subscribe("world/locations/tavern/system", 0, func(_ *mqtt.Client, _ packets.Subscription, pk packets.Packet) {
+		systemMessages <- string(pk.Payload)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, err := json.Marshal(BuyPayload{ItemID: "ale_mug", Quantity: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.handleBuy("eldon_millwright", "req_buy_ale", payload)
+
+	select {
+	case response := <-directMessages:
+		assertCharacterStatusSync(t, response, "IDLE")
+	case <-time.After(time.Second):
+		t.Fatal("expected buy state sync")
+	}
+
+	select {
+	case sysMsg := <-systemMessages:
+		expected := "eldon_millwright bought 1 x ale_mug for 2 gold."
+		if sysMsg != expected {
+			t.Errorf("system message = %q, want %q", sysMsg, expected)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected location system message for purchase")
+	}
+}

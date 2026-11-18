@@ -20,7 +20,7 @@ func TestBuyItemStorefront(t *testing.T) {
 	}
 
 	// 1. Successful purchase of ale_mug at tavern (price: 2 gold)
-	err = BuyItem(database, "eldon_millwright", "ale_mug", 2)
+	_, err = BuyItem(database, "eldon_millwright", "ale_mug", 2)
 	if err != nil {
 		t.Fatalf("Expected successful purchase, got error: %v", err)
 	}
@@ -48,21 +48,21 @@ func TestBuyItemStorefront(t *testing.T) {
 
 	// 2. Insufficient gold test
 	// Eldon has 6 gold. Try to buy smithing_hammer (costs 10 gold each)
-	err = BuyItem(database, "eldon_millwright", "smithing_hammer", 1)
+	_, err = BuyItem(database, "eldon_millwright", "smithing_hammer", 1)
 	if err == nil {
 		t.Errorf("Expected INSUFFICIENT_GOLD error, got nil")
 	}
 
 	// 3. Item not for sale at location test (trying to buy bread at blacksmith instead of bakery)
 	_, _ = database.Exec("UPDATE characters SET current_location = 'blacksmith' WHERE id = 'eldon_millwright'")
-	err = BuyItem(database, "eldon_millwright", "bread", 1)
+	_, err = BuyItem(database, "eldon_millwright", "bread", 1)
 	if err == nil {
 		t.Errorf("Expected ITEM_NOT_FOR_SALE error, got nil")
 	}
 
 	// 4. Out of stock test (buy more than available stock)
 	_, _ = database.Exec("UPDATE characters SET current_location = 'tavern' WHERE id = 'eldon_millwright'")
-	err = BuyItem(database, "eldon_millwright", "ale_mug", 100)
+	_, err = BuyItem(database, "eldon_millwright", "ale_mug", 100)
 	if err == nil {
 		t.Errorf("Expected OUT_OF_STOCK error, got nil")
 	}
@@ -104,7 +104,7 @@ func TestBakerySeedAndOwnerStockTransfer(t *testing.T) {
 	if err := database.QueryRow(`SELECT gold FROM characters WHERE id = 'eldon_millwright'`).Scan(&initialGold); err != nil {
 		t.Fatal(err)
 	}
-	if err := BuyItem(database, "eldon_millwright", "wheat", 2); err != nil {
+	if _, err := BuyItem(database, "eldon_millwright", "wheat", 2); err != nil {
 		t.Fatalf("owner stock transfer: %v", err)
 	}
 	var finalGold, wheatInventory, remainingStock, remainingBuyOffer int

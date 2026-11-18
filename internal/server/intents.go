@@ -851,7 +851,7 @@ func (s *Server) handleBuy(agentID string, intentID string, rawPayload json.RawM
 	}
 
 	// 2. Perform the database transaction for item purchase
-	err = db.BuyItem(s.db, agentID, payload.ItemID, payload.Quantity)
+	totalCost, err := db.BuyItem(s.db, agentID, payload.ItemID, payload.Quantity)
 	if err != nil {
 		errStr := err.Error()
 		code := "BUY_FAILED"
@@ -870,14 +870,22 @@ func (s *Server) handleBuy(agentID string, intentID string, rawPayload json.RawM
 		return
 	}
 
-	eventPayload, _ := json.Marshal(payload)
-	_, _ = db.RecordEventLog(s.db, s.GetTickCount(), "BUY", agentID, "", currentLocation, eventPayload)
+	eventPayload := map[string]any{
+		"item_id": payload.ItemID, "quantity": payload.Quantity, "gold_paid": totalCost,
+	}
+	if _, err := db.RecordEventLog(s.db, s.GetTickCount(), "BUY", agentID, "", currentLocation, eventPayload); err != nil {
+		log.Printf("[Server Warning] Failed to record buy event for %s: %v", agentID, err)
+	}
 
 	// 3. Notify the location owner (if present)
 	s.notifyLocationOwnerOfPurchase(currentLocation, agentID, payload.ItemID, payload.Quantity)
 
+	sysTopic := fmt.Sprintf("world/locations/%s/system", currentLocation)
+	sysMsg := fmt.Sprintf("%s bought %d x %s for %d gold.", agentID, payload.Quantity, payload.ItemID, totalCost)
+	_ = s.mqttServer.Publish(sysTopic, []byte(sysMsg), false, 0)
+
 	// 4. Send updated STATE_SYNC response to buyer
-	msg := fmt.Sprintf("Successfully purchased %d x %s", payload.Quantity, payload.ItemID)
+	msg := fmt.Sprintf("Bought %d x %s for %d gold", payload.Quantity, payload.ItemID, totalCost)
 	s.handleLook(agentID, intentID, msg)
 }
 

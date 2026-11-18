@@ -138,14 +138,14 @@ func ensureBakerySetup(db *sql.DB) error {
 }
 
 // BuyItem executes a atomic transaction purchase of items from a location's storefront shop inventory.
-func BuyItem(db *sql.DB, characterID string, itemID string, quantity int) error {
+func BuyItem(db *sql.DB, characterID string, itemID string, quantity int) (int64, error) {
 	if quantity <= 0 {
-		return fmt.Errorf("quantity must be greater than 0")
+		return 0, fmt.Errorf("quantity must be greater than 0")
 	}
 
 	tx, err := db.Begin()
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
@@ -154,60 +154,60 @@ func BuyItem(db *sql.DB, characterID string, itemID string, quantity int) error 
 	var characterGold int
 	err = tx.QueryRow("SELECT current_location, gold FROM characters WHERE id = ?", characterID).Scan(&locationID, &characterGold)
 	if err != nil {
-		return fmt.Errorf("character not found: %w", err)
+		return 0, fmt.Errorf("character not found: %w", err)
 	}
 
 	// 2. Check shop stock and price
 	var priceGold, stockQty int
 	err = tx.QueryRow("SELECT price_gold, stock_quantity FROM location_shop_items WHERE location_id = ? AND item_id = ?", locationID, itemID).Scan(&priceGold, &stockQty)
 	if err == sql.ErrNoRows {
-		return fmt.Errorf("ITEM_NOT_FOR_SALE: item '%s' is not for sale at this location", itemID)
+		return 0, fmt.Errorf("ITEM_NOT_FOR_SALE: item '%s' is not for sale at this location", itemID)
 	} else if err != nil {
-		return fmt.Errorf("failed to query shop inventory: %w", err)
+		return 0, fmt.Errorf("failed to query shop inventory: %w", err)
 	}
 
 	if stockQty < quantity {
-		return fmt.Errorf("OUT_OF_STOCK: requested %d, available %d", quantity, stockQty)
+		return 0, fmt.Errorf("OUT_OF_STOCK: requested %d, available %d", quantity, stockQty)
 	}
 
 	totalCost := priceGold * quantity
 	var ownerID sql.NullString
 	if err := tx.QueryRow("SELECT owner_id FROM locations WHERE id = ?", locationID).Scan(&ownerID); err != nil {
-		return fmt.Errorf("failed to query shop owner: %w", err)
+		return 0, fmt.Errorf("failed to query shop owner: %w", err)
 	}
 	isOwnerPurchase := ownerID.Valid && ownerID.String == characterID
 	if !isOwnerPurchase && characterGold < totalCost {
-		return fmt.Errorf("INSUFFICIENT_GOLD: have %d gold, need %d gold", characterGold, totalCost)
+		return 0, fmt.Errorf("INSUFFICIENT_GOLD: have %d gold, need %d gold", characterGold, totalCost)
 	}
 
 	// 3. Check weight and capacity limits
 	weightInfo, err := GetCharacterWeightInfo(tx, characterID)
 	if err != nil {
-		return fmt.Errorf("failed to calculate weight info: %w", err)
+		return 0, fmt.Errorf("failed to calculate weight info: %w", err)
 	}
 
 	var itemWeight float64
 	err = tx.QueryRow("SELECT weight_kg FROM items WHERE id = ?", itemID).Scan(&itemWeight)
 	if err != nil {
-		return fmt.Errorf("item definition not found: %w", err)
+		return 0, fmt.Errorf("item definition not found: %w", err)
 	}
 
 	addedWeight := float64(quantity) * itemWeight
 	if weightInfo.TotalWeightKg+addedWeight > weightInfo.OverburdenLimitKg {
-		return fmt.Errorf("EXCEEDS_CARRYING_CAPACITY: cannot carry %.1f kg (overburden limit %.1f kg)", weightInfo.TotalWeightKg+addedWeight, weightInfo.OverburdenLimitKg)
+		return 0, fmt.Errorf("EXCEEDS_CARRYING_CAPACITY: cannot carry %.1f kg (overburden limit %.1f kg)", weightInfo.TotalWeightKg+addedWeight, weightInfo.OverburdenLimitKg)
 	}
 
 	var existingQty int
 	err = tx.QueryRow("SELECT quantity FROM inventories WHERE character_id = ? AND item_id = ?", characterID, itemID).Scan(&existingQty)
 	if (err == sql.ErrNoRows || existingQty == 0) && weightInfo.SlotsUsed >= weightInfo.MaxSlots {
-		return fmt.Errorf("INVENTORY_FULL: inventory slot limit (%d) reached", weightInfo.MaxSlots)
+		return 0, fmt.Errorf("INVENTORY_FULL: inventory slot limit (%d) reached", weightInfo.MaxSlots)
 	}
 
 	// 4. Move gold only for purchases between different characters. An owner
 	// retrieving shop stock is an internal transfer, not a sale to themselves.
 	if !isOwnerPurchase {
 		if _, err = tx.Exec("UPDATE characters SET gold = gold - ? WHERE id = ?", totalCost, characterID); err != nil {
-			return fmt.Errorf("failed to deduct gold from buyer: %w", err)
+			return 0, fmt.Errorf("failed to deduct gold from buyer: %w", err)
 		}
 	}
 
@@ -215,14 +215,14 @@ func BuyItem(db *sql.DB, characterID string, itemID string, quantity int) error 
 	if ownerID.Valid && ownerID.String != "" && !isOwnerPurchase {
 		_, err = tx.Exec("UPDATE characters SET gold = gold + ? WHERE id = ?", totalCost, ownerID.String)
 		if err != nil {
-			return fmt.Errorf("failed to credit store owner %s: %w", ownerID.String, err)
+			return 0, fmt.Errorf("failed to credit store owner %s: %w", ownerID.String, err)
 		}
 	}
 
 	// 6. Reduce stock but keep the offer row so any buy offer remains active.
 	_, err = tx.Exec("UPDATE location_shop_items SET stock_quantity = stock_quantity - ? WHERE location_id = ? AND item_id = ?", quantity, locationID, itemID)
 	if err != nil {
-		return fmt.Errorf("failed to update shop stock: %w", err)
+		return 0, fmt.Errorf("failed to update shop stock: %w", err)
 	}
 
 	// 7. Add item to buyer inventory
@@ -232,10 +232,10 @@ func BuyItem(db *sql.DB, characterID string, itemID string, quantity int) error 
 		ON CONFLICT(character_id, item_id) DO UPDATE SET quantity = quantity + ?
 	`, characterID, itemID, quantity, quantity)
 	if err != nil {
-		return fmt.Errorf("failed to update character inventory: %w", err)
+		return 0, fmt.Errorf("failed to update character inventory: %w", err)
 	}
 
-	return tx.Commit()
+	return int64(totalCost), tx.Commit()
 }
 
 // SellItem sells items to the current location's shop at its posted buy price.
