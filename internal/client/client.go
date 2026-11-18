@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -120,6 +121,7 @@ func BuildIntentMessage(actionCfg ActionConfig) ([]byte, error) {
 
 	intent := dispatcher.Intent{
 		IntentID: intentID,
+		Source:   "configured_action",
 		Action:   actionCfg.Action,
 		Payload:  payload,
 	}
@@ -163,6 +165,7 @@ func processActiveIntention(ctx context.Context, agentID string, ctxMgr *spatial
 		}
 		result, err := disp.Dispatch(ctx, dispatcher.Intent{
 			IntentID: dispatcher.GenerateIntentID(),
+			Source:   "routine_" + string(intention.Kind),
 			Action:   "MOVE",
 			Payload:  payload,
 		}, 10*time.Second)
@@ -220,6 +223,7 @@ func processActiveIntention(ctx context.Context, agentID string, ctxMgr *spatial
 	}
 	result, err := disp.Dispatch(ctx, dispatcher.Intent{
 		IntentID: dispatcher.GenerateIntentID(),
+		Source:   "routine_home_rest",
 		Action:   "REST",
 		Payload:  payload,
 	}, 10*time.Second)
@@ -273,6 +277,8 @@ func beginTravelIntention(intent dispatcher.Intent, agentID string, ctxMgr *spat
 		return true, err
 	}
 	ctxMgr.SetIntention(&intention)
+	log.Printf("[Travel Intention] agent=%s source=%s action=TRAVEL destination=%s kind=%s purpose=%q thought=%q",
+		agentID, intent.Source, intention.DestinationID, intention.Kind, intention.Purpose, intent.Thought)
 	return true, nil
 }
 
@@ -306,6 +312,11 @@ func RunClient(ctx context.Context, cfg *Config) error {
 	engine, err := NewEngine(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to initialize model engine: %w", err)
+	}
+	if _, ok := engine.(interface {
+		GeneratePriority(context.Context, string, model.GenerationOptions) (string, error)
+	}); !ok {
+		engine = model.NewQueuedEngine(engine, 64)
 	}
 	engine = model.NewLoggingEngine(engine, log.Default())
 	defer engine.Close()
@@ -518,7 +529,69 @@ func RunClient(ctx context.Context, cfg *Config) error {
 
 	idleTicks := 0
 	var intentionRunning atomic.Bool
+	decisionQueue := newDecisionScheduler()
+	chatGate := &chatTurnGate{}
+	var cognitionTurnMu sync.Mutex
+	const chatResponseCooldownTicks = 2
 	var activeMQTTClient mqtt.Client
+	var tryRunDecision func(mqtt.Client)
+	tryRunDecision = func(c mqtt.Client) {
+		if !ctxMgr.IsLocationSynced() || !strings.EqualFold(ctxMgr.Status(), "IDLE") || ctxMgr.Intention() != nil {
+			return
+		}
+		reasons, started := decisionQueue.BeginWithReasons()
+		if !started {
+			return
+		}
+		source := "autonomous:" + strings.Join(reasonStrings(reasons), ",")
+		idleTicks = 0
+		go func() {
+			defer func() {
+				cognitionTurnMu.Unlock()
+				decisionQueue.Finish()
+				if decisionQueue.Pending() {
+					tryRunDecision(c)
+				}
+			}()
+			cognitionTurnMu.Lock()
+			if !strings.EqualFold(ctxMgr.Status(), "IDLE") || ctxMgr.Intention() != nil {
+				decisionQueue.Mark(decisionActionDone)
+				return
+			}
+			log.Printf("[Decision Start] agent=%s source=%s tick=%d location=%s status=%s needs={hunger:%d energy:%d health:%d} gold=%d model=%s",
+				cfg.Client.AgentID, source, ctxMgr.CurrentTick(), ctxMgr.CurrentLocation(), ctxMgr.Status(),
+				ctxMgr.Hunger(), ctxMgr.Energy(), ctxMgr.Health(), ctxMgr.Gold(), model.EngineLabel(engine))
+			prompt := ctxMgr.BuildPrompt(fetchPeerMemories(), fetchLocationMemories())
+			log.Printf("[Decision Prompt] agent=%s source=%s bytes=%d", cfg.Client.AgentID, source, len(prompt))
+			temp := cfg.Model.LlamaPure.Temperature
+			if temp <= 0 {
+				temp = 0.7
+			}
+			intent, err := dispatcher.GenerateIntentWithRetry(clientCtx, engine, prompt, model.GenerationOptions{Temperature: float32(temp)}, 2)
+			if err != nil {
+				log.Printf("[Decision Failed] agent=%s source=%s phase=generation error=%q", cfg.Client.AgentID, source, err.Error())
+				return
+			}
+			intent.Source = source
+			if !strings.EqualFold(ctxMgr.Status(), "IDLE") || ctxMgr.Intention() != nil {
+				return
+			}
+			if handled, err := beginTravelIntention(intent, cfg.Client.AgentID, ctxMgr, memoryStore); handled {
+				if err != nil {
+					log.Printf("[Intrinsic Motivation] Failed to start travel intention: %v", err)
+				}
+				return
+			}
+			disp := dispatcher.NewIntentDispatcher(cfg.Client.AgentID, c, tracker)
+			res, err := disp.Dispatch(clientCtx, intent, 10*time.Second)
+			if err != nil {
+				log.Printf("[Intrinsic Motivation] Intent dispatch failed: %v", err)
+				return
+			}
+			idleTicks = 0
+			log.Printf("[Intrinsic Motivation] Action: %s (Thought: %s) [%s]", intent.Action, intent.Thought, res.Message)
+		}()
+	}
 
 	subscribeLocation := func(c mqtt.Client, loc string) {
 		chatTopic := fmt.Sprintf("world/locations/%s/chat", loc)
@@ -538,32 +611,40 @@ func RunClient(ctx context.Context, cfg *Config) error {
 					log.Printf("[Memory] Failed to record chat event: %v", err)
 				}
 
-				if chatPayload.AgentID != cfg.Client.AgentID && engine != nil {
-					go func() {
-						textLower := strings.ToLower(chatPayload.Message)
-						agentIDLower := strings.ToLower(cfg.Client.AgentID)
-						agentNameLower := strings.ToLower(ctxMgr.AgentName())
+				if !strings.EqualFold(chatPayload.AgentID, cfg.Client.AgentID) && engine != nil && strings.EqualFold(ctxMgr.Status(), "IDLE") && ctxMgr.Intention() == nil {
+					textLower := strings.ToLower(chatPayload.Message)
+					agentIDLower := strings.ToLower(cfg.Client.AgentID)
+					agentNameLower := strings.ToLower(ctxMgr.AgentName())
+					isDirectMention := strings.Contains(textLower, agentIDLower) || strings.Contains(textLower, agentNameLower)
 
-						isDirectMention := strings.Contains(textLower, agentIDLower) || strings.Contains(textLower, agentNameLower)
-
-						shouldRespond := false
-						if isDirectMention {
-							log.Printf("[Autonomous Chat] Direct mention detected for %s. Forcing response turn.", cfg.Client.AgentID)
-							shouldRespond = true
-						} else {
-							pop := ctxMgr.RoomPopulation()
-							if pop <= 0 {
-								pop = 1
-							}
-							scaledProb := cfg.Cognition.ChatResponseProbability / float64(pop)
-							roll := float64(time.Now().UnixNano()%1000) / 1000.0
-							if roll < scaledProb {
-								log.Printf("[Autonomous Chat] Chat response probability triggered (roll %.3f < scaled prob %.3f, base %.2f, pop %d)", roll, scaledProb, cfg.Cognition.ChatResponseProbability, pop)
-								shouldRespond = true
-							}
+					shouldRespond := isDirectMention
+					if isDirectMention {
+						log.Printf("[Autonomous Chat] Direct mention detected for %s.", cfg.Client.AgentID)
+					} else {
+						pop := ctxMgr.RoomPopulation()
+						if pop <= 0 {
+							pop = 1
 						}
-
+						scaledProb := cfg.Cognition.ChatResponseProbability / float64(pop)
+						roll := float64(time.Now().UnixNano()%1000) / 1000.0
+						shouldRespond = roll < scaledProb
 						if shouldRespond {
+							log.Printf("[Autonomous Chat] Chat response probability triggered (roll %.3f < scaled prob %.3f, base %.2f, pop %d)", roll, scaledProb, cfg.Cognition.ChatResponseProbability, pop)
+						}
+					}
+					if shouldRespond && chatGate.TryStart(ctxMgr.CurrentTick(), chatResponseCooldownTicks) {
+						go func() {
+							cognitionTurnMu.Lock()
+							defer func() {
+								cognitionTurnMu.Unlock()
+								chatGate.Finish()
+								if decisionQueue.Pending() {
+									tryRunDecision(c)
+								}
+							}()
+							if !strings.EqualFold(ctxMgr.Status(), "IDLE") || ctxMgr.Intention() != nil {
+								return
+							}
 							memories := fetchPeerMemories()
 							prompt := ctxMgr.BuildPrompt(memories, fetchLocationMemories())
 
@@ -577,6 +658,15 @@ func RunClient(ctx context.Context, cfg *Config) error {
 							intent, err := dispatcher.GenerateIntentWithRetry(clientCtx, engine, prompt, genOpts, 2)
 							if err != nil {
 								log.Printf("[Autonomous Chat] Cognition generation failed: %v", err)
+								return
+							}
+							if isDirectMention {
+								intent.Source = "chat_mention:" + chatPayload.AgentID
+							} else {
+								intent.Source = "chat_probability:" + chatPayload.AgentID
+							}
+							if !strings.EqualFold(ctxMgr.Status(), "IDLE") || ctxMgr.Intention() != nil {
+								log.Printf("[Autonomous Chat] Discarding response because the character is no longer idle.")
 								return
 							}
 							if handled, err := beginTravelIntention(intent, cfg.Client.AgentID, ctxMgr, memoryStore); handled {
@@ -594,8 +684,10 @@ func RunClient(ctx context.Context, cfg *Config) error {
 							}
 							idleTicks = 0
 							log.Printf("[Autonomous Chat] Triggered response processed -> Action: %s (Thought: %s) [%s]", intent.Action, intent.Thought, res.Message)
-						}
-					}()
+						}()
+					} else if shouldRespond {
+						log.Printf("[Autonomous Chat] Suppressing response during cooldown or another chat turn.")
+					}
 				}
 			} else {
 				ctxMgr.IngestChat("Unknown", string(msg.Payload()))
@@ -671,8 +763,13 @@ func RunClient(ctx context.Context, cfg *Config) error {
 					go func() {
 						defer intentionRunning.Store(false)
 						disp := dispatcher.NewIntentDispatcher(cfg.Client.AgentID, c, tracker)
-						if _, err := processActiveIntention(clientCtx, cfg.Client.AgentID, ctxMgr, memoryStore, disp); err != nil {
+						handled, err := processActiveIntention(clientCtx, cfg.Client.AgentID, ctxMgr, memoryStore, disp)
+						if err != nil {
 							log.Printf("[Intention] %v", err)
+						}
+						if handled && ctxMgr.Intention() == nil && strings.EqualFold(ctxMgr.Status(), "IDLE") {
+							decisionQueue.Mark(decisionActionDone)
+							tryRunDecision(c)
 						}
 					}()
 				}
@@ -681,54 +778,15 @@ func RunClient(ctx context.Context, cfg *Config) error {
 
 			if cfg.Cognition.IdleThresholdTicks > 0 {
 				status := ctxMgr.Status()
-				if !strings.EqualFold(status, "IDLE") {
+				if decisionQueue.Running() || !strings.EqualFold(status, "IDLE") {
 					idleTicks = 0
 				} else {
 					idleTicks++
 					if idleTicks >= cfg.Cognition.IdleThresholdTicks {
 						idleTicks = 0
 						log.Printf("[Intrinsic Motivation] Idle threshold reached (%d ticks). Triggering autonomous motivation turn...", cfg.Cognition.IdleThresholdTicks)
-
-						go func() {
-							if !strings.EqualFold(ctxMgr.Status(), "IDLE") {
-								return
-							}
-
-							memories := fetchPeerMemories()
-							prompt := ctxMgr.BuildPrompt(memories, fetchLocationMemories())
-
-							temp := cfg.Model.LlamaPure.Temperature
-							if temp <= 0 {
-								temp = 0.7
-							}
-							genOpts := model.GenerationOptions{
-								Temperature: float32(temp),
-							}
-							intent, err := dispatcher.GenerateIntentWithRetry(clientCtx, engine, prompt, genOpts, 2)
-							if err != nil {
-								log.Printf("[Intrinsic Motivation] Cognition generation failed: %v", err)
-								return
-							}
-
-							if !strings.EqualFold(ctxMgr.Status(), "IDLE") {
-								return
-							}
-							if handled, err := beginTravelIntention(intent, cfg.Client.AgentID, ctxMgr, memoryStore); handled {
-								if err != nil {
-									log.Printf("[Intrinsic Motivation] Failed to start travel intention: %v", err)
-								}
-								return
-							}
-
-							disp := dispatcher.NewIntentDispatcher(cfg.Client.AgentID, c, tracker)
-							res, err := disp.Dispatch(clientCtx, intent, 10*time.Second)
-							if err != nil {
-								log.Printf("[Intrinsic Motivation] Intent dispatch failed: %v", err)
-								return
-							}
-							idleTicks = 0
-							log.Printf("[Intrinsic Motivation] Action: %s (Thought: %s) [%s]", intent.Action, intent.Thought, res.Message)
-						}()
+						decisionQueue.Mark(decisionIdleInterval)
+						tryRunDecision(c)
 					}
 				}
 			}
@@ -739,13 +797,61 @@ func RunClient(ctx context.Context, cfg *Config) error {
 		c.Subscribe(directTopic, 0, func(_ mqtt.Client, msg mqtt.Message) {
 			idleTicks = 0
 			log.Printf("[DIRECT RESPONSE] %s", string(msg.Payload()))
+			oldLocation := ctxMgr.CurrentLocation()
+			oldEnergy, oldHunger, oldHealth := ctxMgr.Energy(), ctxMgr.Hunger(), ctxMgr.Health()
+			oldStatus := ctxMgr.Status()
 			_ = ctxMgr.IngestDirectResponse(msg.Payload())
 			res, matched := tracker.Resolve(msg.Payload())
+			var direct spatial.DirectMessage
+			if err := json.Unmarshal(msg.Payload(), &direct); err == nil && direct.Status == "SUCCESS" {
+				if direct.Character != nil {
+					if crossedNeedThreshold(oldEnergy, direct.Character.Energy) || crossedNeedThreshold(oldHunger, direct.Character.Hunger) || crossedNeedThreshold(oldHealth, direct.Character.Health) {
+						decisionQueue.Mark(decisionNeedChange)
+					}
+					if direct.Character.CurrentLocation != "" && direct.Character.CurrentLocation != oldLocation {
+						decisionQueue.Mark(decisionArrival)
+					}
+					if !strings.EqualFold(oldStatus, "IDLE") && strings.EqualFold(direct.Character.Status, "IDLE") {
+						decisionQueue.Mark(decisionActionDone)
+					}
+				}
+				action := direct.Action
+				if action == "" && matched {
+					action = res.Action
+				}
+				if strings.EqualFold(action, "REST") && (direct.Status == "SUCCESS" || strings.EqualFold(res.Status, "SUCCESS")) {
+					go func() {
+						if err := synthesizer.ConsolidateOnRest(clientCtx); err != nil {
+							log.Printf("[Synthesizer] Rest consolidation error: %v", err)
+						}
+					}()
+				}
+				if direct.IntentID != "" && shouldTriggerAfterIntent(action) {
+					decisionQueue.Mark(decisionActionDone)
+				}
+			}
 			if matched {
 				log.Printf("[Correlation] Intent %s acknowledged by server: %s in %v", res.IntentID, res.Status, res.Duration)
 				if err := memoryStore.AddEvent(ctxMgr.CurrentTick(), cfg.Client.AgentID, "ACTION_RESULT", string(msg.Payload())); err != nil {
 					log.Printf("[Memory] Failed to record action outcome: %v", err)
 				}
+				if strings.EqualFold(res.Status, "ERROR") {
+					go func() {
+						disp := dispatcher.NewIntentDispatcher(cfg.Client.AgentID, c, tracker)
+						statusIntent := dispatcher.Intent{
+							IntentID: dispatcher.GenerateIntentID(),
+							Source:   "error_recovery_status",
+							Action:   "STATUS",
+							Payload:  json.RawMessage(`{}`),
+						}
+						if _, err := disp.Dispatch(clientCtx, statusIntent, 5*time.Second); err != nil {
+							log.Printf("[State Sync] Failed to refresh character state after rejected action: %v", err)
+						}
+					}()
+				}
+			}
+			if tryRunDecision != nil && strings.EqualFold(ctxMgr.Status(), "IDLE") {
+				tryRunDecision(c)
 			}
 		})
 
@@ -761,6 +867,7 @@ func RunClient(ctx context.Context, cfg *Config) error {
 			disp := dispatcher.NewIntentDispatcher(cfg.Client.AgentID, c, tracker)
 			lookIntent := dispatcher.Intent{
 				IntentID: fmt.Sprintf("req_startup_look_%d", time.Now().UnixNano()),
+				Source:   "startup_look",
 				Action:   "LOOK",
 				Payload:  json.RawMessage(`{}`),
 			}

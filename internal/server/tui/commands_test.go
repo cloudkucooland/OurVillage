@@ -7,6 +7,8 @@ import (
 
 	"agentmud/internal/db"
 	"agentmud/internal/server/admin"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestParseCommandLine(t *testing.T) {
@@ -274,5 +276,54 @@ func TestWeatherCommandSupportsNewWeatherTypes(t *testing.T) {
 	model.state = adminTab
 	if view := model.View(); !strings.Contains(view, "drought|fog|frost|hail|heatwave") || !strings.Contains(view, "storm|windy") {
 		t.Errorf("admin help/autocomplete missing added weather options:\n%s", view)
+	}
+}
+
+func TestTUICommandHistoryAndTabCompletion(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("failed to initialize database: %v", err)
+	}
+	defer database.Close()
+
+	model := NewModel(database, admin.NewAdminCommandExecutor(database, nil, nil), nil)
+	model.state = adminTab
+
+	// Type and enter command 1
+	model.textInput.SetValue("help")
+	updatedModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m := updatedModel.(Model)
+
+	// Type and enter command 2
+	m.textInput.SetValue("weather clear")
+	updatedModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updatedModel.(Model)
+
+	// Test Up arrow (should go to "weather clear")
+	updatedModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updatedModel.(Model)
+	if m.textInput.Value() != "weather clear" {
+		t.Errorf("expected Up arrow to recall 'weather clear', got %q", m.textInput.Value())
+	}
+
+	// Test Up arrow again (should go to "help")
+	updatedModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updatedModel.(Model)
+	if m.textInput.Value() != "help" {
+		t.Errorf("expected Up arrow to recall 'help', got %q", m.textInput.Value())
+	}
+
+	// Test Down arrow (should go to "weather clear")
+	updatedModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updatedModel.(Model)
+	if m.textInput.Value() != "weather clear" {
+		t.Errorf("expected Down arrow to recall 'weather clear', got %q", m.textInput.Value())
+	}
+
+	// Test Tab completion for command prefix "we" -> "weather"
+	m.textInput.SetValue("we")
+	m.handleTabCompletion()
+	if m.textInput.Value() != "weather" {
+		t.Errorf("expected tab completion of 'we' to be 'weather', got %q", m.textInput.Value())
 	}
 }

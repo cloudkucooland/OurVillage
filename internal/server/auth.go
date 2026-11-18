@@ -209,7 +209,7 @@ func (h *DBAuthHook) isCharacterAtLocation(characterID, locationID string) bool 
 	h.mu.Lock()
 	h.purgeRecentMovesLocked(time.Now())
 	if rec, ok := h.recentMoves[characterID]; ok {
-		if rec.locationID == locationID && time.Since(rec.time) < 5*time.Second {
+		if rec.locationID == locationID && time.Since(rec.time) < 10*time.Second {
 			h.mu.Unlock()
 			return true
 		}

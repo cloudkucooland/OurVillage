@@ -287,6 +287,9 @@ CREATE TABLE IF NOT EXISTS server_state (
 		if err := SeedShopInventory(db); err != nil {
 			return nil, fmt.Errorf("failed to seed shop inventory: %w", err)
 		}
+		if err := ensureBakerySetup(db); err != nil {
+			return nil, fmt.Errorf("failed to seed bakery setup: %w", err)
+		}
 	} else {
 		var locationCount int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM locations`).Scan(&locationCount); err != nil {
@@ -304,6 +307,9 @@ CREATE TABLE IF NOT EXISTS server_state (
 			}
 			if err := seedMillingShopItems(db); err != nil {
 				return nil, fmt.Errorf("failed to migrate mill shop items: %w", err)
+			}
+			if err := ensureBakerySetup(db); err != nil {
+				return nil, fmt.Errorf("failed to migrate bakery setup: %w", err)
 			}
 		}
 	}
@@ -324,6 +330,7 @@ func migrateSchema(db *sql.DB) error {
 		{"characters", "energy", "INTEGER NOT NULL DEFAULT 100"},
 		{"characters", "health", "INTEGER NOT NULL DEFAULT 100"},
 		{"characters", "home_location_id", "TEXT NOT NULL DEFAULT ''"},
+		{"characters", "work_location_id", "TEXT NOT NULL DEFAULT ''"},
 		{"characters", "equipped_container_id", "TEXT"},
 		{"characters", "status", "TEXT NOT NULL DEFAULT 'IDLE'"},
 		{"characters", "action_end_tick", "INTEGER DEFAULT 0"},
@@ -451,6 +458,9 @@ func SeedDB(db *sql.DB) error {
 	}
 	if err := SeedShopInventory(db); err != nil {
 		return fmt.Errorf("failed to seed shop inventory: %w", err)
+	}
+	if err := ensureBakerySetup(db); err != nil {
+		return fmt.Errorf("failed to seed bakery setup: %w", err)
 	}
 	return nil
 }

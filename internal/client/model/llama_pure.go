@@ -89,6 +89,10 @@ func (p *LlamaPureEngine) Name() string {
 	return "llama-pure"
 }
 
+func (p *LlamaPureEngine) ModelLabel() string {
+	return localModelLabel(p.Name(), p.config.ModelPath)
+}
+
 func (p *LlamaPureEngine) buildGenerateOptions(opts GenerationOptions) llama.GenerateOptions {
 	genOpts := llama.DefaultGenerateOptions()
 

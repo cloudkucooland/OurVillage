@@ -63,8 +63,8 @@ func TestInitDBAndSeed(t *testing.T) {
 		}
 	}
 
-	if charCount != 5 {
-		t.Errorf("Expected 5 seeded characters, got %d", charCount)
+	if charCount != 6 {
+		t.Errorf("Expected 6 seeded characters, got %d", charCount)
 	}
 	if !foundEldon {
 		t.Errorf("Expected to find eldon_millwright character")

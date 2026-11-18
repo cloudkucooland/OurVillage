@@ -93,8 +93,11 @@ func (m PlayerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textInput.Width = msg.Width - 6
 	case playerTickMsg:
 		logs := m.ctxMgr.FormatSensoryLogs()
+		followTail := m.viewport.AtBottom()
 		m.viewport.SetContent(lipgloss.NewStyle().Width(m.viewport.Width).Render(strings.Join(logs, "\n")))
-		m.viewport.GotoBottom()
+		if followTail {
+			m.viewport.GotoBottom()
+		}
 		return m, tea.Tick(time.Second, func(t time.Time) tea.Msg { return playerTickMsg(t) })
 	case playerResultMsg:
 		m.busy = false
@@ -404,6 +407,7 @@ func buildPlayerIntent(input string) (dispatcher.Intent, error) {
 	}
 	return dispatcher.ValidateIntent(dispatcher.Intent{
 		IntentID: dispatcher.GenerateIntentID(),
+		Source:   "player_tui",
 		Action:   action,
 		Payload:  payloadBytes,
 	})

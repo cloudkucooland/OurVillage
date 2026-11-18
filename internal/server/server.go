@@ -443,6 +443,20 @@ func (s *Server) ProcessTick() {
 		}
 	}
 
+	// Snapshot needs before decay so clients can be notified only when a meaningful threshold is crossed.
+	needsBeforeDecay := make(map[string][2]int)
+	needRows, err := s.db.Query(`SELECT id, hunger, energy FROM characters WHERE status = 'IDLE' AND is_online = 1`)
+	if err == nil {
+		for needRows.Next() {
+			var id string
+			var hunger, energy int
+			if scanErr := needRows.Scan(&id, &hunger, &energy); scanErr == nil {
+				needsBeforeDecay[id] = [2]int{hunger, energy}
+			}
+		}
+		_ = needRows.Close()
+	}
+
 	// 1.5. Apply passive hunger and energy decay per tick for idle online characters
 	_, _ = s.db.Exec(fmt.Sprintf(`
 		UPDATE characters 
@@ -473,6 +487,7 @@ func (s *Server) ProcessTick() {
 	}
 
 	s.forceRestForDepletedCharacters(currentTick)
+	s.publishNeedThresholdChanges(needsBeforeDecay)
 
 	// 2. Resolve temporal action locks (RFC 007 Section 6: Stateful Temporal Foraging Engine)
 	s.resolveCompletedActions(currentTick, weather)
@@ -500,6 +515,40 @@ func (s *Server) ProcessTick() {
 		log.Printf("Failed to publish tick: %v", err)
 	} else {
 		log.Printf("[Tick %d] Time: %s, Night: %v, Weather: %s, Temp: %.1f°C (Processed in %v)", currentTick, timeStr, isNight, weather, temperature, time.Since(startTime))
+	}
+}
+
+func (s *Server) publishNeedThresholdChanges(before map[string][2]int) {
+	for characterID, oldNeeds := range before {
+		var hunger, energy int
+		if err := s.db.QueryRow("SELECT hunger, energy FROM characters WHERE id = ?", characterID).Scan(&hunger, &energy); err != nil {
+			continue
+		}
+		crossed := func(oldValue, newValue int) bool {
+			for _, threshold := range [...]int{40, 20} {
+				if oldValue >= threshold && newValue < threshold {
+					return true
+				}
+			}
+			return false
+		}
+		if !crossed(oldNeeds[0], hunger) && !crossed(oldNeeds[1], energy) {
+			continue
+		}
+		response := map[string]interface{}{
+			"status":  "SUCCESS",
+			"type":    "STATE_SYNC",
+			"message": fmt.Sprintf("A physical need changed significantly (hunger %d, energy %d).", hunger, energy),
+		}
+		s.includeCharacterSync(characterID, response)
+		payload, err := json.Marshal(response)
+		if err != nil {
+			continue
+		}
+		topic := fmt.Sprintf("world/agents/%s/direct", characterID)
+		if err := s.mqttServer.Publish(topic, payload, false, 0); err != nil {
+			log.Printf("Failed to publish need threshold sync for %s: %v", characterID, err)
+		}
 	}
 }
 

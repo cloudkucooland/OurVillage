@@ -142,7 +142,7 @@ func SanitizeAndExtractJSON(raw string) (string, error) {
 	startIdx := strings.Index(trimmed, "{")
 	endIdx := strings.LastIndex(trimmed, "}")
 	if startIdx == -1 || endIdx == -1 || endIdx <= startIdx {
-		return "", fmt.Errorf("no valid JSON object found in model output: %s", raw)
+		return "", fmt.Errorf("no valid JSON object found in model output")
 	}
 
 	jsonCandidate := trimmed[startIdx : endIdx+1]
@@ -152,7 +152,7 @@ func SanitizeAndExtractJSON(raw string) (string, error) {
 	if err := json.Unmarshal([]byte(jsonCandidate), &data); err != nil {
 		repairedCandidate := unquotedActionRegex.ReplaceAllString(jsonCandidate, `$1"$2"$3`)
 		if err2 := json.Unmarshal([]byte(repairedCandidate), &data); err2 != nil {
-			return "", fmt.Errorf("malformed JSON in model output: %w (candidate: %s)", err, jsonCandidate)
+			return "", fmt.Errorf("malformed JSON in model output: %w", err)
 		}
 		jsonCandidate = repairedCandidate
 	}
@@ -160,7 +160,7 @@ func SanitizeAndExtractJSON(raw string) (string, error) {
 	// 4. Validate and normalize the "action" field
 	rawAction, ok := data["action"]
 	if !ok || rawAction == nil {
-		return "", fmt.Errorf("missing 'action' field in model JSON: %s", jsonCandidate)
+		return "", fmt.Errorf("missing 'action' field in model JSON")
 	}
 
 	actionStr, ok := rawAction.(string)
@@ -197,7 +197,7 @@ func SanitizeAndExtractJSON(raw string) (string, error) {
 
 	payload, ok := data["payload"]
 	if !ok {
-		return "", fmt.Errorf("missing 'payload' field in model JSON: %s", jsonCandidate)
+		return "", fmt.Errorf("missing 'payload' field in model JSON")
 	}
 	if payload == nil {
 		return "", fmt.Errorf("'payload' field cannot be null")

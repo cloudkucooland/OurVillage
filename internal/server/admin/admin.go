@@ -235,18 +235,66 @@ func (a *AdminCommandExecutor) SetShopItem(locationID, itemID string, priceGold,
 }
 
 type ItemDefinition struct {
-	ID            string
-	Name          string
-	WeightKg      float64
-	Description   string
-	IsConsumable  bool
-	HungerRestore int
-	IsContainer   bool
-	CapacityKg    float64
-	SlotLimit     int
+	ID             string
+	Name           string
+	WeightKg       float64
+	Description    string
+	IsConsumable   bool
+	HungerRestore  int
+	HealthRestore  int
+	IsContainer    bool
+	CapacityKg     float64
+	SlotLimit      int
+	IsPerishable   bool
+	ShelfLifeTicks int
+	SpoilageItemID string
 }
 
 func (a *AdminCommandExecutor) CreateItem(item ItemDefinition) error {
+	if err := validateItem(item); err != nil {
+		return err
+	}
+	if item.IsPerishable {
+		if err := requireExists(a.db, "items", item.SpoilageItemID); err != nil {
+			return fmt.Errorf("spoilage item: %w", err)
+		}
+	}
+	_, err := a.db.Exec(`INSERT INTO items
+		(id, name, description, weight_kg, is_consumable, hunger_restore, health_restore, is_container, capacity_kg, slot_limit, is_perishable, shelf_life_ticks, spoilage_item_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, item.ID, item.Name, item.Description, item.WeightKg,
+		boolInt(item.IsConsumable), item.HungerRestore, item.HealthRestore, boolInt(item.IsContainer), item.CapacityKg,
+		item.SlotLimit, boolInt(item.IsPerishable), item.ShelfLifeTicks, nullableString(item.SpoilageItemID))
+	if err != nil {
+		return fmt.Errorf("create item %q: %w", item.ID, err)
+	}
+	return nil
+}
+
+func (a *AdminCommandExecutor) UpdateItem(item ItemDefinition) error {
+	if err := validateItem(item); err != nil {
+		return err
+	}
+	if item.IsPerishable {
+		if err := requireExists(a.db, "items", item.SpoilageItemID); err != nil {
+			return fmt.Errorf("spoilage item: %w", err)
+		}
+	}
+	if err := requireExists(a.db, "items", item.ID); err != nil {
+		return err
+	}
+	_, err := a.db.Exec(`UPDATE items SET name = ?, description = ?, weight_kg = ?, is_consumable = ?,
+		hunger_restore = ?, health_restore = ?, is_container = ?, capacity_kg = ?, slot_limit = ?,
+		is_perishable = ?, shelf_life_ticks = ?, spoilage_item_id = ? WHERE id = ?`, item.Name, item.Description,
+		item.WeightKg, boolInt(item.IsConsumable), item.HungerRestore, item.HealthRestore, boolInt(item.IsContainer),
+		item.CapacityKg, item.SlotLimit, boolInt(item.IsPerishable), item.ShelfLifeTicks,
+		nullableString(item.SpoilageItemID), item.ID)
+	if err != nil {
+		return fmt.Errorf("update item %q: %w", item.ID, err)
+	}
+	return nil
+}
+
+func validateItem(item ItemDefinition) error {
 	if !validID(item.ID) {
 		return fmt.Errorf("item id must contain only letters, numbers, underscores, and hyphens")
 	}
@@ -262,8 +310,11 @@ func (a *AdminCommandExecutor) CreateItem(item ItemDefinition) error {
 	if item.HungerRestore < 0 {
 		return fmt.Errorf("hunger restore must be >= 0")
 	}
-	if !item.IsConsumable && item.HungerRestore != 0 {
-		return fmt.Errorf("hunger restore requires a consumable item")
+	if item.HealthRestore < 0 {
+		return fmt.Errorf("health restore must be >= 0")
+	}
+	if !item.IsConsumable && (item.HungerRestore != 0 || item.HealthRestore != 0) {
+		return fmt.Errorf("hunger and health restoration require a consumable item")
 	}
 	if item.CapacityKg < 0 || math.IsNaN(item.CapacityKg) || math.IsInf(item.CapacityKg, 0) {
 		return fmt.Errorf("container capacity must be a finite number >= 0")
@@ -277,23 +328,49 @@ func (a *AdminCommandExecutor) CreateItem(item ItemDefinition) error {
 	if !item.IsContainer && (item.CapacityKg != 0 || item.SlotLimit != 0) {
 		return fmt.Errorf("capacity and slot limit require a container item")
 	}
-	isConsumable, isContainer := 0, 0
-	if item.IsConsumable {
-		isConsumable = 1
-	}
-	if item.IsContainer {
-		isContainer = 1
-	}
-	_, err := a.db.Exec(
-		`INSERT INTO items (id, name, description, weight_kg, is_consumable, hunger_restore, is_container, capacity_kg, slot_limit)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		item.ID, item.Name, item.Description, item.WeightKg, isConsumable, item.HungerRestore,
-		isContainer, item.CapacityKg, item.SlotLimit,
-	)
-	if err != nil {
-		return fmt.Errorf("create item %q: %w", item.ID, err)
+	if item.IsPerishable {
+		if item.ShelfLifeTicks <= 0 {
+			return fmt.Errorf("perishable item shelf life must be > 0 ticks")
+		}
+		if !validID(item.SpoilageItemID) {
+			return fmt.Errorf("perishable items require a spoilage item id")
+		}
+	} else if item.ShelfLifeTicks < 0 {
+		return fmt.Errorf("shelf life must be >= 0")
 	}
 	return nil
+}
+
+func (a *AdminCommandExecutor) DeleteItem(itemID string) error {
+	if err := requireExists(a.db, "items", itemID); err != nil {
+		return err
+	}
+	checks := []struct{ table, column string }{
+		{"inventories", "item_id"}, {"recipe_ingredients", "item_id"}, {"recipes", "output_item_id"}, {"items", "spoilage_item_id"},
+		{"location_shop_items", "item_id"}, {"location_items", "item_id"},
+		{"farm_crops", "seed_item_id"}, {"farm_crops", "harvest_item_id"},
+	}
+	for _, check := range checks {
+		var count int
+		query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s = ?", check.table, check.column)
+		if err := a.db.QueryRow(query, itemID).Scan(&count); err != nil {
+			return fmt.Errorf("check item usage: %w", err)
+		}
+		if count > 0 {
+			return fmt.Errorf("cannot delete item %q: it is referenced by %s", itemID, check.table)
+		}
+	}
+	if _, err := a.db.Exec("DELETE FROM items WHERE id = ?", itemID); err != nil {
+		return fmt.Errorf("delete item %q: %w", itemID, err)
+	}
+	return nil
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func (a *AdminCommandExecutor) CreateLocation(locationID, name, description string) error {
@@ -388,6 +465,182 @@ func (a *AdminCommandExecutor) CreateCharacter(characterID, name, occupation, lo
 		return "", fmt.Errorf("commit character creation: %w", err)
 	}
 	return password, nil
+}
+
+// MoveCharacter relocates an idle character to an existing location.
+func (a *AdminCommandExecutor) MoveCharacter(characterID, locationID string) error {
+	if err := requireExists(a.db, "characters", characterID); err != nil {
+		return err
+	}
+	if err := requireExists(a.db, "locations", locationID); err != nil {
+		return err
+	}
+	result, err := a.db.Exec(`
+		UPDATE characters
+		SET current_location = ?
+		WHERE id = ? AND status = 'IDLE'
+	`, locationID, characterID)
+	if err != nil {
+		return fmt.Errorf("move character %q to %q: %w", characterID, locationID, err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check character move: %w", err)
+	}
+	if updated == 0 {
+		return fmt.Errorf("character %q has an active action; wait until it is idle before moving them", characterID)
+	}
+	return nil
+}
+
+type RecipeDefinition struct {
+	ID, Name, RequiredStation, OutputItemID, RequiredSkillID string
+	OutputQuantity, DurationTicks, EnergyCost, MinSkillLevel int
+	Ingredients                                              []db.RecipeIngredient
+}
+
+func (a *AdminCommandExecutor) CreateRecipe(recipe RecipeDefinition) error {
+	return a.saveRecipe(recipe, false)
+}
+
+func (a *AdminCommandExecutor) UpdateRecipe(recipe RecipeDefinition) error {
+	return a.saveRecipe(recipe, true)
+}
+
+func (a *AdminCommandExecutor) saveRecipe(recipe RecipeDefinition, update bool) error {
+	if !validID(recipe.ID) {
+		return fmt.Errorf("recipe id must contain only letters, numbers, underscores, and hyphens")
+	}
+	if strings.TrimSpace(recipe.Name) == "" || !validID(recipe.OutputItemID) {
+		return fmt.Errorf("recipe name and valid output item id are required")
+	}
+	if recipe.OutputQuantity <= 0 || recipe.DurationTicks <= 0 || recipe.EnergyCost < 0 || recipe.MinSkillLevel < 0 {
+		return fmt.Errorf("output quantity and duration must be > 0; energy and minimum skill level must be >= 0")
+	}
+	if err := requireExists(a.db, "items", recipe.OutputItemID); err != nil {
+		return err
+	}
+	if recipe.RequiredStation != "" {
+		if err := requireExists(a.db, "workstations", recipe.RequiredStation); err != nil {
+			return err
+		}
+	}
+	if len(recipe.Ingredients) == 0 {
+		return fmt.Errorf("at least one ingredient is required")
+	}
+	seen := make(map[string]bool, len(recipe.Ingredients))
+	for _, ingredient := range recipe.Ingredients {
+		if !validID(ingredient.ItemID) || ingredient.Quantity <= 0 {
+			return fmt.Errorf("ingredient ids must be valid and quantities must be > 0")
+		}
+		if seen[ingredient.ItemID] {
+			return fmt.Errorf("ingredient %q is listed more than once", ingredient.ItemID)
+		}
+		seen[ingredient.ItemID] = true
+		if err := requireExists(a.db, "items", ingredient.ItemID); err != nil {
+			return err
+		}
+	}
+
+	tx, err := a.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin recipe save: %w", err)
+	}
+	defer tx.Rollback()
+	if update {
+		if _, err := tx.Exec(`UPDATE recipes SET name = ?, required_station = ?, output_item_id = ?,
+			output_quantity = ?, duration_ticks = ?, energy_cost = ?, required_skill_id = ?, min_skill_level = ? WHERE id = ?`,
+			recipe.Name, nullableString(recipe.RequiredStation), recipe.OutputItemID, recipe.OutputQuantity,
+			recipe.DurationTicks, recipe.EnergyCost, nullableString(recipe.RequiredSkillID), recipe.MinSkillLevel, recipe.ID); err != nil {
+			return fmt.Errorf("update recipe %q: %w", recipe.ID, err)
+		}
+		if err := requireExistsTx(tx, "recipes", recipe.ID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("DELETE FROM recipe_ingredients WHERE recipe_id = ?", recipe.ID); err != nil {
+			return fmt.Errorf("replace ingredients for recipe %q: %w", recipe.ID, err)
+		}
+	} else if _, err := tx.Exec(`INSERT INTO recipes
+		(id, name, required_station, output_item_id, output_quantity, duration_ticks, energy_cost, required_skill_id, min_skill_level)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, recipe.ID, recipe.Name, nullableString(recipe.RequiredStation), recipe.OutputItemID,
+		recipe.OutputQuantity, recipe.DurationTicks, recipe.EnergyCost, nullableString(recipe.RequiredSkillID), recipe.MinSkillLevel); err != nil {
+		return fmt.Errorf("create recipe %q: %w", recipe.ID, err)
+	}
+	for _, ingredient := range recipe.Ingredients {
+		if _, err := tx.Exec("INSERT INTO recipe_ingredients (recipe_id, item_id, quantity) VALUES (?, ?, ?)", recipe.ID, ingredient.ItemID, ingredient.Quantity); err != nil {
+			return fmt.Errorf("save ingredient %q for recipe %q: %w", ingredient.ItemID, recipe.ID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit recipe %q: %w", recipe.ID, err)
+	}
+	return nil
+}
+
+func (a *AdminCommandExecutor) DeleteRecipe(recipeID string) error {
+	if err := requireExists(a.db, "recipes", recipeID); err != nil {
+		return err
+	}
+	_, err := a.db.Exec("DELETE FROM recipes WHERE id = ?", recipeID)
+	if err != nil {
+		return fmt.Errorf("delete recipe %q: %w", recipeID, err)
+	}
+	return nil
+}
+
+func (a *AdminCommandExecutor) TeachRecipe(characterID, recipeID string) error {
+	if err := requireExists(a.db, "characters", characterID); err != nil {
+		return err
+	}
+	if err := requireExists(a.db, "recipes", recipeID); err != nil {
+		return err
+	}
+	if _, err := a.db.Exec(`INSERT INTO character_known_recipes (character_id, recipe_id) VALUES (?, ?)
+		ON CONFLICT(character_id, recipe_id) DO NOTHING`, characterID, recipeID); err != nil {
+		return fmt.Errorf("teach recipe %q to %q: %w", recipeID, characterID, err)
+	}
+	return nil
+}
+
+func (a *AdminCommandExecutor) SetCharacterSkill(characterID, skillID string, level, experience int) error {
+	if !validID(skillID) {
+		return fmt.Errorf("skill id must contain only letters, numbers, underscores, and hyphens")
+	}
+	if level < 1 || level > 100 {
+		return fmt.Errorf("skill level must be between 1 and 100")
+	}
+	if experience < 0 {
+		return fmt.Errorf("skill experience must be >= 0")
+	}
+	if err := requireExists(a.db, "characters", characterID); err != nil {
+		return err
+	}
+	_, err := a.db.Exec(`INSERT INTO character_skills (character_id, skill_id, level, experience)
+		VALUES (?, ?, ?, ?) ON CONFLICT(character_id, skill_id) DO UPDATE SET
+		level = excluded.level, experience = excluded.experience`, characterID, skillID, level, experience)
+	if err != nil {
+		return fmt.Errorf("set %s skill for %s: %w", skillID, characterID, err)
+	}
+	return nil
+}
+
+func nullableString(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
+}
+
+func requireExistsTx(tx *sql.Tx, table, id string) error {
+	query := fmt.Sprintf("SELECT 1 FROM %s WHERE id = ?", table)
+	var exists int
+	if err := tx.QueryRow(query, id).Scan(&exists); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("%s %q not found", strings.TrimSuffix(table, "s"), id)
+		}
+		return err
+	}
+	return nil
 }
 
 func validID(id string) bool {

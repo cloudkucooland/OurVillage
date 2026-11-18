@@ -68,6 +68,61 @@ func TestBuyItemStorefront(t *testing.T) {
 	}
 }
 
+func TestBakerySeedAndOwnerStockTransfer(t *testing.T) {
+	database, err := InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	var bakeryOwner string
+	if err := database.QueryRow(`SELECT owner_id FROM locations WHERE id = 'bakery'`).Scan(&bakeryOwner); err != nil {
+		t.Fatal(err)
+	}
+	if bakeryOwner != "ada_baker" {
+		t.Fatalf("bakery owner = %q, want ada_baker", bakeryOwner)
+	}
+	var flourBuyPrice, flourStock, breadStock, knowsBaking int
+	for query, dest := range map[string]*int{
+		"SELECT buy_price_gold FROM location_shop_items WHERE location_id = 'bakery' AND item_id = 'flour'":          &flourBuyPrice,
+		"SELECT stock_quantity FROM location_shop_items WHERE location_id = 'bakery' AND item_id = 'flour'":          &flourStock,
+		"SELECT stock_quantity FROM location_shop_items WHERE location_id = 'bakery' AND item_id = 'bread'":          &breadStock,
+		"SELECT COUNT(*) FROM character_known_recipes WHERE character_id = 'ada_baker' AND recipe_id = 'bake_bread'": &knowsBaking,
+	} {
+		if err := database.QueryRow(query).Scan(dest); err != nil {
+			t.Fatalf("query %q: %v", query, err)
+		}
+	}
+	if flourBuyPrice != 2 || flourStock != 0 || breadStock != 25 || knowsBaking != 1 {
+		t.Fatalf("bakery flour offer=%d/%d bread stock=%d baker knows recipe=%d", flourBuyPrice, flourStock, breadStock, knowsBaking)
+	}
+
+	if _, err := database.Exec(`UPDATE location_shop_items SET stock_quantity = 2 WHERE location_id = 'town_mill' AND item_id = 'wheat'`); err != nil {
+		t.Fatal(err)
+	}
+	var initialGold int
+	if err := database.QueryRow(`SELECT gold FROM characters WHERE id = 'eldon_millwright'`).Scan(&initialGold); err != nil {
+		t.Fatal(err)
+	}
+	if err := BuyItem(database, "eldon_millwright", "wheat", 2); err != nil {
+		t.Fatalf("owner stock transfer: %v", err)
+	}
+	var finalGold, wheatInventory, remainingStock, remainingBuyOffer int
+	for query, dest := range map[string]*int{
+		"SELECT gold FROM characters WHERE id = 'eldon_millwright'":                                            &finalGold,
+		"SELECT quantity FROM inventories WHERE character_id = 'eldon_millwright' AND item_id = 'wheat'":       &wheatInventory,
+		"SELECT stock_quantity FROM location_shop_items WHERE location_id = 'town_mill' AND item_id = 'wheat'": &remainingStock,
+		"SELECT buy_price_gold FROM location_shop_items WHERE location_id = 'town_mill' AND item_id = 'wheat'": &remainingBuyOffer,
+	} {
+		if err := database.QueryRow(query).Scan(dest); err != nil {
+			t.Fatalf("query %q: %v", query, err)
+		}
+	}
+	if finalGold != initialGold || wheatInventory != 6 || remainingStock != 0 || remainingBuyOffer != 1 {
+		t.Fatalf("owner stock transfer changed gold %d->%d, inventory=%d stock=%d buy offer=%d", initialGold, finalGold, wheatInventory, remainingStock, remainingBuyOffer)
+	}
+}
+
 func TestRestockShopItem(t *testing.T) {
 	database, err := InitDB(":memory:")
 	if err != nil {
@@ -75,23 +130,18 @@ func TestRestockShopItem(t *testing.T) {
 	}
 	defer database.Close()
 
-	_, err = database.Exec("UPDATE characters SET current_location = 'tavern' WHERE id = 'eldon_millwright'")
+	_, err = database.Exec("UPDATE inventories SET quantity = 5 WHERE character_id = 'martha_barkeep' AND item_id = 'bread'")
 	if err != nil {
-		t.Fatalf("Failed to update test character: %v", err)
+		t.Fatalf("Failed to set owner inventory: %v", err)
 	}
 
-	_, err = database.Exec("INSERT INTO inventories (character_id, item_id, quantity) VALUES ('eldon_millwright', 'bread', 5)")
-	if err != nil {
-		t.Fatalf("Failed to insert inventory: %v", err)
-	}
-
-	err = RestockShopItem(database, "eldon_millwright", "bread", 3, 2)
+	err = RestockShopItem(database, "martha_barkeep", "bread", 3, 2)
 	if err != nil {
 		t.Fatalf("Expected successful restock, got error: %v", err)
 	}
 
 	var invQty int
-	err = database.QueryRow("SELECT quantity FROM inventories WHERE character_id = 'eldon_millwright' AND item_id = 'bread'").Scan(&invQty)
+	err = database.QueryRow("SELECT quantity FROM inventories WHERE character_id = 'martha_barkeep' AND item_id = 'bread'").Scan(&invQty)
 	if err != nil || invQty != 2 {
 		t.Errorf("Expected 2 bread remaining in inventory, got %d (err: %v)", invQty, err)
 	}

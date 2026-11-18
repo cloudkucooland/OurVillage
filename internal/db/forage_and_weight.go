@@ -270,7 +270,7 @@ func DropItem(db *sql.DB, characterID string, itemID string, quantity int) error
 		return fmt.Errorf("failed to deduct inventory: %w", err)
 	}
 
-	if equippedContainer.Valid && equippedContainer.String == itemID && currentQty == quantity {
+	if equippedContainer.Valid && equippedContainer.String == itemID && currentQty <= quantity {
 		_, err = tx.Exec("UPDATE characters SET equipped_container_id = NULL WHERE id = ?", characterID)
 		if err != nil {
 			return fmt.Errorf("failed to unequip dropped container: %w", err)

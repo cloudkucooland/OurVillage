@@ -2,8 +2,10 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"agentmud/internal/client/memory"
 	"agentmud/internal/client/spatial"
@@ -20,6 +22,22 @@ func TestHeaderFitsTerminalWidth(t *testing.T) {
 				t.Errorf("header line %d at width %d is %d cells wide", i+1, width, lineWidth)
 			}
 		}
+	}
+}
+
+func TestSensoryPaneUsesDisplayHistoryBeyondPromptWindow(t *testing.T) {
+	ctxMgr := spatial.NewContextManager(spatial.ContextManagerConfig{AgentID: "elda", MaxSensoryLines: 2})
+	for i := 0; i < 15; i++ {
+		ctxMgr.IngestSystem(fmt.Sprintf("visible-event-%02d", i))
+	}
+	model := NewTUIModel(context.Background(), "elda", nil, nil, ctxMgr, nil, nil, nil, nil, nil, nil)
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	model = updated.(TUIModel)
+	updated, _ = model.Update(TickMsg(time.Now()))
+	model = updated.(TUIModel)
+	view := model.View()
+	if !strings.Contains(view, "visible-event-00") || !strings.Contains(view, "visible-event-14") {
+		t.Fatalf("sensory pane omitted retained display history:\n%s", view)
 	}
 }
 
@@ -77,10 +95,10 @@ func TestSelfIdentityTabLoadsAndDisplaysPersistedMemory(t *testing.T) {
 	model := NewTUIModel(context.Background(), "elda", nil, nil, ctxMgr, nil, nil, nil, nil, nil, nil)
 	model.SetSelfIdentityProvider(func() ([]memory.IdentityTrait, []memory.SelfReflection, error) {
 		return []memory.IdentityTrait{{
-				Key: "craftsmanship", Value: "I value patient, durable work.", SalienceScore: 8, UpdatedAtTick: 41,
-			}}, []memory.SelfReflection{{
-				Tick: 42, ReflectionText: "I felt content repairing the old mill.",
-			}}, nil
+			Key: "craftsmanship", Value: "I value patient, durable work.", SalienceScore: 8, UpdatedAtTick: 41,
+		}}, []memory.SelfReflection{{
+			Tick: 42, ReflectionText: "I felt content repairing the old mill.",
+		}}, nil
 	})
 
 	var updated tea.Model

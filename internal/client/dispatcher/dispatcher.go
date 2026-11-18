@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"strconv"
+	"strings"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -48,8 +51,15 @@ func (d *IntentDispatcher) Dispatch(ctx context.Context, intent Intent, timeout 
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
+	if strings.TrimSpace(validIntent.Source) == "" {
+		validIntent.Source = "unspecified"
+	}
+	log.Printf("[Intent Dispatch] agent=%s source=%s intent_id=%s action=%s payload=%s thought=%s",
+		d.agentID, validIntent.Source, validIntent.IntentID, validIntent.Action,
+		strconv.Quote(string(validIntent.Payload)), strconv.Quote(validIntent.Thought))
 
 	resultCh := d.tracker.Register(validIntent.IntentID, timeout)
+	d.tracker.SetAction(validIntent.IntentID, validIntent.Action)
 
 	intentBytes, err := json.Marshal(validIntent)
 	if err != nil {

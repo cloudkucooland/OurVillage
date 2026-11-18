@@ -10,6 +10,7 @@ import (
 // Intent represents a normalized RFC 002 intent ready for MQTT dispatch.
 type Intent struct {
 	IntentID string          `json:"intent_id"`
+	Source   string          `json:"source,omitempty"`
 	Thought  string          `json:"thought,omitempty"`
 	Action   string          `json:"action"`
 	Payload  json.RawMessage `json:"payload"`

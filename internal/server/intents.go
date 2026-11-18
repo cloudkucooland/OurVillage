@@ -16,6 +16,7 @@ import (
 
 type IntentMessage struct {
 	IntentID string          `json:"intent_id"`
+	Source   string          `json:"source,omitempty"`
 	Action   string          `json:"action"`
 	Payload  json.RawMessage `json:"payload"`
 }
@@ -108,7 +109,9 @@ func (s *Server) SetupIntentHandlers() error {
 			return
 		}
 
-		log.Printf("[Intent] Received %s from agent %s (intent_id: %s)", intent.Action, agentID, intent.IntentID)
+		log.Printf("[Intent] Received action=%s agent=%s source=%s intent_id=%s payload=%s",
+			intent.Action, agentID, intent.Source, intent.IntentID, logPayloadPreview(intent.Payload, 512))
+		s.logIntentContext(agentID, intent)
 		start := time.Now()
 
 		switch strings.ToUpper(intent.Action) {
@@ -160,6 +163,59 @@ func (s *Server) SetupIntentHandlers() error {
 
 	log.Println("MQTT intent handlers successfully registered on world/agents/+/intent")
 	return nil
+}
+
+func (s *Server) logIntentContext(agentID string, intent IntentMessage) {
+	var location, status string
+	var hunger, energy, health, gold int
+	if err := s.db.QueryRow(`
+		SELECT current_location, status, hunger, energy, health, gold
+		FROM characters WHERE id = ?
+	`, agentID).Scan(&location, &status, &hunger, &energy, &health, &gold); err != nil {
+		log.Printf("[Intent Context] agent=%s intent_id=%s state_lookup_error=%q", agentID, intent.IntentID, err.Error())
+		return
+	}
+	var item struct {
+		ItemID   string `json:"item_id"`
+		Quantity int    `json:"quantity"`
+	}
+	_ = json.Unmarshal(intent.Payload, &item)
+	if item.ItemID == "" {
+		log.Printf("[Intent Context] agent=%s intent_id=%s tick=%d location=%s status=%s needs={hunger:%d energy:%d health:%d} gold=%d",
+			agentID, intent.IntentID, s.GetTickCount(), location, status, hunger, energy, health, gold)
+		return
+	}
+	var inventoryQty int
+	err := s.db.QueryRow(`SELECT quantity FROM inventories WHERE character_id = ? AND item_id = ?`, agentID, item.ItemID).Scan(&inventoryQty)
+	if err == sql.ErrNoRows {
+		inventoryQty = 0
+	} else if err != nil {
+		log.Printf("[Intent Context] agent=%s intent_id=%s item=%s inventory_lookup_error=%q", agentID, intent.IntentID, item.ItemID, err.Error())
+	}
+	var shopPrice, shopBuyPrice sql.NullInt64
+	var shopStock sql.NullInt64
+	_ = s.db.QueryRow(`
+		SELECT price_gold, stock_quantity, buy_price_gold
+		FROM location_shop_items WHERE location_id = ? AND item_id = ?
+	`, location, item.ItemID).Scan(&shopPrice, &shopStock, &shopBuyPrice)
+	log.Printf("[Intent Context] agent=%s intent_id=%s tick=%d location=%s status=%s needs={hunger:%d energy:%d health:%d} gold=%d item=%s requested=%d inventory=%d shop={price:%s stock:%s buy_price:%s}",
+		agentID, intent.IntentID, s.GetTickCount(), location, status, hunger, energy, health, gold,
+		item.ItemID, item.Quantity, inventoryQty, nullableInt(shopPrice), nullableInt(shopStock), nullableInt(shopBuyPrice))
+}
+
+func nullableInt(value sql.NullInt64) string {
+	if !value.Valid {
+		return "-"
+	}
+	return fmt.Sprintf("%d", value.Int64)
+}
+
+func logPayloadPreview(payload []byte, maxRunes int) string {
+	preview := []rune(string(payload))
+	if len(preview) > maxRunes {
+		return fmt.Sprintf("%s…(%d chars)", string(preview[:maxRunes]), len(preview))
+	}
+	return string(preview)
 }
 
 func (s *Server) handleMove(agentID string, intentID string, rawPayload json.RawMessage) {
@@ -980,6 +1036,7 @@ func (s *Server) handleHarvest(agentID string, intentID string, rawPayload json.
 }
 
 func (s *Server) sendDirectStateSync(agentID, intentID, status, message, action string) {
+	log.Printf("[Intent Result] agent=%s intent_id=%s action=%s status=%s message=%q", agentID, intentID, action, status, message)
 	response := map[string]interface{}{
 		"intent_id": intentID,
 		"status":    status,
@@ -994,6 +1051,7 @@ func (s *Server) sendDirectStateSync(agentID, intentID, status, message, action 
 }
 
 func (s *Server) sendDirectError(agentID string, intentID string, errCode string, message string) {
+	log.Printf("[Intent Result] agent=%s intent_id=%s status=ERROR code=%s message=%q", agentID, intentID, errCode, message)
 	topic := fmt.Sprintf("world/agents/%s/direct", agentID)
 	resp := DirectResponse{
 		IntentID:  intentID,
@@ -1006,6 +1064,7 @@ func (s *Server) sendDirectError(agentID string, intentID string, errCode string
 }
 
 func (s *Server) sendDirectResponse(agentID string, intentID string, status string, message string) {
+	log.Printf("[Intent Result] agent=%s intent_id=%s status=%s message=%q", agentID, intentID, status, message)
 	topic := fmt.Sprintf("world/agents/%s/direct", agentID)
 	resp := DirectResponse{
 		IntentID: intentID,
@@ -1081,6 +1140,8 @@ func (s *Server) handleRestock(agentID string, intentID string, rawPayload json.
 		code := "RESTOCK_FAILED"
 		if strings.Contains(errStr, "INSUFFICIENT_INVENTORY") {
 			code = "INSUFFICIENT_INVENTORY"
+		} else if strings.Contains(errStr, "SHOP_NOT_OWNER") {
+			code = "SHOP_NOT_OWNER"
 		}
 		s.sendDirectError(agentID, intentID, code, errStr)
 		return
@@ -1104,12 +1165,12 @@ func (s *Server) notifyLocationOwnerOfPurchase(locationID string, buyerID string
 	// Find the owner of the location (or shopkeeper associated with location_id)
 	var ownerID string
 	err := s.db.QueryRow(`
-		SELECT owner_character_id
+		SELECT owner_id
 		FROM locations
-		WHERE id = ? AND owner_character_id IS NOT NULL AND owner_character_id != ''
+		WHERE id = ? AND owner_id IS NOT NULL AND owner_id != ''
 	`, locationID).Scan(&ownerID)
 
-	// If table uses occupation/role mapping instead of owner_character_id column:
+	// For unowned locations, fall back to an online character working there.
 	if err == sql.ErrNoRows {
 		// Fallback query: look up character whose workplace matches the location
 		_ = s.db.QueryRow(`

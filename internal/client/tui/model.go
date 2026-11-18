@@ -191,8 +191,11 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		logs := m.ctxMgr.FormatSensoryLogs()
 		content := strings.Join(logs, "\n")
 		wrapped := lipgloss.NewStyle().Width(m.viewport.Width).Render(content)
+		followTail := m.viewport.AtBottom()
 		m.viewport.SetContent(wrapped)
-		m.viewport.GotoBottom()
+		if followTail {
+			m.viewport.GotoBottom()
+		}
 		return m, tea.Tick(1*time.Second, func(t time.Time) tea.Msg {
 			return TickMsg(t)
 		})

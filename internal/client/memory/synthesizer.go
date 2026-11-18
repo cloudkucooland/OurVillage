@@ -138,6 +138,22 @@ func (s *ReflectionSynthesizer) Start(ctx context.Context) {
 	}()
 }
 
+// ConsolidateOnRest performs deep memory consolidation and reflection when the character enters a REST state.
+func (s *ReflectionSynthesizer) ConsolidateOnRest(ctx context.Context) error {
+	log.Println("[Synthesizer] Rest detected: starting deep memory consolidation...")
+	var lastErr error
+	for i := 0; i < 3; i++ {
+		if err := s.SynthesizeNextBatch(ctx); err != nil {
+			lastErr = errors.Join(lastErr, err)
+		}
+	}
+	if err := s.synthesizeProjects(ctx); err != nil {
+		lastErr = errors.Join(lastErr, err)
+	}
+	log.Println("[Synthesizer] Rest memory consolidation complete.")
+	return lastErr
+}
+
 func (s *ReflectionSynthesizer) SynthesizeNextBatch(ctx context.Context) error {
 	batchLimit := 10
 	if s.hasSocialPresence != nil && s.hasSocialPresence() {

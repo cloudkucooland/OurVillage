@@ -315,6 +315,10 @@ func (e *RkllmEngine) Name() string {
 	return "rkllm"
 }
 
+func (e *RkllmEngine) ModelLabel() string {
+	return localModelLabel(e.Name(), e.config.ModelPath)
+}
+
 func (e *RkllmEngine) Stream(ctx context.Context, prompt string, opts GenerationOptions, onToken func(token string) bool) error {
 	e.inferMu.Lock()
 	defer e.inferMu.Unlock()

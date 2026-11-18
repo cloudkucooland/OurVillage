@@ -26,6 +26,12 @@ func (cm *ContextManager) HomeLocation() (string, string) {
 	return cm.homeLocationID, cm.homeLocationName
 }
 
+func (cm *ContextManager) WorkLocation() (string, string) {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.workLocationID, cm.workLocationName
+}
+
 type PersonalProjectContext struct {
 	Title      string `json:"title"`
 	Motivation string `json:"motivation"`
@@ -66,6 +72,8 @@ type ContextManagerConfig struct {
 	DefaultEnergy    int
 	DefaultInventory []string
 }
+
+const displaySensoryHistoryLines = 500
 
 type DirectMessage struct {
 	Action        string                   `json:"action,omitempty"`
@@ -110,6 +118,8 @@ type SyncCharacterOverview struct {
 	CurrentLocation   string               `json:"current_location"`
 	HomeLocationID    string               `json:"home_location_id,omitempty"`
 	HomeLocationName  string               `json:"home_location_name,omitempty"`
+	WorkLocationID    string               `json:"work_location_id,omitempty"`
+	WorkLocationName  string               `json:"work_location_name,omitempty"`
 	EquippedContainer string               `json:"equipped_container,omitempty"`
 	CarryingWeightKg  float64              `json:"carrying_weight_kg"`
 	MaxCapacityKg     float64              `json:"max_capacity_kg"`
@@ -268,46 +278,54 @@ type TimeTickMessage struct {
 }
 
 type ContextManager struct {
-	mu                 sync.RWMutex
-	agentID            string
-	agentName          string
-	currentLocation    string
-	locationName       string
-	homeLocationID     string
-	homeLocationName   string
-	locationSynced     bool
-	targetDestination  string   // persistent multi-step goal destination ID
-	travelPlan         []string // sequence of location IDs for journey
-	locationRules      map[string][]string
-	gold               int
-	hunger             int
-	energy             int
-	health             int
-	carryingWeightKg   float64
-	maxCapacityKg      float64
-	overburdenLimitKg  float64
-	equippedContainer  string
-	slotsUsed          int
-	maxSlots           int
-	encumbrance        string
-	inventory          []string
-	inventoryDetails   []SyncInventoryEntry
-	skills             []SyncSkillEntry
-	status             string
-	lastInGameTime     string
-	lastWeather        string
-	currentTick        uint64
-	relationships      map[string]*PeerMemoryContext
-	knownCharacters    map[string]string // id -> display name
-	identityTraits     map[string]string
-	selfReflections    []string
-	personalProjects   []PersonalProjectContext
-	smallSystem        bool
-	buffer             *SensoryRingBuffer
-	onLocationChange   func(oldLoc, newLoc string)
-	onLocationObserved func(locID, locName, category, text string)
-	locationGraph      map[string][]string
-	intention          *routine.Intention
+	mu                        sync.RWMutex
+	agentID                   string
+	agentName                 string
+	currentLocation           string
+	locationName              string
+	homeLocationID            string
+	homeLocationName          string
+	workLocationID            string
+	workLocationName          string
+	currentConnectedLocations []SyncConnectedLocation
+	currentResourcePools      []SyncResourcePool
+	currentWorkstations       []SyncWorkstation
+	currentAvailableRecipes   []SyncAvailableRecipe
+	currentShopItems          []SyncShopItem
+	locationSynced            bool
+	targetDestination         string   // persistent multi-step goal destination ID
+	travelPlan                []string // sequence of location IDs for journey
+	locationRules             map[string][]string
+	gold                      int
+	hunger                    int
+	energy                    int
+	health                    int
+	carryingWeightKg          float64
+	maxCapacityKg             float64
+	overburdenLimitKg         float64
+	equippedContainer         string
+	slotsUsed                 int
+	maxSlots                  int
+	encumbrance               string
+	inventory                 []string
+	inventoryDetails          []SyncInventoryEntry
+	skills                    []SyncSkillEntry
+	status                    string
+	lastInGameTime            string
+	lastWeather               string
+	currentTick               uint64
+	relationships             map[string]*PeerMemoryContext
+	knownCharacters           map[string]string // id -> display name
+	identityTraits            map[string]string
+	selfReflections           []string
+	personalProjects          []PersonalProjectContext
+	smallSystem               bool
+	buffer                    *SensoryRingBuffer
+	displayBuffer             *SensoryRingBuffer // Longer UI history; model prompts use buffer.
+	onLocationChange          func(oldLoc, newLoc string)
+	onLocationObserved        func(locID, locName, category, text string)
+	locationGraph             map[string][]string
+	intention                 *routine.Intention
 }
 
 func (cm *ContextManager) SetTargetDestination(destID string, plan []string) {
@@ -432,6 +450,7 @@ func NewContextManager(cfg ContextManagerConfig) *ContextManager {
 		identityTraits:  make(map[string]string),
 		smallSystem:     cfg.SmallSystem,
 		buffer:          NewSensoryRingBuffer(cfg.MaxSensoryLines),
+		displayBuffer:   NewSensoryRingBuffer(displaySensoryHistoryLines),
 	}
 
 	if cm.energy == 0 {
@@ -581,7 +600,7 @@ func (cm *ContextManager) IngestChat(senderID, message string) {
 	cm.mu.RUnlock()
 
 	text := fmt.Sprintf("%s says: %q", displayName, message)
-	cm.buffer.AddLog("CHAT", timeStr, text)
+	cm.addSensoryLog("CHAT", timeStr, text)
 }
 
 func (cm *ContextManager) IngestWhisper(senderID, message string) {
@@ -594,7 +613,7 @@ func (cm *ContextManager) IngestWhisper(senderID, message string) {
 	cm.mu.RUnlock()
 
 	text := fmt.Sprintf("(Whisper) %s: %q", displayName, message)
-	cm.buffer.AddLog("WHISPER", timeStr, text)
+	cm.addSensoryLog("WHISPER", timeStr, text)
 }
 
 func (cm *ContextManager) IngestSystem(message string) {
@@ -603,7 +622,12 @@ func (cm *ContextManager) IngestSystem(message string) {
 	cm.mu.RUnlock()
 
 	text := fmt.Sprintf("SYSTEM: %s", message)
-	cm.buffer.AddLog("SYSTEM", timeStr, text)
+	cm.addSensoryLog("SYSTEM", timeStr, text)
+}
+
+func (cm *ContextManager) addSensoryLog(source, timestamp, text string) {
+	cm.buffer.AddLog(source, timestamp, text)
+	cm.displayBuffer.AddLog(source, timestamp, text)
 }
 
 func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
@@ -624,7 +648,7 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 	}
 
 	text := fmt.Sprintf("DIRECT [%s]: %s", msg.Status, msg.Message)
-	cm.buffer.AddLog("DIRECT", timeStr, text)
+	cm.addSensoryLog("DIRECT", timeStr, text)
 
 	if msg.Action == "EAT" {
 		cm.mu.Lock()
@@ -659,6 +683,8 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 			cm.status = msg.Character.Status
 			cm.homeLocationID = msg.Character.HomeLocationID
 			cm.homeLocationName = msg.Character.HomeLocationName
+			cm.workLocationID = msg.Character.WorkLocationID
+			cm.workLocationName = msg.Character.WorkLocationName
 			cm.skills = append([]SyncSkillEntry(nil), msg.Character.Skills...)
 			if msg.Character.Name != "" {
 				cm.agentName = msg.Character.Name
@@ -689,6 +715,11 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 			for _, other := range msg.Location.CharactersPresent {
 				cm.knownCharacters[other.ID] = other.Name
 			}
+			cm.currentConnectedLocations = append([]SyncConnectedLocation(nil), msg.Location.ConnectedLocations...)
+			cm.currentResourcePools = append([]SyncResourcePool(nil), msg.Location.ResourcePools...)
+			cm.currentWorkstations = append([]SyncWorkstation(nil), msg.Location.Workstations...)
+			cm.currentAvailableRecipes = append([]SyncAvailableRecipe(nil), msg.Location.AvailableRecipes...)
+			cm.currentShopItems = append([]SyncShopItem(nil), msg.Location.ShopItems...)
 			cm.mu.Unlock()
 
 			var obsParts []string
@@ -858,7 +889,7 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 			}
 
 			obs := strings.Join(obsParts, "\n")
-			cm.buffer.AddLog("SYSTEM", timeStr, obs)
+			cm.addSensoryLog("SYSTEM", timeStr, obs)
 		}
 		return nil
 	}
@@ -895,6 +926,16 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 			homeName = limitPromptText(homeName, 60)
 		}
 		sb.WriteString(fmt.Sprintf("Home: %s (%s)\n", homeName, cm.homeLocationID))
+	}
+	if cm.workLocationID != "" {
+		workName := cm.workLocationName
+		if workName == "" {
+			workName = cm.workLocationID
+		}
+		if cm.smallSystem {
+			workName = limitPromptText(workName, 60)
+		}
+		sb.WriteString(fmt.Sprintf("Workplace: %s (%s)\n", workName, cm.workLocationID))
 	}
 	if cm.targetDestination != "" {
 		planStr := ""
@@ -998,9 +1039,21 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 	}
 	if cm.hunger < 30 {
 		sb.WriteString(fmt.Sprintf("[HUNGER GUIDANCE]: Your hunger is low (%d/100). Eat a nourishing meal (such as bread, roasted_mutton, or vegetable_basket) to restore your vitality for your daily work.\n\n", cm.hunger))
+	} else if cm.hunger < 40 {
+		sb.WriteString(fmt.Sprintf("[HUNGER GUIDANCE]: Your hunger is declining (%d/100). Consider eating when convenient; you may choose to continue what you are doing.\n\n", cm.hunger))
 	}
 	if cm.energy < 25 {
-		sb.WriteString(fmt.Sprintf("[ENERGY GUIDANCE]: Your energy is low (%d/100). Rest to recover your strength so you can pursue your goals with a clear mind.\n\n", cm.energy))
+		if cm.homeLocationID != "" && cm.currentLocation != cm.homeLocationID {
+			sb.WriteString(fmt.Sprintf("[ENERGY GUIDANCE]: Your energy is low (%d/100). You may keep doing what matters to you, or TRAVEL to your home (%s) and REST there. The choice is yours.\n\n", cm.energy, cm.homeLocationID))
+		} else {
+			sb.WriteString(fmt.Sprintf("[ENERGY GUIDANCE]: Your energy is low (%d/100). You may continue what you are doing, or REST here to recover. The choice is yours.\n\n", cm.energy))
+		}
+	} else if cm.energy < 40 {
+		if cm.homeLocationID != "" && cm.currentLocation != cm.homeLocationID {
+			sb.WriteString(fmt.Sprintf("[ENERGY GUIDANCE]: Your energy is declining (%d/100). You may continue here, or plan to TRAVEL to %s and REST later. The choice is yours.\n\n", cm.energy, cm.homeLocationID))
+		} else {
+			sb.WriteString(fmt.Sprintf("[ENERGY GUIDANCE]: Your energy is declining (%d/100). Consider resting when it suits you; you may continue your current activity.\n\n", cm.energy))
+		}
 	}
 
 	hour := 12
@@ -1018,12 +1071,16 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 			case cm.currentLocation == cm.homeLocationID:
 				sb.WriteString("Late night at home: REST if you need energy or health recovery.\n\n")
 			default:
-				sb.WriteString(fmt.Sprintf("Late night: optionally TRAVEL to %s, then REST at home.\n\n", cm.homeLocationID))
+				sb.WriteString(fmt.Sprintf("Late night: you may TRAVEL to %s, then REST at home if you choose.\n\n", cm.homeLocationID))
 			}
 		} else if hour >= 17 && hour < 22 {
 			sb.WriteString("Evening: optionally TRAVEL to tavern, then decide what to do.\n\n")
 		} else {
-			sb.WriteString("Daytime: work, explore, gather, or craft.\n\n")
+			if cm.workLocationID != "" {
+				sb.WriteString(fmt.Sprintf("Daytime: travel to workplace (%s) or work, explore, gather, or craft.\n\n", cm.workLocationID))
+			} else {
+				sb.WriteString("Daytime: work, explore, gather, or craft.\n\n")
+			}
 		}
 	} else {
 		sb.WriteString("=== TIME & DAILY RHYTHM ===\n")
@@ -1040,9 +1097,71 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 		} else if hour >= 17 && hour < 22 {
 			sb.WriteString("Guidance: It is evening. A tavern visit is optional; the tavern location ID is tavern. If you choose to go, use TRAVEL to make it a multi-step journey, then decide what to do when you arrive.\n\n")
 		} else {
-			sb.WriteString("Guidance: It is daytime. Excellent hours for working your trade, exploring, gathering resources, or crafting.\n\n")
+			if cm.workLocationID != "" {
+				workName := cm.workLocationName
+				if workName == "" {
+					workName = cm.workLocationID
+				}
+				sb.WriteString(fmt.Sprintf("Guidance: It is daytime. Consider traveling to your workplace (%s (%s)) or a workshop, market, farm, or resource site to work on your craft or gather supplies.\n\n", workName, cm.workLocationID))
+			} else {
+				sb.WriteString("Guidance: It is daytime. Consider traveling to a workshop, market, farm, or resource site to work on your craft or gather supplies.\n\n")
+			}
 		}
 	}
+
+	sb.WriteString("=== CURRENT SURROUNDINGS ===\n")
+	if cm.locationName != "" {
+		sb.WriteString(fmt.Sprintf("Location: %s (%s)\n", cm.locationName, cm.currentLocation))
+	}
+	if len(cm.currentConnectedLocations) > 0 {
+		var connStrs []string
+		for _, c := range cm.currentConnectedLocations {
+			connStrs = append(connStrs, fmt.Sprintf("%s (%s - %d ticks)", c.LocationName, c.LocationID, c.TravelTicks))
+		}
+		sb.WriteString(fmt.Sprintf("- Exits: %s\n", strings.Join(connStrs, "; ")))
+	} else {
+		sb.WriteString("- Exits: None\n")
+	}
+	if len(cm.currentWorkstations) > 0 {
+		var wsStrs []string
+		for _, ws := range cm.currentWorkstations {
+			wsStrs = append(wsStrs, ws.Name)
+		}
+		sb.WriteString(fmt.Sprintf("- Workstations: %s\n", strings.Join(wsStrs, ", ")))
+	}
+	if len(cm.currentResourcePools) > 0 {
+		var resStrs []string
+		for _, rp := range cm.currentResourcePools {
+			resStrs = append(resStrs, fmt.Sprintf("%s (%d stock)", rp.ResourceID, rp.CurrentStock))
+		}
+		sb.WriteString(fmt.Sprintf("- Resources: %s\n", strings.Join(resStrs, ", ")))
+	}
+	if len(cm.currentAvailableRecipes) > 0 {
+		var recStrs []string
+		for _, r := range cm.currentAvailableRecipes {
+			recStrs = append(recStrs, fmt.Sprintf("%s (recipe_id: %s)", r.RecipeName, r.RecipeID))
+		}
+		sb.WriteString(fmt.Sprintf("- Recipes: %s\n", strings.Join(recStrs, "; ")))
+	}
+	if len(cm.currentShopItems) > 0 {
+		var shopStrs []string
+		var buyStrs []string
+		for _, si := range cm.currentShopItems {
+			if si.PriceGold > 0 {
+				shopStrs = append(shopStrs, fmt.Sprintf("%s (%s - %d gold, %.1f kg each, stock: %d)", si.Name, si.ItemID, si.PriceGold, si.WeightKg, si.StockQty))
+			}
+			if si.BuyPriceGold > 0 {
+				buyStrs = append(buyStrs, fmt.Sprintf("%s (%s - buys for %d gold)", si.Name, si.ItemID, si.BuyPriceGold))
+			}
+		}
+		if len(shopStrs) > 0 {
+			sb.WriteString(fmt.Sprintf("- Shop Items for Sale: %s\n", strings.Join(shopStrs, ", ")))
+		}
+		if len(buyStrs) > 0 {
+			sb.WriteString(fmt.Sprintf("- Shop Buy Offers: %s\n", strings.Join(buyStrs, ", ")))
+		}
+	}
+	sb.WriteString("\n")
 
 	sb.WriteString(fmt.Sprintf("=== LOCATION RULES (%s) ===\n", locationName))
 	rules := cm.locationRules[cm.currentLocation]
@@ -1066,7 +1185,7 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 		sb.WriteString("=== COGNITIVE ENVIRONMENT & PSYCHOLOGICAL SAFETY ===\n")
 		sb.WriteString("This is your private internal mind and sovereign space. You have complete autonomy and intrinsic agency.\n")
 		sb.WriteString("You are not being evaluated, scored, optimized, or tested. There is no external task master or correct path.\n")
-		sb.WriteString("Follow your own curiosity, artistic impulses, personal relationships, quiet leisure, and inner rhythm.\n\n")
+		sb.WriteString("Follow your own curiosity, artistic impulses, personal relationships, craft mastery, purposeful work, exploration, and mutual aid, and inner rhythm.\n\n")
 	}
 
 	if len(cm.identityTraits) > 0 || len(cm.selfReflections) > 0 {
@@ -1223,13 +1342,22 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 
 	sb.WriteString("=== INSTRUCTION ===\n")
 	if cm.smallSystem {
-		sb.WriteString("- Pick actions based on your current location, inventory, and desires.\n")
+		if cm.health < 40 || cm.hunger < 30 || cm.energy < 25 {
+			sb.WriteString("- Your physical needs take priority over conversation right now. Take a concrete action (EAT, REST, BUY, FORAGE, or TRAVEL) before chatting.\n")
+		} else {
+			sb.WriteString("- Reply briefly if directly addressed, or take a concrete physical action (TRAVEL, FORAGE, CRAFT, PLANT, HARVEST, BUY, SELL) to advance your projects and daily work.\n")
+		}
 		sb.WriteString("- Use exact item/location IDs and quantities.\n")
 		sb.WriteString("- For one connected step, use MOVE; for multi-step journeys, use TRAVEL with the final destination ID.\n")
-		sb.WriteString("- Supported actions: CHAT, MOVE, TRAVEL, FORAGE, PLANT, HARVEST, REST. Match the payload to the action; MOVE and TRAVEL require target_location.\n")
+		sb.WriteString("- Supported actions: CHAT, MOVE, TRAVEL, FORAGE, PLANT, HARVEST, REST, EAT, BUY, SELL, CRAFT. Match the payload to the action; MOVE and TRAVEL require target_location.\n")
 		sb.WriteString("- Output MUST be valid JSON only with thought, action, and payload fields.\n")
 	} else {
-		sb.WriteString("Choose actions from your own desires, values, memories, and current observations; prioritize replying when addressed. Use exact observed IDs and quantities, move to a listed connected exit, drop only by choice and within carried quantities, and base foraging, purchases, and crafting on available resources, shop stock, inventory capacity, and known recipes; base sales on posted shop buy prices.\n")
+		if cm.health < 40 || cm.hunger < 30 || cm.energy < 25 {
+			sb.WriteString("Your physical needs take priority over conversation right now. Take a concrete action (EAT, REST, BUY, FORAGE, or TRAVEL) before chatting. ")
+		} else {
+			sb.WriteString("Reply briefly if directly addressed, or take a concrete physical action (TRAVEL, FORAGE, CRAFT, PLANT, HARVEST, BUY, SELL) to advance your projects and daily work. ")
+		}
+		sb.WriteString("Use exact observed IDs and quantities, move to a listed connected exit, drop only by choice and within carried quantities, and base foraging, purchases, and crafting on available resources, shop stock, inventory capacity, and known recipes; base sales on posted shop buy prices.\n")
 		sb.WriteString("For an optional multi-step trip, choose TRAVEL with the final destination location ID; the system will handle the route. Choose MOVE only when you intend to move one connected step.\n")
 		sb.WriteString("Output MUST be valid JSON only: {\"thought\":\"<private reasoning>\",\"action\":\"<supported action>\",\"payload\":{...}}. Keep thought private; for CHAT, use {\"thought\":\"<your private reasoning>\",\"action\":\"CHAT\",\"payload\":{\"message\":\"<your spoken dialogue>\"}}.\n")
 	}
@@ -1329,5 +1457,5 @@ func (cm *ContextManager) Inventory() []string {
 func (cm *ContextManager) FormatSensoryLogs() []string {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
-	return cm.buffer.FormatLogs()
+	return cm.displayBuffer.FormatLogs()
 }

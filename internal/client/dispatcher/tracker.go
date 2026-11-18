@@ -19,6 +19,7 @@ var (
 // ExecutionResult represents the outcome received from the server for an intent.
 type ExecutionResult struct {
 	IntentID   string        `json:"intent_id"`
+	Action     string        `json:"action,omitempty"`
 	Status     string        `json:"status"` // "SUCCESS" or "ERROR"
 	ErrorCode  string        `json:"error_code,omitempty"`
 	Message    string        `json:"message"`
@@ -39,6 +40,7 @@ type CorrelationTracker struct {
 	mu      sync.Mutex
 	closed  bool
 	pending map[string]*pendingIntent
+	actions map[string]string
 	history []ExecutionResult
 	maxHist int
 }
@@ -50,9 +52,16 @@ func NewCorrelationTracker(historyLimit int) *CorrelationTracker {
 	}
 	return &CorrelationTracker{
 		pending: make(map[string]*pendingIntent),
+		actions: make(map[string]string),
 		history: make([]ExecutionResult, 0, historyLimit),
 		maxHist: historyLimit,
 	}
+}
+
+func (t *CorrelationTracker) SetAction(intentID, action string) {
+	t.mu.Lock()
+	t.actions[intentID] = action
+	t.mu.Unlock()
 }
 
 // Register registers an intent for asynchronous response correlation.
@@ -85,6 +94,7 @@ func (t *CorrelationTracker) Register(intentID string, timeout time.Duration) <-
 
 		if curr, ok := t.pending[intentID]; ok && curr == p {
 			delete(t.pending, intentID)
+			delete(t.actions, intentID)
 			res := ExecutionResult{
 				IntentID:   intentID,
 				Status:     "TIMEOUT",
@@ -120,10 +130,13 @@ func (t *CorrelationTracker) Resolve(raw []byte) (ExecutionResult, bool) {
 	defer t.mu.Unlock()
 
 	p, found := t.pending[direct.IntentID]
+	action := t.actions[direct.IntentID]
+	delete(t.actions, direct.IntentID)
 	if !found {
 		// Not a tracked pending intent or already resolved/timed out
 		res := ExecutionResult{
 			IntentID:   direct.IntentID,
+			Action:     action,
 			Status:     direct.Status,
 			ErrorCode:  direct.ErrorCode,
 			Message:    direct.Message,
@@ -138,6 +151,7 @@ func (t *CorrelationTracker) Resolve(raw []byte) (ExecutionResult, bool) {
 
 	res := ExecutionResult{
 		IntentID:   direct.IntentID,
+		Action:     action,
 		Status:     direct.Status,
 		ErrorCode:  direct.ErrorCode,
 		Message:    direct.Message,
@@ -184,5 +198,6 @@ func (t *CorrelationTracker) Close() error {
 		p.ch <- ExecutionResult{IntentID: id, Err: ErrTrackerClosed}
 	}
 	t.pending = make(map[string]*pendingIntent)
+	t.actions = make(map[string]string)
 	return nil
 }

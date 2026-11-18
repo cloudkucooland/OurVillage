@@ -113,6 +113,21 @@ func TestContextManager_PromptAssembly(t *testing.T) {
 	}
 }
 
+func TestDisplayLogHistoryExceedsPromptLogLimit(t *testing.T) {
+	cm := NewContextManager(ContextManagerConfig{AgentID: "elda", MaxSensoryLines: 2})
+	for i := 0; i < 8; i++ {
+		cm.IngestSystem(fmt.Sprintf("event-%d", i))
+	}
+	if got := len(cm.FormatSensoryLogs()); got != 8 {
+		t.Fatalf("display log count = %d, want 8", got)
+	}
+	prompt := cm.BuildPrompt(nil, nil)
+	if strings.Contains(prompt, "event-0") || strings.Contains(prompt, "event-5") ||
+		!strings.Contains(prompt, "event-6") || !strings.Contains(prompt, "event-7") {
+		t.Fatalf("prompt logs should retain only the latest 2 events:\n%s", prompt)
+	}
+}
+
 func TestSmallSystemPromptSupportsTravel(t *testing.T) {
 	cm := NewContextManager(ContextManagerConfig{
 		AgentID:         "eldon_millwright",
@@ -127,6 +142,20 @@ func TestSmallSystemPromptSupportsTravel(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "Supported actions: CHAT, MOVE, TRAVEL, FORAGE, PLANT, HARVEST, REST") {
 		t.Fatal("small-system prompt action list missing TRAVEL")
+	}
+}
+
+func TestLowEnergyGuidanceOffersHomeTravelWithoutCommanding(t *testing.T) {
+	cm := NewContextManager(ContextManagerConfig{AgentID: "elda", InitialLocation: "tavern"})
+	payload := []byte(`{"type":"STATE_SYNC","character":{"id":"elda","energy":18,"hunger":90,"health":100,"status":"IDLE","current_location":"tavern","home_location_id":"eldas_room"},"location":{"id":"tavern","name":"Tavern"}}`)
+	if err := cm.IngestDirectResponse(payload); err != nil {
+		t.Fatal(err)
+	}
+	prompt := cm.BuildPrompt(nil, nil)
+	for _, expected := range []string{"energy is low (18/100)", "TRAVEL to your home (eldas_room)", "The choice is yours"} {
+		if !strings.Contains(prompt, expected) {
+			t.Errorf("low energy prompt missing %q", expected)
+		}
 	}
 }
 

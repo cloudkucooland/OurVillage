@@ -71,6 +71,7 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 			}()
 			lookIntent := dispatcher.Intent{
 				IntentID: fmt.Sprintf("req_tui_look_%d", time.Now().UnixNano()),
+				Source:   "player_tui",
 				Action:   "LOOK",
 				Payload:  json.RawMessage(`{}`),
 			}
@@ -98,6 +99,7 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 			payload, _ := json.Marshal(map[string]string{"target_location": targetLoc})
 			moveIntent := dispatcher.Intent{
 				IntentID: fmt.Sprintf("req_tui_move_%d", time.Now().UnixNano()),
+				Source:   "player_tui",
 				Action:   "MOVE",
 				Payload:  payload,
 			}
@@ -129,6 +131,7 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 			})
 			chatIntent := dispatcher.Intent{
 				IntentID: fmt.Sprintf("req_tui_chat_%d", time.Now().UnixNano()),
+				Source:   "player_tui",
 				Action:   "CHAT",
 				Payload:  payload,
 			}
@@ -256,6 +259,7 @@ func (m *TUIModel) influenceCmd(hint string) tea.Cmd {
 		if err != nil {
 			return errMsg{err: fmt.Errorf("cognition generation failed: %v", err)}
 		}
+		intent.Source = "tui_influence"
 		if strings.EqualFold(intent.Action, "TRAVEL") {
 			var payload struct {
 				TargetLocation string `json:"target_location"`

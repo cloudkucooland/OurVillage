@@ -74,6 +74,10 @@ func (c *CloudGeminiEngine) Name() string {
 	return "cloud-gemini"
 }
 
+func (c *CloudGeminiEngine) ModelLabel() string {
+	return c.Name() + ":" + c.modelName
+}
+
 type geminiRequest struct {
 	Contents         []geminiContent         `json:"contents"`
 	GenerationConfig *geminiGenerationConfig `json:"generationConfig,omitempty"`

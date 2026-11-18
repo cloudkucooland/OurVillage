@@ -24,7 +24,7 @@ func NewEngine(cfg *Config) (model.InferenceEngine, error) {
 		}), nil
 
 	case "llama-pure", "llama":
-		return model.NewLlamaPureEngine(model.LlamaPureEngineConfig{
+		eng, err := model.NewLlamaPureEngine(model.LlamaPureEngineConfig{
 			LibraryPath:   cfg.Model.LlamaPure.LibraryPath,
 			ModelPath:     cfg.Model.LlamaPure.ModelPath,
 			ContextSize:   cfg.Model.LlamaPure.ContextSize,
@@ -36,9 +36,13 @@ func NewEngine(cfg *Config) (model.InferenceEngine, error) {
 			RepeatPenalty: float32(cfg.Model.LlamaPure.RepeatPenalty),
 			GrammarFile:   cfg.Model.LlamaPure.GrammarFile,
 		})
+		if err != nil {
+			return nil, err
+		}
+		return model.NewQueuedEngine(eng, 64), nil
 
 	case "rkllm":
-		return model.NewRkllmEngine(model.RkllmEngineConfig{
+		eng, err := model.NewRkllmEngine(model.RkllmEngineConfig{
 			LibraryPath:      cfg.Model.Rkllm.LibraryPath,
 			ModelPath:        cfg.Model.Rkllm.ModelPath,
 			ContextSize:      cfg.Model.Rkllm.ContextSize,
@@ -54,6 +58,10 @@ func NewEngine(cfg *Config) (model.InferenceEngine, error) {
 			MaxTokens:        cfg.Model.Rkllm.MaxTokens,
 			EnableThinking:   cfg.Model.Rkllm.EnableThinking,
 		})
+		if err != nil {
+			return nil, err
+		}
+		return model.NewQueuedEngine(eng, 64), nil
 
 	case "cloud-gemini", "gemini":
 		return model.NewCloudGeminiEngine(model.GeminiEngineConfig{

@@ -29,6 +29,8 @@ type CharacterOverview struct {
 	CurrentLocation   string                `json:"current_location"`
 	HomeLocationID    string                `json:"home_location_id,omitempty"`
 	HomeLocationName  string                `json:"home_location_name,omitempty"`
+	WorkLocationID    string                `json:"work_location_id,omitempty"`
+	WorkLocationName  string                `json:"work_location_name,omitempty"`
 	EquippedContainer string                `json:"equipped_container,omitempty"`
 	CarryingWeightKg  float64               `json:"carrying_weight_kg"`
 	MaxCapacityKg     float64               `json:"max_capacity_kg"`
@@ -150,9 +152,11 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 
 	err := database.QueryRow(`
 		SELECT c.id, c.name, c.occupation, c.gold, c.hunger, c.energy, c.health,
-		       c.current_location, c.status, c.home_location_id, COALESCE(home.name, ''), c.equipped_container_id
+		       c.current_location, c.status, c.home_location_id, COALESCE(home.name, ''),
+		       c.work_location_id, COALESCE(work.name, ''), c.equipped_container_id
 		FROM characters c
 		LEFT JOIN locations home ON home.id = c.home_location_id
+		LEFT JOIN locations work ON work.id = c.work_location_id
 		WHERE c.id = ?
 	`, characterID).Scan(
 		&char.ID,
@@ -166,6 +170,8 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 		&char.Status,
 		&char.HomeLocationID,
 		&char.HomeLocationName,
+		&char.WorkLocationID,
+		&char.WorkLocationName,
 		&equippedContainer,
 	)
 	if err == sql.ErrNoRows {

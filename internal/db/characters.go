@@ -32,6 +32,7 @@ type CharacterSeed struct {
 	Energy              int
 	Location            string
 	HomeLocationID      string
+	WorkLocationID      string
 	EquippedContainerID string
 	ControllerType      string // "agent" or "password" / "human"
 	MQTTPassword        string
@@ -106,6 +107,7 @@ var DefaultCharacters = []CharacterSeed{
 		Energy:              100,
 		Location:            "town_mill",
 		HomeLocationID:      "eldons_room",
+		WorkLocationID:      "town_mill",
 		EquippedContainerID: "",
 		ControllerType:      "agent",
 		MQTTPassword:        "secret_eldon_123",
@@ -121,6 +123,7 @@ var DefaultCharacters = []CharacterSeed{
 		Energy:              100,
 		Location:            "tavern",
 		HomeLocationID:      "marthas_room",
+		WorkLocationID:      "tavern",
 		EquippedContainerID: "",
 		ControllerType:      "agent",
 		MQTTPassword:        "secret_martha_123",
@@ -136,6 +139,7 @@ var DefaultCharacters = []CharacterSeed{
 		Energy:              100,
 		Location:            "blacksmith",
 		HomeLocationID:      "gideons_room",
+		WorkLocationID:      "blacksmith",
 		EquippedContainerID: "wheelbarrow",
 		ControllerType:      "agent",
 		MQTTPassword:        "secret_gideon_123",
@@ -151,10 +155,26 @@ var DefaultCharacters = []CharacterSeed{
 		Energy:              100,
 		Location:            "market",
 		HomeLocationID:      "lukes_room",
+		WorkLocationID:      "village_field",
 		EquippedContainerID: "woven_basket",
 		ControllerType:      "agent",
 		MQTTPassword:        "secret_luke_123",
 		Inventory:           map[string]int{"wheat": 10, "vegetable_seeds": 10, "vegetable_basket": 2, "woven_basket": 1},
+	},
+	{
+		ID:             "ada_baker",
+		Name:           "Ada the Baker",
+		PersonaPrompt:  "Ada is a patient, practical baker who runs Hearth & Crust Bakery. She values good flour, fresh bread, and fair trade with the village's farmers and miller.",
+		Occupation:     "Baker",
+		Gold:           25,
+		Hunger:         90,
+		Energy:         100,
+		Location:       "bakery",
+		HomeLocationID: "bakery",
+		WorkLocationID: "bakery",
+		ControllerType: "agent",
+		MQTTPassword:   "secret_ada_123",
+		Inventory:      map[string]int{"flour": 4, "fresh_water": 2},
 	},
 	{
 		ID:                  "eleanor_clerk",
@@ -166,6 +186,7 @@ var DefaultCharacters = []CharacterSeed{
 		Energy:              100,
 		Location:            "town_hall",
 		HomeLocationID:      "clerks_office",
+		WorkLocationID:      "clerks_office",
 		EquippedContainerID: "",
 		ControllerType:      "human", // Can be played by a human player!
 		MQTTPassword:        "secret_eleanor_123",
@@ -228,8 +249,8 @@ func SeedItemsAndCharacters(db *sql.DB) error {
 
 	// Seed Characters
 	charQuery := `
-	INSERT INTO characters (id, name, persona_prompt, occupation, gold, hunger, energy, current_location, home_location_id, equipped_container_id, controller_type, mqtt_password)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO characters (id, name, persona_prompt, occupation, gold, hunger, energy, current_location, home_location_id, work_location_id, equipped_container_id, controller_type, mqtt_password)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		name=excluded.name,
 		persona_prompt=excluded.persona_prompt,
@@ -239,6 +260,7 @@ func SeedItemsAndCharacters(db *sql.DB) error {
 		energy=excluded.energy,
 		current_location=excluded.current_location,
 		home_location_id=excluded.home_location_id,
+		work_location_id=excluded.work_location_id,
 		equipped_container_id=excluded.equipped_container_id,
 		controller_type=excluded.controller_type,
 		mqtt_password=excluded.mqtt_password;
@@ -277,7 +299,7 @@ func SeedItemsAndCharacters(db *sql.DB) error {
 		if char.EquippedContainerID != "" {
 			containerVal = &char.EquippedContainerID
 		}
-		_, err := charStmt.Exec(char.ID, char.Name, char.PersonaPrompt, char.Occupation, char.Gold, char.Hunger, char.Energy, char.Location, char.HomeLocationID, containerVal, char.ControllerType, char.MQTTPassword)
+		_, err := charStmt.Exec(char.ID, char.Name, char.PersonaPrompt, char.Occupation, char.Gold, char.Hunger, char.Energy, char.Location, char.HomeLocationID, char.WorkLocationID, containerVal, char.ControllerType, char.MQTTPassword)
 		if err != nil {
 			return fmt.Errorf("failed to seed character %s: %w", char.ID, err)
 		}

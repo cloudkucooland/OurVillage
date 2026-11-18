@@ -452,6 +452,8 @@ func InitializeCharacterProgression(q Queryable, characterID, occupation string)
 		recipes = append(recipes, "smelt_iron", "forge_hammer")
 	case strings.Contains(role, "farmer"):
 		recipes = append(recipes, "mill_flour", "bake_bread")
+	case strings.Contains(role, "baker"):
+		recipes = append(recipes, "bake_bread")
 	case strings.Contains(role, "herbalist"), strings.Contains(role, "apothecary"):
 		recipes = append(recipes, "brew_elderflower_syrup", "brew_mint_tea")
 	}

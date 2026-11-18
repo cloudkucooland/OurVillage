@@ -422,6 +422,41 @@ func TestEquipAndUnequipIntents(t *testing.T) {
 	}
 }
 
+func TestDropEquippedItemUnequipsIt(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to init db: %v", err)
+	}
+	defer database.Close()
+
+	srv, err := NewServer(database, "")
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+	srv.SetTickCount(48)
+
+	// Give Eldon a leather_backpack and equip it
+	_, _ = database.Exec("INSERT INTO inventories (character_id, item_id, quantity) VALUES ('eldon_millwright', 'leather_backpack', 1)")
+	equipPayload, _ := json.Marshal(EquipPayload{ItemID: "leather_backpack"})
+	srv.handleEquip("eldon_millwright", "req_equip_drop", equipPayload)
+
+	var equipped sql.NullString
+	_ = database.QueryRow("SELECT equipped_container_id FROM characters WHERE id = 'eldon_millwright'").Scan(&equipped)
+	if !equipped.Valid || equipped.String != "leather_backpack" {
+		t.Fatalf("Expected equipped_container_id to be leather_backpack, got %v", equipped)
+	}
+
+	// Drop leather_backpack via DROP intent
+	dropPayload, _ := json.Marshal(ItemActionPayload{ItemID: "leather_backpack", Quantity: 1})
+	srv.handleDrop("eldon_millwright", "req_drop_backpack", dropPayload)
+
+	// Verify equipped_container_id is now NULL / empty
+	_ = database.QueryRow("SELECT equipped_container_id FROM characters WHERE id = 'eldon_millwright'").Scan(&equipped)
+	if equipped.Valid && equipped.String != "" {
+		t.Errorf("Expected equipped item to be unequipped upon dropping, got %v", equipped)
+	}
+}
+
 func TestForagingDurationUsesSkillLevel(t *testing.T) {
 	database, err := db.InitDB(":memory:")
 	if err != nil {

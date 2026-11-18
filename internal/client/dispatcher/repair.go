@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
 	"agentmud/internal/client/model"
@@ -69,24 +70,34 @@ func GenerateIntentWithRetry(
 			return Intent{}, err
 		}
 
-		rawOutput, err := engine.Generate(ctx, currentPrompt, opts)
+		var rawOutput string
+		var err error
+		if priorityEngine, ok := engine.(interface {
+			GeneratePriority(context.Context, string, model.GenerationOptions) (string, error)
+		}); ok {
+			rawOutput, err = priorityEngine.GeneratePriority(ctx, currentPrompt, opts)
+		} else {
+			rawOutput, err = engine.Generate(ctx, currentPrompt, opts)
+		}
 		if err != nil {
 			lastErr = fmt.Errorf("inference generation error (attempt %d): %w", attempt+1, err)
+			log.Printf("[Intent Generation] model=%s attempt=%d/%d error=%q", model.EngineLabel(engine), attempt+1, maxRetries+1, err.Error())
 			continue
 		}
 		intent, err := ParseAndRepairIntent(rawOutput)
 		if err == nil {
-			if attempt > 0 {
-				log.Printf("[Intent Repair] Success on retry attempt %d", attempt+1)
-			}
+			log.Printf("[Intent Generated] model=%s attempt=%d/%d intent_id=%s action=%s payload=%s thought=%s",
+				model.EngineLabel(engine), attempt+1, maxRetries+1, intent.IntentID, intent.Action,
+				preview(string(intent.Payload), 512), preview(intent.Thought, 512))
 			return intent, nil
 		}
 
-		log.Printf("[Intent Repair] Attempt %d failed validation: %v. Retrying with correction...", attempt+1, err)
+		log.Printf("[Intent Repair] model=%s attempt=%d/%d action=%s payload=%s output_bytes=%d error=%q raw=%s. Retrying with correction...",
+			model.EngineLabel(engine), attempt+1, maxRetries+1, intent.Action, preview(string(intent.Payload), 512), len(rawOutput), preview(err.Error(), 512), preview(rawOutput, 1200))
 		lastErr = err
 		correction := fmt.Sprintf(
 			"Your previous output failed validation: %s. Respond ONLY with valid JSON having 'thought', 'action', and 'payload'. Do not invent missing action parameters or substitute defaults; choose another action if the required information is unavailable.",
-			err.Error(),
+			truncate(err.Error(), 512),
 		)
 		if intent.Action == "MOVE" {
 			correction += " For MOVE, choose a target_location ID explicitly listed among the exits in your current observation; movement is only to a directly connected location. Never use a default destination, guess an ID, or target your current location. If no move is appropriate, choose another action."
@@ -98,4 +109,16 @@ func GenerateIntentWithRetry(
 	}
 
 	return Intent{}, fmt.Errorf("intent generation failed after %d attempts: %w", maxRetries+1, lastErr)
+}
+
+func preview(value string, limit int) string {
+	return strconv.Quote(truncate(value, limit))
+}
+
+func truncate(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) > limit {
+		return string(runes[:limit]) + "…[truncated]"
+	}
+	return value
 }

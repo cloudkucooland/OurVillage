@@ -21,6 +21,7 @@ var DefaultShopItems = []ShopItemSeed{
 	{LocationID: "tavern", ItemID: "mint_tea", PriceGold: 2, StockQuantity: 15},
 	{LocationID: "tavern", ItemID: "elderflower_wine", PriceGold: 5, StockQuantity: 10},
 	{LocationID: "bakery", ItemID: "bread", PriceGold: 1, StockQuantity: 25},
+	{LocationID: "bakery", ItemID: "flour", PriceGold: 3, StockQuantity: 0, BuyPriceGold: 2},
 	{LocationID: "market", ItemID: "vegetable_seeds", PriceGold: 1, StockQuantity: 50},
 	{LocationID: "blacksmith", ItemID: "iron_ingot", PriceGold: 4, StockQuantity: 10},
 	{LocationID: "blacksmith", ItemID: "smithing_hammer", PriceGold: 10, StockQuantity: 3},
@@ -74,6 +75,68 @@ func seedMillingShopItems(db *sql.DB) error {
 	return nil
 }
 
+// ensureBakerySetup adds the baker to existing worlds and configures the bakery's
+// flour buy offer without resetting its current stock or a configured offer.
+func ensureBakerySetup(db *sql.DB) error {
+	if err := SeedCrafting(db); err != nil {
+		return fmt.Errorf("ensure bakery recipes and workstation: %w", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO characters (
+			id, name, persona_prompt, occupation, gold, hunger, energy,
+			current_location, home_location_id, work_location_id, controller_type, mqtt_password
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO NOTHING
+	`, "ada_baker", "Ada the Baker",
+		"Ada is a patient, practical baker who runs Hearth & Crust Bakery. She values good flour, fresh bread, and fair trade with the village's farmers and miller.",
+		"Baker", 25, 90, 100, "bakery", "bakery", "bakery", "agent", "secret_ada_123"); err != nil {
+		return fmt.Errorf("ensure baker character: %w", err)
+	}
+	for _, item := range []struct {
+		id       string
+		quantity int
+	}{{"flour", 4}, {"fresh_water", 2}} {
+		if _, err := db.Exec(`
+			INSERT INTO inventories (character_id, item_id, quantity)
+			VALUES ('ada_baker', ?, ?)
+			ON CONFLICT(character_id, item_id) DO NOTHING
+		`, item.id, item.quantity); err != nil {
+			return fmt.Errorf("seed baker inventory %s: %w", item.id, err)
+		}
+	}
+	if err := InitializeCharacterProgression(db, "ada_baker", "Baker"); err != nil {
+		return fmt.Errorf("initialize baker progression: %w", err)
+	}
+	if _, err := db.Exec(`
+		UPDATE locations SET owner_id = 'ada_baker'
+		WHERE id = 'bakery' AND (owner_id IS NULL OR owner_id = '')
+	`); err != nil {
+		return fmt.Errorf("assign bakery owner: %w", err)
+	}
+	if _, err := db.Exec(`
+		UPDATE locations SET rules_prompt = ?
+		WHERE id = 'bakery' AND rules_prompt = 'Queue politely for bread purchase.'
+	`, "The bakery buys flour for 2 gold per bag and sells bread. Bread is baked from flour and fresh water."); err != nil {
+		return fmt.Errorf("update bakery guidance: %w", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO location_shop_items (location_id, item_id, price_gold, stock_quantity, buy_price_gold)
+		VALUES ('bakery', 'flour', 3, 0, 2)
+		ON CONFLICT(location_id, item_id) DO UPDATE SET
+			buy_price_gold = COALESCE(location_shop_items.buy_price_gold, excluded.buy_price_gold)
+	`); err != nil {
+		return fmt.Errorf("configure bakery flour offer: %w", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO location_shop_items (location_id, item_id, price_gold, stock_quantity)
+		VALUES ('bakery', 'bread', 1, 25)
+		ON CONFLICT(location_id, item_id) DO NOTHING
+	`); err != nil {
+		return fmt.Errorf("ensure initial bakery bread stock: %w", err)
+	}
+	return nil
+}
+
 // BuyItem executes a atomic transaction purchase of items from a location's storefront shop inventory.
 func BuyItem(db *sql.DB, characterID string, itemID string, quantity int) error {
 	if quantity <= 0 {
@@ -108,7 +171,12 @@ func BuyItem(db *sql.DB, characterID string, itemID string, quantity int) error 
 	}
 
 	totalCost := priceGold * quantity
-	if characterGold < totalCost {
+	var ownerID sql.NullString
+	if err := tx.QueryRow("SELECT owner_id FROM locations WHERE id = ?", locationID).Scan(&ownerID); err != nil {
+		return fmt.Errorf("failed to query shop owner: %w", err)
+	}
+	isOwnerPurchase := ownerID.Valid && ownerID.String == characterID
+	if !isOwnerPurchase && characterGold < totalCost {
 		return fmt.Errorf("INSUFFICIENT_GOLD: have %d gold, need %d gold", characterGold, totalCost)
 	}
 
@@ -135,28 +203,24 @@ func BuyItem(db *sql.DB, characterID string, itemID string, quantity int) error 
 		return fmt.Errorf("INVENTORY_FULL: inventory slot limit (%d) reached", weightInfo.MaxSlots)
 	}
 
-	// 4. Deduct gold from buyer
-	_, err = tx.Exec("UPDATE characters SET gold = gold - ? WHERE id = ?", totalCost, characterID)
-	if err != nil {
-		return fmt.Errorf("failed to deduct gold from buyer: %w", err)
+	// 4. Move gold only for purchases between different characters. An owner
+	// retrieving shop stock is an internal transfer, not a sale to themselves.
+	if !isOwnerPurchase {
+		if _, err = tx.Exec("UPDATE characters SET gold = gold - ? WHERE id = ?", totalCost, characterID); err != nil {
+			return fmt.Errorf("failed to deduct gold from buyer: %w", err)
+		}
 	}
 
-	// 5. Credit location owner if present
-	var ownerID sql.NullString
-	err = tx.QueryRow("SELECT owner_id FROM locations WHERE id = ?", locationID).Scan(&ownerID)
-	if err == nil && ownerID.Valid && ownerID.String != "" && ownerID.String != characterID {
+	// 5. Credit location owner when the buyer is a different character.
+	if ownerID.Valid && ownerID.String != "" && !isOwnerPurchase {
 		_, err = tx.Exec("UPDATE characters SET gold = gold + ? WHERE id = ?", totalCost, ownerID.String)
 		if err != nil {
 			return fmt.Errorf("failed to credit store owner %s: %w", ownerID.String, err)
 		}
 	}
 
-	// 6. Reduce shop stock (delete row if stock depleted)
-	if stockQty == quantity {
-		_, err = tx.Exec("DELETE FROM location_shop_items WHERE location_id = ? AND item_id = ?", locationID, itemID)
-	} else {
-		_, err = tx.Exec("UPDATE location_shop_items SET stock_quantity = stock_quantity - ? WHERE location_id = ? AND item_id = ?", quantity, locationID, itemID)
-	}
+	// 6. Reduce stock but keep the offer row so any buy offer remains active.
+	_, err = tx.Exec("UPDATE location_shop_items SET stock_quantity = stock_quantity - ? WHERE location_id = ? AND item_id = ?", quantity, locationID, itemID)
 	if err != nil {
 		return fmt.Errorf("failed to update shop stock: %w", err)
 	}
@@ -310,11 +374,20 @@ func RestockShopItem(db *sql.DB, characterID string, itemID string, quantity int
 	}
 	defer tx.Rollback()
 
-	// 1. Get character current location
+	// 1. Get character current location and verify they own its shop.
 	var locationID string
-	err = tx.QueryRow("SELECT current_location FROM characters WHERE id = ?", characterID).Scan(&locationID)
+	var ownerID sql.NullString
+	err = tx.QueryRow(`
+		SELECT c.current_location, l.owner_id
+		FROM characters c
+		JOIN locations l ON l.id = c.current_location
+		WHERE c.id = ?
+	`, characterID).Scan(&locationID, &ownerID)
 	if err != nil {
 		return fmt.Errorf("character not found: %w", err)
+	}
+	if !ownerID.Valid || ownerID.String != characterID {
+		return fmt.Errorf("SHOP_NOT_OWNER: only the shop owner can restock this location")
 	}
 
 	// 2. Check character inventory

@@ -201,3 +201,24 @@ func TestReflectionSynthesizer_SkipsStalePeersNotEncounteredRecently(t *testing.
 		t.Fatalf("expected all events (including skipped old peer events) to be processed and pruned, got %d remaining", count)
 	}
 }
+
+func TestReflectionSynthesizer_ConsolidateOnRest(t *testing.T) {
+	store, err := NewClientMemoryStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.AddEvent(40, "elda", "ACTION_RESULT", `{"status":"SUCCESS","message":"Purchased 10 vegetable seeds."}`); err != nil {
+		t.Fatal(err)
+	}
+	engine := model.NewMockEngine()
+	engine.SetDefaultResponse(`{"projects":[{"id":"gardening","title":"Grow vegetables","motivation":"Food security","status":"active","progress":"Purchased 10 vegetable seeds","next_step":"Plant seeds in garden plots","people":[],"locations":["garden"]}]}`)
+	synth := NewReflectionSynthesizer(store, engine, "elda", 0, 0)
+	if err := synth.ConsolidateOnRest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.GetProjects(true, 10)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("projects after rest consolidation = %#v, err = %v", projects, err)
+	}
+}

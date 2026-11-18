@@ -72,6 +72,10 @@ func (c *CloudOpenAIEngine) Name() string {
 	return "cloud-openai"
 }
 
+func (c *CloudOpenAIEngine) ModelLabel() string {
+	return c.Name() + ":" + c.modelName
+}
+
 type chatRequest struct {
 	Model          string          `json:"model"`
 	Messages       []chatMessage   `json:"messages"`

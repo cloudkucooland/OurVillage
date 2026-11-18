@@ -22,13 +22,35 @@ func (e *LoggingEngine) Name() string {
 	return e.engine.Name()
 }
 
+func (e *LoggingEngine) ModelLabel() string {
+	return EngineLabel(e.engine)
+}
+
 func (e *LoggingEngine) Generate(ctx context.Context, prompt string, opts GenerationOptions) (string, error) {
 	started := time.Now()
 	e.logRequest("Generate", prompt, opts)
 	response, err := e.engine.Generate(ctx, prompt, opts)
 	e.logger.Printf(
 		"[Inference] complete engine=%s method=Generate duration=%s output_bytes=%d err=%v",
-		e.Name(), time.Since(started), len(response), err,
+		EngineLabel(e.engine), time.Since(started), len(response), err,
+	)
+	return response, err
+}
+
+// GeneratePriority preserves decision priority through the logging wrapper.
+func (e *LoggingEngine) GeneratePriority(ctx context.Context, prompt string, opts GenerationOptions) (string, error) {
+	priorityEngine, ok := e.engine.(interface {
+		GeneratePriority(context.Context, string, GenerationOptions) (string, error)
+	})
+	if !ok {
+		return e.Generate(ctx, prompt, opts)
+	}
+	started := time.Now()
+	e.logRequest("GeneratePriority", prompt, opts)
+	response, err := priorityEngine.GeneratePriority(ctx, prompt, opts)
+	e.logger.Printf(
+		"[Inference] complete engine=%s method=GeneratePriority duration=%s output_bytes=%d err=%v",
+		EngineLabel(e.engine), time.Since(started), len(response), err,
 	)
 	return response, err
 }
@@ -43,7 +65,7 @@ func (e *LoggingEngine) Stream(ctx context.Context, prompt string, opts Generati
 	})
 	e.logger.Printf(
 		"[Inference] complete engine=%s method=Stream duration=%s output_bytes=%d err=%v",
-		e.Name(), time.Since(started), outputBytes, err,
+		EngineLabel(e.engine), time.Since(started), outputBytes, err,
 	)
 	return err
 }
@@ -55,7 +77,7 @@ func (e *LoggingEngine) Close() error {
 func (e *LoggingEngine) logRequest(method, prompt string, opts GenerationOptions) {
 	e.logger.Printf(
 		"[Inference] start engine=%s method=%s prompt_bytes=%d prompt_chars=%d max_tokens_requested=%d",
-		e.Name(), method, len(prompt), len([]rune(prompt)), opts.MaxTokens,
+		EngineLabel(e.engine), method, len(prompt), len([]rune(prompt)), opts.MaxTokens,
 	)
 }
 
