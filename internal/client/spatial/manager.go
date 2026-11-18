@@ -1062,6 +1062,32 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 			hour = parsedH
 		}
 	}
+
+	day := uint64(1)
+	if cm.currentTick > 0 {
+		day = (cm.currentTick-1)/96 + 1
+	}
+	isFullMoon := day > 0 && day%30 == 0
+	isCommunity := day > 0 && day%10 == 0
+
+	if isFullMoon {
+		if cm.smallSystem {
+			sb.WriteString(fmt.Sprintf("Day %d: Full Moon Festival! Grand celebration under the moonlight. Gather in town square or tavern, feast, and celebrate.\n\n", day))
+		} else {
+			sb.WriteString("=== COMMUNITY FESTIVAL & EVENTS ===\n")
+			sb.WriteString(fmt.Sprintf("Today is In-Game Day %d — The Full Moon Festival!\n", day))
+			sb.WriteString("A grand monthly celebration lights up OurVillage under the silver moon. Villagers gather in the town square, tavern, or common spaces to share fine foods, drinks, music, stories, and communal joy. You are free to plan, host, or participate in any celebration, feast, games, or social gatherings you choose.\n\n")
+		}
+	} else if isCommunity {
+		if cm.smallSystem {
+			sb.WriteString(fmt.Sprintf("Day %d: Community Festival! Gather in town square or tavern, celebrate, and share goods.\n\n", day))
+		} else {
+			sb.WriteString("=== COMMUNITY FESTIVAL & EVENTS ===\n")
+			sb.WriteString(fmt.Sprintf("Today is In-Game Day %d — The Community Festival!\n", day))
+			sb.WriteString("A recurring village celebration takes place today. Neighbors gather in the town square, tavern, or meeting spots to rest from daily labor, share meals, trade goods, and enjoy each other's company. You are completely free to plan and run any celebration, conversation, or gathering you choose.\n\n")
+		}
+	}
+
 	if cm.smallSystem {
 		sb.WriteString(fmt.Sprintf("Time: %s. ", cm.lastInGameTime))
 		if hour >= 22 || hour < 6 {

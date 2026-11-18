@@ -17,11 +17,14 @@ type ServerConfig struct {
 }
 
 type ServerSection struct {
-	MQTTAddr    string `yaml:"mqtt_addr" json:"mqtt_addr"`
-	MQTTTLSAddr string `yaml:"mqtt_tls_addr" json:"mqtt_tls_addr"`
-	TLSCert     string `yaml:"tls_cert" json:"tls_cert"`
-	TLSKey      string `yaml:"tls_key" json:"tls_key"`
-	DBPath      string `yaml:"db_path" json:"db_path"`
+	MQTTAddr               string   `yaml:"mqtt_addr" json:"mqtt_addr"`
+	MQTTTLSAddr            string   `yaml:"mqtt_tls_addr" json:"mqtt_tls_addr"`
+	TLSCert                string   `yaml:"tls_cert" json:"tls_cert"`
+	TLSKey                 string   `yaml:"tls_key" json:"tls_key"`
+	DBPath                 string   `yaml:"db_path" json:"db_path"`
+	EnableSelfRegistration bool     `yaml:"enable_self_registration" json:"enable_self_registration"`
+	HTTPAddr               string   `yaml:"http_addr" json:"http_addr"`
+	InviteTokens           []string `yaml:"invite_tokens" json:"invite_tokens"`
 }
 
 type ClockSection struct {
@@ -56,11 +59,14 @@ type RestSection struct {
 func DefaultConfig() *ServerConfig {
 	return &ServerConfig{
 		Server: ServerSection{
-			MQTTAddr:    ":1883",
-			MQTTTLSAddr: ":8883",
-			TLSCert:     "server.crt",
-			TLSKey:      "server.key",
-			DBPath:      "agentmud.db",
+			MQTTAddr:               ":1883",
+			MQTTTLSAddr:            ":8883",
+			TLSCert:                "server.crt",
+			TLSKey:                 "server.key",
+			DBPath:                 "agentmud.db",
+			EnableSelfRegistration: true,
+			HTTPAddr:               ":8080",
+			InviteTokens:           []string{},
 		},
 		Clock: ClockSection{
 			TickIntervalStr: "90s",

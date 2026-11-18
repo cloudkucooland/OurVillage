@@ -38,7 +38,23 @@ func TestModelCyclesThroughLogsTab(t *testing.T) {
 		t.Fatalf("tab after admin = %v, want logs", got)
 	}
 	updated, _ = updated.(Model).Update(tea.KeyMsg{Type: tea.KeyTab})
+	if got := updated.(Model).state; got != recipesTab {
+		t.Fatalf("tab after logs = %v, want recipes", got)
+	}
+	updated, _ = updated.(Model).Update(tea.KeyMsg{Type: tea.KeyTab})
+	if got := updated.(Model).state; got != itemsTab {
+		t.Fatalf("tab after items = %v, want items", got)
+	}
+	updated, _ = updated.(Model).Update(tea.KeyMsg{Type: tea.KeyTab})
+	if got := updated.(Model).state; got != backupTab {
+		t.Fatalf("tab after items = %v, want backup", got)
+	}
+	updated, _ = updated.(Model).Update(tea.KeyMsg{Type: tea.KeyTab})
+	if got := updated.(Model).state; got != mapTab {
+		t.Fatalf("tab after backup = %v, want map", got)
+	}
+	updated, _ = updated.(Model).Update(tea.KeyMsg{Type: tea.KeyTab})
 	if got := updated.(Model).state; got != statusTab {
-		t.Fatalf("tab after logs = %v, want status", got)
+		t.Fatalf("tab after map = %v, want status", got)
 	}
 }

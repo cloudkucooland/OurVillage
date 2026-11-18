@@ -15,6 +15,7 @@ import (
 	"log"
 	"math/big"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -248,6 +249,18 @@ func NewServerWithConfig(database *sql.DB, cfg *ServerConfig, listenAddr ...stri
 func (s *Server) Start() error {
 	// Start OpenWeatherMap weather polling worker
 	go s.startWeatherPolling(s.weatherCtx)
+
+	// Start Registration API HTTP server if configured
+	if s.config.Server.HTTPAddr != "" {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/v1/characters/register", s.handleRegisterAPI)
+		go func() {
+			log.Printf("[Server] Starting Registration API server on %s...", s.config.Server.HTTPAddr)
+			if err := http.ListenAndServe(s.config.Server.HTTPAddr, mux); err != nil && err != http.ErrServerClosed {
+				log.Printf("[Server] HTTP Registration API server error: %v", err)
+			}
+		}()
+	}
 
 	// Start MQTT server in background
 	go func() {

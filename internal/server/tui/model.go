@@ -27,9 +27,10 @@ const (
 	recipesTab
 	itemsTab
 	backupTab
+	mapTab
 )
 
-const tabCount = 8
+const tabCount = 9
 
 type backupAction int
 
@@ -183,7 +184,7 @@ func (m Model) Init() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	if m.state == locationsTab {
+	if m.state == locationsTab || m.state == mapTab {
 		m.refreshLocationRows()
 	}
 	if m.state == recipesTab {
@@ -206,7 +207,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.backupAction == backupIdle && !m.recipeEditor && !m.itemEditor && (m.state != adminTab || m.textInput.Value() == "") {
 				return m, tea.Quit
 			}
-		case "1", "2", "3", "4", "5", "6", "7", "8":
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 			// Number shortcuts provide direct navigation when not entering a command.
 			if m.backupAction == backupIdle && !m.recipeEditor && !m.itemEditor && (m.state != adminTab || m.textInput.Value() == "") {
 				m.state = sessionState(msg.String()[0] - '1')
@@ -365,7 +366,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			if m.state == locationsTab {
+			if m.state == locationsTab || m.state == mapTab {
 				if m.selectedLocation > 0 {
 					m.selectedLocation--
 				}
@@ -408,7 +409,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			if m.state == locationsTab {
+			if m.state == locationsTab || m.state == mapTab {
 				if m.selectedLocation+1 < len(m.locationRows) {
 					m.selectedLocation++
 				}
@@ -473,7 +474,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.inspectingRecipe = false
 				return m, nil
 			}
-			if m.state == locationsTab && m.inspectingLocation {
+			if (m.state == locationsTab || m.state == mapTab) && m.inspectingLocation {
 				m.inspectingLocation = false
 				return m, nil
 			}
@@ -523,7 +524,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.inspectingRecipe = !m.inspectingRecipe
 				return m, nil
 			}
-			if m.state == locationsTab && len(m.locationRows) > 0 {
+			if (m.state == locationsTab || m.state == mapTab) && len(m.locationRows) > 0 {
 				m.inspectingLocation = !m.inspectingLocation
 				return m, nil
 			}
@@ -1021,7 +1022,7 @@ func parseCommandLine(input string) ([]string, error) {
 func (m Model) View() string {
 	var sb strings.Builder
 
-	tabs := []string{"1. Status", "2. Locations", "3. Characters", "4. Admin Console", "5. Logs", "6. Recipes", "7. Items", "8. Backup"}
+	tabs := []string{"1. Status", "2. Locations", "3. Characters", "4. Admin Console", "5. Logs", "6. Recipes", "7. Items", "8. Backup", "9. Map"}
 	var tabStrs []string
 	for i, t := range tabs {
 		if int(m.state) == i {
@@ -1040,7 +1041,7 @@ func (m Model) View() string {
 		sb.WriteString(fmt.Sprintf("Current Temp:       %.1f°C\n", m.temperature))
 		sb.WriteString(fmt.Sprintf("Uptime:             %v\n", time.Since(m.startTime).Truncate(time.Second)))
 		sb.WriteString(fmt.Sprintf("Recent log lines:    %d (open Logs tab)\n", len(m.logLines)))
-		sb.WriteString("\n[Instructions]\n- Tab / Shift+Tab: switch tabs; 1–8: jump directly.\n- ?: open Admin Console help; q: quit; Ctrl+C: quit.\n")
+		sb.WriteString("\n[Instructions]\n- Tab / Shift+Tab: switch tabs; 1–9: jump directly.\n- ?: open Admin Console help; q: quit; Ctrl+C: quit.\n")
 
 	case locationsTab:
 		m.refreshLocationRows()
@@ -1059,6 +1060,10 @@ func (m Model) View() string {
 
 	case backupTab:
 		m.renderBackup(&sb)
+
+	case mapTab:
+		m.refreshLocationRows()
+		m.renderMap(&sb)
 
 	case adminTab:
 		sb.WriteString("Admin Console Log & Output:\n")
@@ -1197,6 +1202,105 @@ func (m *Model) renderCharacters(sb *strings.Builder) {
 		FROM character_known_recipes cr LEFT JOIN recipes r ON r.id = cr.recipe_id
 		WHERE cr.character_id = ? ORDER BY r.name, cr.recipe_id`, character.id, "(none)")
 	sb.WriteString("\n↑/↓ select another character • Esc return to list")
+}
+
+func (m *Model) renderMap(sb *strings.Builder) {
+	if m.db == nil {
+		sb.WriteString("Map data unavailable: database is not connected.\n")
+		return
+	}
+	if len(m.locationRows) == 0 {
+		sb.WriteString("No locations found in the village.\n")
+		return
+	}
+	if m.selectedLocation >= len(m.locationRows) {
+		m.selectedLocation = len(m.locationRows) - 1
+	}
+	if m.selectedLocation < 0 {
+		m.selectedLocation = 0
+	}
+
+	if !m.inspectingLocation {
+		sb.WriteString("Village Spatial Map & Topology — use ↑/↓ to select, Enter to inspect connections & occupants\n\n")
+		for i, loc := range m.locationRows {
+			marker := "  "
+			if i == m.selectedLocation {
+				marker = "› "
+			}
+			var charCount int
+			_ = m.db.QueryRow("SELECT COUNT(*) FROM characters WHERE current_location = ?", loc.id).Scan(&charCount)
+
+			kind := "Outdoor"
+			if loc.indoor {
+				kind = "Indoor"
+			}
+			line := fmt.Sprintf("%s%-26s [%-7s] — Occupants: %d", marker, loc.name, kind, charCount)
+			if i == m.selectedLocation {
+				sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10")).Render(line) + "\n")
+			} else {
+				sb.WriteString(line + "\n")
+			}
+		}
+		return
+	}
+
+	loc := m.locationRows[m.selectedLocation]
+	sb.WriteString(lipgloss.NewStyle().Bold(true).Render(loc.name) + "  (" + loc.id + ")\n\n")
+	kind, visibility := "Outdoor", "Private"
+	if loc.indoor {
+		kind = "Indoor"
+	}
+	if loc.public {
+		visibility = "Public"
+	}
+	sb.WriteString(fmt.Sprintf("Type: %s   Property: %s   Owner: %s\n", kind, visibility, displayOr(loc.owner, "None")))
+	if loc.description != "" {
+		sb.WriteString("\nDescription\n-----------\n" + loc.description + "\n")
+	}
+
+	sb.WriteString("\nCharacters at this location:\n")
+	rows, err := m.db.Query("SELECT id, name, occupation, status, is_online FROM characters WHERE current_location = ? ORDER BY name", loc.id)
+	if err == nil {
+		defer rows.Close()
+		count := 0
+		for rows.Next() {
+			var id, name, occupation, status string
+			var online bool
+			if rows.Scan(&id, &name, &occupation, &status, &online) == nil {
+				onlineStr := "offline"
+				if online {
+					onlineStr = "online"
+				}
+				sb.WriteString(fmt.Sprintf("  • %s (%s) — %s [%s, status: %s]\n", name, id, occupation, onlineStr, displayOr(status, "idle")))
+				count++
+			}
+		}
+		if count == 0 {
+			sb.WriteString("  (none)\n")
+		}
+	}
+
+	sb.WriteString("\nConnected Neighbor Locations (Travel Routes):\n")
+	connRows, err := m.db.Query(`SELECT c.to_location_id, COALESCE(l.name, c.to_location_id), c.travel_ticks 
+		FROM location_connections c LEFT JOIN locations l ON l.id = c.to_location_id 
+		WHERE c.from_location_id = ? ORDER BY c.travel_ticks, l.name`, loc.id)
+	if err == nil {
+		defer connRows.Close()
+		cCount := 0
+		for connRows.Next() {
+			var toID, toName string
+			var ticks int
+			if connRows.Scan(&toID, &toName, &ticks) == nil {
+				sb.WriteString(fmt.Sprintf("  → %s (%s) — %d ticks travel\n", toName, toID, ticks))
+				cCount++
+			}
+		}
+		if cCount == 0 {
+			sb.WriteString("  (none connected)\n")
+		}
+	}
+
+	sb.WriteString("\n↑/↓ select another location • Esc return to map overview")
 }
 
 func (m *Model) renderLocations(sb *strings.Builder) {

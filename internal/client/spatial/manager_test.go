@@ -676,3 +676,27 @@ func TestContextManager_PromptShowsCommunalFarmState(t *testing.T) {
 		}
 	}
 }
+
+func TestContextManager_CommunityFestival(t *testing.T) {
+	cm := NewContextManager(ContextManagerConfig{AgentID: "eldon"})
+	// Day 10 corresponds to tick 960 (9*96 + 96 = 960)
+	cm.IngestTimeTick(TimeTickMessage{Tick: 960, InGameTime: "12:00"})
+	prompt := cm.BuildPrompt(nil, nil)
+	if !strings.Contains(prompt, "=== COMMUNITY FESTIVAL & EVENTS ===") ||
+		!strings.Contains(prompt, "The Community Festival!") ||
+		!strings.Contains(prompt, "Day 10") {
+		t.Errorf("prompt missing Community Festival notice for Day 10:\n%s", prompt)
+	}
+}
+
+func TestContextManager_FullMoonFestival(t *testing.T) {
+	cm := NewContextManager(ContextManagerConfig{AgentID: "eldon"})
+	// Day 30 corresponds to tick 2880 (29*96 + 96 = 2880)
+	cm.IngestTimeTick(TimeTickMessage{Tick: 2880, InGameTime: "20:00"})
+	prompt := cm.BuildPrompt(nil, nil)
+	if !strings.Contains(prompt, "=== COMMUNITY FESTIVAL & EVENTS ===") ||
+		!strings.Contains(prompt, "The Full Moon Festival!") ||
+		!strings.Contains(prompt, "Day 30") {
+		t.Errorf("prompt missing Full Moon Festival notice for Day 30:\n%s", prompt)
+	}
+}
