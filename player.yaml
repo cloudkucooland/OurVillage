@@ -4,4 +4,4 @@ client:
   broker_url: "tcp://localhost:1883"
   client_id: "scotus_rkllm_client"
   keepalive_seconds: 60
-  log_file: "~/.agentmud/scotus.log"
+  log_file: "~/.ourvillage/scotus.log"

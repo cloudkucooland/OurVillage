@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config represents the complete runtime configuration for agentmud-client,
+// Config represents the complete runtime configuration for ourvillage-client,
 // matching the layered hierarchy: CLI Flags > Environment Variables > Config File > Built-in Defaults.
 type Config struct {
 	ConfigFile string          `yaml:"-" json:"-"`

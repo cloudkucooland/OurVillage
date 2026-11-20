@@ -1,7 +1,7 @@
-agentmud-client
-agentmud-server
-agentmud-client.log
-agentmud.db
+ourvillage-client
+ourvillage-server
+ourvillage-client.log
+ourvillage.db
 live.db
 server.yaml
 server.crt

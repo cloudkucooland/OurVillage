@@ -155,7 +155,7 @@ func NewModel(db *sql.DB, adm *admin.AdminCommandExecutor, provider ServerStateP
 	ti.Focus()
 
 	vp := viewport.New(0, 0)
-	vp.SetContent("Welcome to AgentMUD Server Admin Console.\nType 'help' for available commands.")
+	vp.SetContent("Welcome to OurVillage Server Admin Console.\nType 'help' for available commands.")
 	logVP := viewport.New(0, 0)
 	logVP.SetContent("Server logs will appear here.")
 
@@ -252,7 +252,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == backupTab && m.backupAction == backupIdle {
 				m.backupAction = backupExportPath
 				m.textInput.Placeholder = "Directory for CSV backup"
-				m.textInput.SetValue("agentmud-backup")
+				m.textInput.SetValue("ourvillage-backup")
 				m.textInput.CursorEnd()
 				return m, nil
 			}
@@ -289,7 +289,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == backupTab && m.backupAction == backupIdle {
 				m.backupAction = backupImportPath
 				m.textInput.Placeholder = "Directory containing CSV backup"
-				m.textInput.SetValue("agentmud-backup")
+				m.textInput.SetValue("ourvillage-backup")
 				m.textInput.CursorEnd()
 				return m, nil
 			}
@@ -1703,7 +1703,7 @@ func (m *Model) renderBackup(sb *strings.Builder) {
 	case backupImportConfirm:
 		sb.WriteString(fmt.Sprintf("Import from %s? This replaces all persisted world tables. Press y to import, n or Esc to cancel.\n", m.backupPath))
 	default:
-		sb.WriteString("Press e to export a backup or i to import one. Default directory: agentmud-backup\n")
+		sb.WriteString("Press e to export a backup or i to import one. Default directory: ourvillage-backup\n")
 	}
 	if m.backupStatus != "" {
 		sb.WriteString("\n" + m.backupStatus + "\n")

@@ -289,7 +289,7 @@ func RunClient(ctx context.Context, cfg *Config) error {
 
 	logPath := cfg.Client.LogFile
 	if logPath == "" && cfg.Client.TUI {
-		logPath = "agentmud-client.log"
+		logPath = "ourvillage-client.log"
 	}
 	if logPath != "" {
 		if strings.HasPrefix(logPath, "~/") {

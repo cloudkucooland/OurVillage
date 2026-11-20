@@ -16,7 +16,7 @@ func main() {
 	}
 	dbPath := cfg.Server.DBPath
 	if dbPath == "" {
-		dbPath = "agentmud.db"
+		dbPath = "ourvillage.db"
 	}
 
 	useTUI := false
@@ -44,7 +44,7 @@ func main() {
 			}
 			dbPath = cfg.Server.DBPath
 			if dbPath == "" {
-				dbPath = "agentmud.db"
+				dbPath = "ourvillage.db"
 			}
 		} else if strings.HasPrefix(arg, "--config=") {
 			configPath := strings.TrimPrefix(arg, "--config=")
@@ -54,7 +54,7 @@ func main() {
 			}
 			dbPath = cfg.Server.DBPath
 			if dbPath == "" {
-				dbPath = "agentmud.db"
+				dbPath = "ourvillage.db"
 			}
 		}
 	}

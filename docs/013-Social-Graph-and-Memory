@@ -1,11 +1,11 @@
 RFC 013: Objective Event Auditing & Client-Side Episodic Memory Spec
 Status: Draft / Revised
-Target Stack: Pure Go, Mochi-MQTT, SQLite, Local Agent Harness (agentmud-client)
+Target Stack: Pure Go, Mochi-MQTT, SQLite, Local Agent Harness (ourvillage-client)
 1. Architectural Philosophy & Autonomy Invariants
 Previous draft iterations attempted to compute numeric social scores (sentiment: -100 to +100, trust: 0 to 100) inside the server state engine. This violated Principle A (Server is Physical Reality, Agent is Mind) by having the server programmatically dictate character emotions and social biases.
 Under the revised architecture:
 The Server is an Objective Auditor: The server engine logs verifiable physical events (trades, movement, contract fulfillments, trespasses) into a append-only ledger (event_logs). It never calculates, infers, or stores subjective character feelings or relationship scores.
-The Agent Client is Autonomous: Subjective interpretation, memory formation, trust evaluation, and relationship tracking reside 100% inside the client harness daemon (agentmud-client). The agent’s local LLM forms its own opinions, holds grudges, and decides who to trade with based on its memory history.
+The Agent Client is Autonomous: Subjective interpretation, memory formation, trust evaluation, and relationship tracking reside 100% inside the client harness daemon (ourvillage-client). The agent’s local LLM forms its own opinions, holds grudges, and decides who to trade with based on its memory history.
 2. Server Domain: Objective Spatial & Economic Event Ledger
 The server records factual interactions as structured events in SQLite. These events provide an immutable history that agents can query or receive over MQTT.
 SQLite Schema (internal/db/schema.sql)
@@ -43,7 +43,7 @@ When physical events occur, the server emits objective event payloads directly t
 }
 
 3. Client Domain: Autonomous Episodic Memory Engine
-Each agentmud-client daemon maintains a lightweight local SQLite database (e.g., ~/.agentmud/memory_{agent_id}.db) independent of the server. The server has zero visibility into or control over this file.
+Each ourvillage-client daemon maintains a lightweight local SQLite database (e.g., ~/.ourvillage/memory_{agent_id}.db) independent of the server. The server has zero visibility into or control over this file.
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        AGENT CLIENT DAEMON                             │
 │                                                                        │

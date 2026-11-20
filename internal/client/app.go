@@ -11,7 +11,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// CommonFlags returns the comprehensive flag set for agentmud-client.
+// CommonFlags returns the comprehensive flag set for ourvillage-client.
 func CommonFlags() []cli.Flag {
 	return []cli.Flag{
 		// Config file
@@ -238,12 +238,12 @@ func CommonFlags() []cli.Flag {
 	}
 }
 
-// NewApp creates the root urfave/cli v3 Command for agentmud-client.
+// NewApp creates the root urfave/cli v3 Command for ourvillage-client.
 func NewApp() *cli.Command {
 	flags := CommonFlags()
 
 	return &cli.Command{
-		Name:        "agentmud-client",
+		Name:        "ourvillage-client",
 		Usage:       "Autonomous agent daemon and client harness for OurVillage",
 		Version:     "0.2.0",
 		Description: "Powers cognitive lifecycles, sensory processing, and intent dispatch for OurVillage residents.",

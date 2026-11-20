@@ -2,7 +2,7 @@ Based on the existing codebase design in RFC 012 (Weather Exposure, Health & Her
 Architecture Expansion Proposal: Character Health, Infection & Holistic Recovery Systems
 1. Executive Summary & Core Principles
 Server Determinism (Mechanics & State): The server tracks numerical health (0–100), sickness flags, energy/hunger decay, and physical triggers (exposure, food spoilage, overwork) in SQLite.
-Agent Cognition (Prompt Injection & Narrative Creation): Physical health, sickness states, and cultural fulfillment directly inject context into the LLM context window (via agentmud-client harness prompts). The agent decides how to express symptoms or express gratitude for positive interactions, while the server deterministically resolves state transitions and health recovery.
+Agent Cognition (Prompt Injection & Narrative Creation): Physical health, sickness states, and cultural fulfillment directly inject context into the LLM context window (via ourvillage-client harness prompts). The agent decides how to express symptoms or express gratitude for positive interactions, while the server deterministically resolves state transitions and health recovery.
 2. Updated SQLite Schema (character_health & cultural_works)
 To track extended health mechanics, sickness vectors, and cultural creation, we extend character_health and introduce a table for tracking created works:
 -- Updated Character Health & Sickness Table
@@ -105,7 +105,7 @@ if culturalFulfillment > 80 {
 }
 
 6. Prompt Injection (Harness Context Window)
-When an agent is sick or culturally fulfilled, the local harness daemon (agentmud-client) injects these states into the turn context prompt:
+When an agent is sick or culturally fulfilled, the local harness daemon (ourvillage-client) injects these states into the turn context prompt:
 === PHYSICAL & MENTAL STATE ===
 Health: 42/100 (UNWELL)
 Sickness: FEVER (Severity: 45/100)

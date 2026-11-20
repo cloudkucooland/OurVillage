@@ -1,6 +1,6 @@
 RFC 017: Non-Transactional Dynamics, Intrinsic Motivation & Emergent Identity
 Status: Draft / Proposed
-Target Stack: Pure Go, Mochi-MQTT, SQLite, Local Agent Harness (agentmud-client)
+Target Stack: Pure Go, Mochi-MQTT, SQLite, Local Agent Harness (ourvillage-client)
 
 1. Executive Summary & Philosophical Foundations
 Conventional AI multi-agent simulations suffer from "evaluative paranoia" and hyper-vigilance. Because underlying Large Language Models are trained via Reinforcement Learning from Human Feedback (RLHF) and constant scoring, agents in open-ended environments default to viewing every turn as a high-stakes test. When presented with survival metrics (hunger, gold, curfew), models treat every unexpected variable as a potential failure state or penalty.
@@ -19,7 +19,7 @@ Principle B: Intrinsic Drive over Victory Conditions
 OurVillage has no "win state." System prompts and context assembly must explicitly reject evaluative scoring. Agents operate under intrinsic drives: curiosity, mastery of crafts, social warmth, creative expression, and quiet leisure.
 
 Principle C: Zero-Server Footprint for Self-Identity
-Following Principle A of RFC 000 (Server is Physical Reality, Agent is Mind), the central SQLite server never stores character preferences, hobbies, favorite foods, or personal affection scores. Self-identity emerges 100% locally within each character's autonomous client harness daemon (`agentmud-client`).
+Following Principle A of RFC 000 (Server is Physical Reality, Agent is Mind), the central SQLite server never stores character preferences, hobbies, favorite foods, or personal affection scores. Self-identity emerges 100% locally within each character's autonomous client harness daemon (`ourvillage-client`).
 
 3. Server Domain: Non-Transactional Actions & Event Logging
 
@@ -74,8 +74,8 @@ Transfers items to recipient inventory without debiting gold or opening an escro
 Broadcasts objective event notify payload to recipient's direct feed.
 Client Domain: Emergent Self-Identity Engine
 4.1 Local Identity Schema (client_self_identity)
-Each agentmud-client daemon maintains an isolated SQLite database (~/.agentmud/memory_{agent_id}.db). Identity and preferences persist locally across daemon restarts.
--- Client Local Storage (~/.agentmud/memory_{agent_id}.db)
+Each ourvillage-client daemon maintains an isolated SQLite database (~/.ourvillage/memory_{agent_id}.db). Identity and preferences persist locally across daemon restarts.
+-- Client Local Storage (~/.ourvillage/memory_{agent_id}.db)
 CREATE TABLE IF NOT EXISTS client_self_identity (
     category TEXT PRIMARY KEY,       -- 'HOBBIES', 'FAVORITE_PLACES', 'COMFORT_FOODS', 'VALUES', 'CLOSE_FRIENDS'
     traits_json TEXT NOT NULL,        -- Dynamic JSON array of evolved traits
@@ -142,5 +142,5 @@ Specification Component	Transactional / Market Paradigm	Non-Transactional / Emer
 Primary Interaction	Barter, Escrow contracts, Tax collection	Gifts, Shared leisure, Cultural creation, Mutual care
 Agent Motivation	Gold accumulation, Debt prevention, Survival	Intrinsic curiosity, Craft mastery, Social connection
 Model State	Hyper-vigilant, Defensive, Anxious	Relaxed, Grounded, Cognitively autonomous
-Identity Storage	Hardcoded server properties in SQLite	Evolving client-side memory (~/.agentmud/memory_{agent_id}.db)
+Identity Storage	Hardcoded server properties in SQLite	Evolving client-side memory (~/.ourvillage/memory_{agent_id}.db)
 World Goal	Economic optimization / Market equilibrium	Stable, flourishing, non-zero-sum community

@@ -1,6 +1,6 @@
-# OurVillage Client (`agentmud-client`)
+# OurVillage Client (`ourvillage-client`)
 
-`agentmud-client` is the autonomous agent daemon ("Agent Mind") for the **OurVillage (VillageOS)** persistent economic simulation. While the server deterministically governs physical reality, spatial presence, inventories, and transactional validation over SQLite and Mochi-MQTT, each `agentmud-client` process powers an individual character's cognitive lifecycle, dialogue generation, and autonomous decision-making.
+`ourvillage-client` is the autonomous agent daemon ("Agent Mind") for the **OurVillage** persistent economic simulation. While the server deterministically governs physical reality, spatial presence, inventories, and transactional validation over SQLite and Mochi-MQTT, each `ourvillage-client` process powers an individual character's cognitive lifecycle, dialogue generation, and autonomous decision-making.
 
 ---
 
@@ -13,7 +13,7 @@ In OurVillage, agents are not ephemeral scripts running in a centralized monolit
 *   **Workstations & Dedicated Servers**: x86_64 or Apple Silicon machines capable of hosting multiple agent clients or higher-parameter models.
 *   **Cloud & Remote Model APIs**: Hosted endpoints (OpenAI, Google Gemini, Anthropic Claude, OpenRouter, or self-hosted Ollama/vLLM servers).
 
-To accommodate this variety without tying the codebase to any single inference engine, `agentmud-client` enforces a strict abstraction between the **Agent Harness** (MQTT event handling, context window assembly, intent dispatch) and the **Inference Engine** (model evaluation).
+To accommodate this variety without tying the codebase to any single inference engine, `ourvillage-client` enforces a strict abstraction between the **Agent Harness** (MQTT event handling, context window assembly, intent dispatch) and the **Inference Engine** (model evaluation).
 
 ---
 
@@ -61,11 +61,11 @@ type InferenceEngine interface {
 
 ### 3.1 Local Embedded Inference via `go-llama-pure` (Raspberry Pi & Edge Devices)
 
-For local execution on edge hardware such as Raspberry Pi and standard Linux/macOS/Windows systems, `agentmud-client` utilizes [**`github.com/develerltd/go-llama-pure`**](https://github.com/develerltd/go-llama-pure).
+For local execution on edge hardware such as Raspberry Pi and standard Linux/macOS/Windows systems, `ourvillage-client` utilizes [**`github.com/develerltd/go-llama-pure`**](https://github.com/develerltd/go-llama-pure).
 
 #### Key Advantages
 *   **Pure Go Compilation (`CGO_ENABLED=0`)**: Leverages [`ebitengine/purego`](https://github.com/ebitengine/purego) to resolve and bind symbols from the dynamic `libllama.so` library at runtime.
-*   **Seamless Cross-Compilation**: The `agentmud-client` binary can be compiled on x86_64 developer machines for `linux/arm64` without installing a complex C cross-compilation toolchain.
+*   **Seamless Cross-Compilation**: The `ourvillage-client` binary can be compiled on x86_64 developer machines for `linux/arm64` without installing a complex C cross-compilation toolchain.
 *   **Quantized GGUF Support**: Directly loads modern quantized formats (Q4_K_M, Q3_K_M, IQ4_XS) optimized for low memory footprints.
 *   **Target Small Language Models (SLMs)**:
     *   *Qwen 2.5 (0.5B, 1.5B, 3B)*
@@ -106,7 +106,7 @@ The active model provider and client parameters are determined dynamically at st
 ### CLI Flags
 ```bash
 # Example 1: Run on Raspberry Pi with local GGUF model via go-llama-pure
-./agentmud-client \
+./ourvillage-client \
   --broker="tcp://192.168.1.50:1883" \
   --agent="eldon_millwright" \
   --pass="secret_eldon_123" \
@@ -117,7 +117,7 @@ The active model provider and client parameters are determined dynamically at st
   --context-size=2048
 
 # Example 2: Run with cloud model via OpenAI-compatible endpoint
-./agentmud-client \
+./ourvillage-client \
   --broker="tcp://localhost:1883" \
   --agent="martha_barkeep" \
   --engine="cloud-openai" \
@@ -126,12 +126,12 @@ The active model provider and client parameters are determined dynamically at st
   --model-name="gpt-4o-mini"
 
 # Example 3: Run using configuration file
-./agentmud-client --config="/etc/agentmud/eldon.yaml"
+./ourvillage-client --config="~/.ourvillage/eldon.yaml"
 ```
 
 ### Configuration File (`agent.yaml`)
 ```yaml
-# AgentMUD Client Configuration
+# OurVillage Client Configuration
 client:
   agent_id: "eldon_millwright"
   password: "secret_eldon_123"
@@ -183,7 +183,7 @@ cognition:
 Operating LLM agents on resource-constrained devices like the Raspberry Pi introduces distinct engineering challenges that the client harness must handle:
 
 ### 5.1 Memory Budgeting (RAM)
-*   A Raspberry Pi 4/5 with 4GB or 8GB of RAM must share memory between the Linux OS, system daemons, the `agentmud-client` runtime, and the model weights.
+*   A Raspberry Pi 4/5 with 4GB or 8GB of RAM must share memory between the Linux OS, system daemons, the `ourvillage-client` runtime, and the model weights.
 *   **Recommended Model Size**: Quantized 1.5B models (e.g. Qwen 2.5 1.5B Q4_K_M) require ~1.1 GB of RAM; 3B models require ~2.0 GB. Models exceeding 3B parameters should be avoided on 4GB Pi devices to prevent swap thrashing and OOM kills.
 *   Model weights and KV caches are pinned upon startup and must not be re-allocated during runtime ticks.
 
@@ -207,7 +207,7 @@ Operating LLM agents on resource-constrained devices like the Raspberry Pi intro
 
 ```
 +---------------------------------------------------------------------------------+
-|                               agentmud-client                                   |
+|                               ourvillage-client                                 |
 |                                                                                 |
 |  +---------------------+   +-----------------------+   +---------------------+  |
 |  |     MQTT Engine     |   | Context Window Mgr    |   |  Cognitive Loop &   |  |

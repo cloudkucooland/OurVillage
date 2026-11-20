@@ -26,7 +26,7 @@ func (m *TUIModel) handleSlashCommand(input string) tea.Cmd {
 
 	switch cmd {
 	case "/help":
-		helpText := "=== AgentMUD TUI Help ===\n" +
+		helpText := "=== OurVillage TUI Help ===\n" +
 			"  <influence hint>      - Type any text directly to influence agent cognition\n" +
 			"  /chat <msg> (/c)      - Send public chat message\n" +
 			"  /look (/l)            - Refresh perception (LOOK intent)\n" +

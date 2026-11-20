@@ -1,0 +1,93 @@
+# ==============================================================================
+# OurVillage Autonomous Client Configuration Example (client.yaml)
+# ==============================================================================
+# This configuration file controls the agent's MQTT connection, inference backend,
+# memory store, and cognitive behavior loop.
+# Run the client with: ourvillage-client --config client.yaml
+# ==============================================================================
+
+client:
+  # Unique agent/character ID registered on the OurVillage server (must match server DB).
+  agent_id: "eldon_millwright"
+
+  # MQTT authentication password assigned to this character.
+  password: "secret_eldon_123"
+
+  # Connection URL for the OurVillage MQTT broker.
+  broker_url: "tcp://localhost:1883"
+
+  # Unique MQTT client identifier string for this session.
+  client_id: "eldon_client_default"
+
+  # MQTT keepalive ping interval in seconds.
+  keepalive_seconds: 60
+
+  # Path to the agent's local log file for debugging and sensory telemetry.
+  log_file: "~/.ourvillage/eldon.log"
+
+  # Enable the interactive Terminal User Interface (TUI) dashboard for the client.
+  tui: false
+
+# ==============================================================================
+# Model Inference Engine Configuration
+# ==============================================================================
+# Supported providers: "mock", "cloud-gemini", "cloud-openai", "llama-pure", "rkllm"
+model:
+  # Active inference provider backend.
+  provider: "mock"
+
+  # --- Cloud Provider Settings (used when provider is "cloud-gemini" or "cloud-openai") ---
+  cloud:
+    api_base: "https://generativelanguage.googleapis.com"
+    api_key: "YOUR_API_KEY_HERE"
+    model_name: "gemini-1.5-flash"
+    timeout_seconds: 30
+    max_tokens: 256
+
+  # --- Local CPU GGUF Settings (used when provider is "llama-pure") ---
+  llama:
+    model_path: "/home/scot/models/qwen2.5-3b-instruct.gguf"
+    context_size: 4096
+    temperature: 0.8
+    top_p: 0.9
+
+  # --- Rockchip NPU Settings (used when provider is "rkllm" on RK3588 hardware) ---
+  rkllm:
+    library_path: "/usr/lib/librkllmrt.so"
+    model_path: "/home/scot/rkllama-models/Huihui-Qwen3-8B-abliterated-v2_W8A8_RK3588.rkllm"
+    context_size: 4096
+    temperature: 1.1
+    top_p: 0.8
+    enable_thinking: false
+
+# ==============================================================================
+# Memory & Social Graph Storage Configuration
+# ==============================================================================
+memory:
+  # Path to the SQLite database storing character memories, reflections, and peer notes.
+  db_path: "~/.ourvillage/eldon_memory.db"
+
+  # Maximum number of social reflections and interaction notes retained per peer.
+  max_reflections_per_peer: 5
+
+# ==============================================================================
+# Cognitive Loop & Prompt Assembly Parameters
+# ==============================================================================
+cognition:
+  # Debounce window in milliseconds to batch rapid spatial chat/event bursts before generating.
+  tick_interval_debounce_ms: 2000
+
+  # Probability (0.0 to 1.0) of responding when another character speaks in the room.
+  chat_response_probability: 0.90
+
+  # Maximum number of recent world log lines included in the short-term context window.
+  max_sensory_log_lines: 12
+
+  # Number of idle server ticks before triggering periodic housekeeping or wandering thoughts.
+  idle_threshold_ticks: 10
+
+  # Server ticks interval between periodic deep memory reflection cycles.
+  reflection_interval_ticks: 30
+
+  # Optimize prompt structure and token constraints for low-resource edge hardware (e.g., Raspberry Pi).
+  small_system: false

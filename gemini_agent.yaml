@@ -1,5 +1,5 @@
 # OurVillage Autonomous Resident Configuration (Google Gemini)
-# Run with: agentmud-client --config gemini_agent.yaml
+# Run with: ourvillage-client --config gemini_agent.yaml
 
 client:
   agent_id: "gideon_forge"
@@ -19,7 +19,7 @@ model:
     max_tokens: 256
 
 memory:
-  db_path: "~/.agentmud/gideon_memory.db"
+  db_path: "~/.ourvillage/gideon_memory.db"
   max_reflections_per_peer: 5
 
 cognition:

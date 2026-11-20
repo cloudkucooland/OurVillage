@@ -110,7 +110,7 @@ func NewTUIModel(ctx context.Context, agentID string, client mqtt.Client, tracke
 	ti.Width = 80
 
 	vp := viewport.New(80, 20)
-	vp.SetContent("Initializing AgentMUD TUI...")
+	vp.SetContent("Initializing OurVillage TUI...")
 
 	disp := dispatcher.NewIntentDispatcher(agentID, client, tracker)
 

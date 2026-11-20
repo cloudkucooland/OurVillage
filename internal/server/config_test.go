@@ -9,8 +9,8 @@ import (
 func TestLoadConfigDatabasePath(t *testing.T) {
 	t.Setenv("OV_SERVER_CONFIG", "")
 	t.Setenv("OV_DB", "")
-	if got := DefaultConfig().Server.DBPath; got != "agentmud.db" {
-		t.Fatalf("default DB path = %q, want agentmud.db", got)
+	if got := DefaultConfig().Server.DBPath; got != "ourvillage.db" {
+		t.Fatalf("default DB path = %q, want ourvillage.db", got)
 	}
 
 	path := filepath.Join(t.TempDir(), "server.yaml")

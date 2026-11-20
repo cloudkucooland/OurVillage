@@ -63,7 +63,7 @@ func DefaultConfig() *ServerConfig {
 			MQTTTLSAddr:            ":8883",
 			TLSCert:                "server.crt",
 			TLSKey:                 "server.key",
-			DBPath:                 "agentmud.db",
+			DBPath:                 "ourvillage.db",
 			EnableSelfRegistration: true,
 			HTTPAddr:               ":8080",
 			InviteTokens:           []string{},

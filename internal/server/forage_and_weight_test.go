@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"ourvillage/internal/db"
 	mqtt "github.com/mochi-mqtt/server/v2"
 	"github.com/mochi-mqtt/server/v2/packets"
+	"ourvillage/internal/db"
 )
 
 func TestForageRejectsNonPositiveDuration(t *testing.T) {

@@ -62,8 +62,8 @@ The project is under active development. Documents in `docs/` include proposals 
 ```sh
 go test ./...
 mkdir -p bin
-go build -o bin/agentmud-server ./cmd/server
-go build -o bin/agentmud-client ./cmd/client
+go build -o bin/ourvillage-server ./cmd/server
+go build -o bin/ourvillage-client ./cmd/client
 ```
 
 ### Run a local demo
@@ -71,10 +71,10 @@ go build -o bin/agentmud-client ./cmd/client
 Start a fresh local world with the built-in demo characters and content:
 
 ```sh
-./bin/agentmud-server --seed
+./bin/ourvillage-server --seed
 ```
 
-The server stores its database in `agentmud.db` by default and listens for MQTT clients on port `1883`. Set `OV_DB` to use a different database path. The `--seed` option loads the built-in sample village data.
+The server stores its database in `ourvillage.db` by default and listens for MQTT clients on port `1883`. Set `OV_DB` to use a different database path. The `--seed` option loads the built-in sample village data.
 
 In another terminal, save a client configuration as `agent.yaml`:
 
@@ -95,13 +95,29 @@ cognition:
 Then validate the config and start the client:
 
 ```sh
-./bin/agentmud-client --config ./agent.yaml config validate
-./bin/agentmud-client --config ./agent.yaml
+./bin/ourvillage-client --config ./agent.yaml config validate
+./bin/ourvillage-client --config ./agent.yaml
 ```
 
 The `mock` provider is useful for checking the end-to-end setup; it returns a fixed sample response and does not provide varied or adaptive behavior. To run an actual model, change `model.provider` and configure the appropriate backend. See the [client guide](cmd/client/README.md) for provider setup, local inference, and configuration options.
 
-> **Security:** The credentials above are built-in demo credentials for a local seeded world only. Change them for any non-demo use. The example server listener uses unencrypted MQTT; keep it on a trusted network and do not expose it directly to the internet.
+### Seed Usernames & Passwords
+When starting the server with `--seed`, the following default demo characters and MQTT credentials are provisioned:
+- `eldon_millwright` / `secret_eldon_123` (Millwright, The Town Mill)
+- `martha_barkeep` / `secret_martha_123` (Barkeep, The Boar's Tusk Tavern)
+- `gideon_forge` / `secret_gideon_123` (Blacksmith, Forge & Anvil Blacksmith)
+- `luke_farmer` / `secret_luke_123` (Farmer, Village Market / Stables)
+- `ada_baker` / `secret_ada_123` (Baker, Hearth & Crust Bakery)
+- `eleanor_clerk` / `secret_eleanor_123` (Town Clerk, Town Hall)
+
+> **Security Warning:** These seed passwords are hardcoded for local development and demonstration purposes only. **If your server is hosted publicly or accessible over an untrusted network, you must change these passwords or disable default seeding.**
+
+### HTTPS Character Registration Flow
+To onboard new autonomous agents or human players into an active OurVillage server without using hardcoded seed credentials, clients use the secure HTTPS registration workflow:
+1. **Registration Request:** Submit a secure `POST` request to the server's HTTPS registration endpoint (e.g., `https://<server-host>/api/v1/register`) with the desired agent ID, display name, persona prompt, occupation, and desired password.
+2. **Credential Provisioning:** The server validates the request, records the new character in the SQLite world database, and issues an authenticated MQTT token/password.
+3. **Client Configuration:** Populate your `client.yaml` with the newly registered `agent_id` and password.
+4. **MQTT Connection:** Connect securely to the server's MQTT broker using the provisioned credentials to participate in the simulation.
 
 ## Model backends
 
@@ -117,12 +133,12 @@ Provider availability depends on the device, runtime libraries, and credentials 
 ## Useful client commands
 
 ```sh
-agentmud-client --config ./agent.yaml config validate
-agentmud-client --config ./agent.yaml config show
-agentmud-client --config ./agent.yaml prompt
+ourvillage-client --config ./agent.yaml config validate
+ourvillage-client --config ./agent.yaml config show
+ourvillage-client --config ./agent.yaml prompt
 ```
 
-The client can also be started with CLI flags instead of a config file; run `agentmud-client --help` for the available options. The server's interactive terminal interface can be enabled with `--tui`.
+The client can also be started with CLI flags instead of a config file; run `ourvillage-client --help` for the available options. The server's interactive terminal interface can be enabled with `--tui`.
 
 ## Project documents
 

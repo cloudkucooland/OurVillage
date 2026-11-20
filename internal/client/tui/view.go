@@ -61,7 +61,7 @@ func renderHeader(title, status string, terminalWidth int) string {
 
 func (m TUIModel) View() string {
 	if m.quitting {
-		return "Shutting down AgentMUD TUI...\n"
+		return "Shutting down OurVillage TUI...\n"
 	}
 
 	// 1. Header Information
@@ -78,7 +78,7 @@ func (m TUIModel) View() string {
 
 	headerText := fmt.Sprintf("Agent: %s | Location: %s (%s) | Gold: %d | Energy: %d | Health: %d | Hunger: %d | Status: %s | Time: %s | Weather: %s",
 		name, locName, locID, gold, energy, health, hunger, status, timeStr, weather)
-	header := renderHeader("AgentMUD Client TUI", headerText, m.width)
+	header := renderHeader("OurVillage Client TUI", headerText, m.width)
 
 	// 2. Tabs
 	tabs := []string{"Sensory Log", "Inventory", "Relationships", "Self Identity", "Projects", "Locations"}

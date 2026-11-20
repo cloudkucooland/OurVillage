@@ -283,7 +283,7 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Shutdown() error {
-	log.Println("Shutting down AgentMUD server...")
+	log.Println("Shutting down OurVillage server...")
 	if s.weatherCancel != nil {
 		s.weatherCancel()
 	}
@@ -302,7 +302,7 @@ func (s *Server) StartTUI() error {
 
 	logPath := os.Getenv("OV_LOG")
 	if logPath == "" {
-		logPath = "agentmud-server.log"
+		logPath = "ourvillage-server.log"
 	}
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {

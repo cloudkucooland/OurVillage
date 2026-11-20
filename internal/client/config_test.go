@@ -162,7 +162,7 @@ model:
 		return err
 	}
 
-	if err := app.Run(context.Background(), []string{"agentmud-client"}); err != nil {
+	if err := app.Run(context.Background(), []string{"ourvillage-client"}); err != nil {
 		t.Fatalf("unexpected error running app: %v", err)
 	}
 
@@ -211,7 +211,7 @@ model:
 	}
 
 	args := []string{
-		"agentmud-client",
+		"ourvillage-client",
 		"--config", configPath,
 		"--agent", "cli_agent",
 		"--broker", "tcp://cli-broker:1883",
@@ -245,7 +245,7 @@ func TestMissingExplicitConfigFails(t *testing.T) {
 		return err
 	}
 
-	err := app.Run(context.Background(), []string{"agentmud-client", "--config", "/nonexistent/path/agent.yaml"})
+	err := app.Run(context.Background(), []string{"ourvillage-client", "--config", "/nonexistent/path/agent.yaml"})
 	if err == nil {
 		t.Fatal("expected error for nonexistent config file, got nil")
 	}
@@ -328,7 +328,7 @@ client:
 		return err
 	}
 
-	if err := app.Run(context.Background(), []string{"agentmud-client"}); err != nil {
+	if err := app.Run(context.Background(), []string{"ourvillage-client"}); err != nil {
 		t.Fatalf("unexpected error running app: %v", err)
 	}
 	if resolved.Client.LogFile != "env_custom.log" {
@@ -337,7 +337,7 @@ client:
 
 	// 3. Test CLI flag override
 	args := []string{
-		"agentmud-client",
+		"ourvillage-client",
 		"--config", configPath,
 		"--log-file", "cli_custom.log",
 	}

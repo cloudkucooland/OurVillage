@@ -272,7 +272,7 @@ func TestNewEngine(t *testing.T) {
 
 func TestLogFileExpansionAndCreation(t *testing.T) {
 	tempDir := t.TempDir()
-	subLogDir := filepath.Join(tempDir, "nested", "agentmud")
+	subLogDir := filepath.Join(tempDir, "nested", "ourvillage")
 	logFilePath := filepath.Join(subLogDir, "test.log")
 
 	cfg := DefaultConfig()
@@ -295,9 +295,9 @@ func TestLogFileTildeExpansion(t *testing.T) {
 		t.Skip("skipping test; user home dir not available")
 	}
 
-	testLogRel := "~/.agentmud_test_log/martha_test.log"
-	expectedPath := filepath.Join(home, ".agentmud_test_log", "martha_test.log")
-	defer os.RemoveAll(filepath.Join(home, ".agentmud_test_log"))
+	testLogRel := "~/.ourvillage_test_log/martha_test.log"
+	expectedPath := filepath.Join(home, ".ourvillage_test_log", "martha_test.log")
+	defer os.RemoveAll(filepath.Join(home, ".ourvillage_test_log"))
 
 	cfg := DefaultConfig()
 	cfg.Client.LogFile = testLogRel
