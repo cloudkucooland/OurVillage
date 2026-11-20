@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"strings"
 
-	"agentmud/internal/db"
+	"ourvillage/internal/db"
 )
 
 type RegisterRequest struct {

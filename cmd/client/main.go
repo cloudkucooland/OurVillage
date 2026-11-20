@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"agentmud/internal/client"
+	"ourvillage/internal/client"
 )
 
 func main() {

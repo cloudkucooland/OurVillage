@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strings"
 
-	"agentmud/internal/client/spatial"
+	"ourvillage/internal/client/spatial"
 
 	"github.com/urfave/cli/v3"
 )
@@ -20,7 +20,7 @@ func CommonFlags() []cli.Flag {
 			Aliases:   []string{"c"},
 			Usage:     "Path to agent configuration YAML/JSON file",
 			TakesFile: true,
-			Sources:   cli.EnvVars("AGENTMUD_CONFIG"),
+			Sources:   cli.EnvVars("OV_CONFIG"),
 		},
 
 		// Client / Network flags
@@ -28,42 +28,42 @@ func CommonFlags() []cli.Flag {
 			Name:    "broker",
 			Usage:   "MQTT broker URL",
 			Value:   "tcp://localhost:1883",
-			Sources: cli.EnvVars("AGENTMUD_BROKER", "MQTT_BROKER"),
+			Sources: cli.EnvVars("OV_BROKER", "MQTT_BROKER"),
 		},
 		&cli.StringFlag{
 			Name:    "agent",
 			Usage:   "Agent ID (MQTT username)",
 			Value:   "eldon_millwright",
-			Sources: cli.EnvVars("AGENTMUD_AGENT", "AGENTMUD_AGENT_ID"),
+			Sources: cli.EnvVars("OV_AGENT", "OV_AGENT_ID"),
 		},
 		&cli.StringFlag{
 			Name:    "pass",
 			Usage:   "Agent MQTT password",
 			Value:   "secret_eldon_123",
-			Sources: cli.EnvVars("AGENTMUD_PASS", "AGENTMUD_PASSWORD"),
+			Sources: cli.EnvVars("OV_PASS", "OV_PASSWORD"),
 		},
 		&cli.StringFlag{
 			Name:    "client-id",
 			Usage:   "MQTT client ID (auto-generated if empty)",
-			Sources: cli.EnvVars("AGENTMUD_CLIENT_ID"),
+			Sources: cli.EnvVars("OV_CLIENT_ID"),
 		},
 		&cli.IntFlag{
 			Name:    "keepalive",
 			Usage:   "MQTT keepalive timeout in seconds",
 			Value:   60,
-			Sources: cli.EnvVars("AGENTMUD_KEEPALIVE"),
+			Sources: cli.EnvVars("OV_KEEPALIVE"),
 		},
 		&cli.BoolFlag{
 			Name:    "tui",
 			Usage:   "Launch interactive Bubble Tea / Lipgloss terminal user interface",
 			Value:   false,
-			Sources: cli.EnvVars("AGENTMUD_TUI"),
+			Sources: cli.EnvVars("OV_TUI"),
 		},
 		&cli.StringFlag{
 			Name:      "log-file",
 			Usage:     "Path to client log file",
 			TakesFile: true,
-			Sources:   cli.EnvVars("AGENTMUD_LOG_FILE", "AGENTMUD_LOG"),
+			Sources:   cli.EnvVars("OV_LOG_FILE", "OV_LOG"),
 		},
 
 		// Model Provider flags
@@ -71,87 +71,87 @@ func CommonFlags() []cli.Flag {
 			Name:    "engine",
 			Usage:   "Model engine provider (mock, llama-pure, rkllm, cloud-openai, cloud-gemini, cloud-anthropic)",
 			Value:   "mock",
-			Sources: cli.EnvVars("AGENTMUD_ENGINE", "AGENTMUD_MODEL_PROVIDER"),
+			Sources: cli.EnvVars("OV_ENGINE", "OV_MODEL_PROVIDER"),
 		},
 		&cli.StringFlag{
 			Name:      "model-path",
 			Usage:     "GGUF model file path for llama-pure",
 			TakesFile: true,
-			Sources:   cli.EnvVars("AGENTMUD_MODEL_PATH"),
+			Sources:   cli.EnvVars("OV_MODEL_PATH"),
 		},
 		&cli.StringFlag{
 			Name:      "llama-lib",
 			Usage:     "Path to dynamic libllama.so library",
 			Value:     "/usr/local/lib/libllama.so",
 			TakesFile: true,
-			Sources:   cli.EnvVars("AGENTMUD_LLAMA_LIB"),
+			Sources:   cli.EnvVars("OV_LLAMA_LIB"),
 		},
 		&cli.IntFlag{
 			Name:    "threads",
 			Usage:   "CPU inference thread count for local model",
 			Value:   4,
-			Sources: cli.EnvVars("AGENTMUD_THREADS"),
+			Sources: cli.EnvVars("OV_THREADS"),
 		},
 		&cli.IntFlag{
 			Name:    "context-size",
 			Usage:   "Context window size in tokens",
 			Value:   2048,
-			Sources: cli.EnvVars("AGENTMUD_CONTEXT_SIZE"),
+			Sources: cli.EnvVars("OV_CONTEXT_SIZE"),
 		},
 		&cli.IntFlag{
 			Name:    "gpu-layers",
 			Usage:   "Number of layers to offload to GPU/NPU",
 			Value:   0,
-			Sources: cli.EnvVars("AGENTMUD_GPU_LAYERS"),
+			Sources: cli.EnvVars("OV_GPU_LAYERS"),
 		},
 		&cli.FloatFlag{
 			Name:    "temperature",
 			Usage:   "Sampling temperature for model generation",
 			Value:   0.7,
-			Sources: cli.EnvVars("AGENTMUD_TEMPERATURE"),
+			Sources: cli.EnvVars("OV_TEMPERATURE"),
 		},
 		&cli.FloatFlag{
 			Name:    "top-p",
 			Usage:   "Top-P sampling parameter",
 			Value:   0.9,
-			Sources: cli.EnvVars("AGENTMUD_TOP_P"),
+			Sources: cli.EnvVars("OV_TOP_P"),
 		},
 		&cli.StringFlag{
 			Name:      "grammar-file",
 			Usage:     "Path to GBNF grammar file for constrained JSON decoding",
 			TakesFile: true,
-			Sources:   cli.EnvVars("AGENTMUD_GRAMMAR_FILE"),
+			Sources:   cli.EnvVars("OV_GRAMMAR_FILE"),
 		},
 
 		// Cloud Provider flags
 		&cli.StringFlag{
 			Name:    "api-key",
 			Usage:   "API key for remote cloud model provider",
-			Sources: cli.EnvVars("AGENTMUD_API_KEY", "OPENAI_API_KEY"),
+			Sources: cli.EnvVars("OV_API_KEY", "OPENAI_API_KEY"),
 		},
 		&cli.StringFlag{
 			Name:    "api-base",
 			Usage:   "API base URL for remote cloud provider",
 			Value:   "https://api.openai.com/v1",
-			Sources: cli.EnvVars("AGENTMUD_API_BASE"),
+			Sources: cli.EnvVars("OV_API_BASE"),
 		},
 		&cli.StringFlag{
 			Name:    "model-name",
 			Usage:   "Remote model identifier (e.g. gpt-4o-mini)",
 			Value:   "gpt-4o-mini",
-			Sources: cli.EnvVars("AGENTMUD_MODEL_NAME"),
+			Sources: cli.EnvVars("OV_MODEL_NAME"),
 		},
 		&cli.IntFlag{
 			Name:    "timeout",
 			Usage:   "Timeout in seconds for remote API requests",
 			Value:   15,
-			Sources: cli.EnvVars("AGENTMUD_TIMEOUT"),
+			Sources: cli.EnvVars("OV_TIMEOUT"),
 		},
 		&cli.IntFlag{
 			Name:    "max-tokens",
 			Usage:   "Maximum completion tokens to generate",
 			Value:   256,
-			Sources: cli.EnvVars("AGENTMUD_MAX_TOKENS"),
+			Sources: cli.EnvVars("OV_MAX_TOKENS"),
 		},
 
 		// Cognition flags
@@ -159,26 +159,26 @@ func CommonFlags() []cli.Flag {
 			Name:    "debounce",
 			Usage:   "Tick interval debounce in milliseconds",
 			Value:   2000,
-			Sources: cli.EnvVars("AGENTMUD_DEBOUNCE_MS"),
+			Sources: cli.EnvVars("OV_DEBOUNCE_MS"),
 		},
 		&cli.FloatFlag{
 			Name:    "chat-prob",
 			Usage:   "Probability (0.0 - 1.0) of responding to ambient room chat",
 			Value:   0.85,
-			Sources: cli.EnvVars("AGENTMUD_CHAT_PROB"),
+			Sources: cli.EnvVars("OV_CHAT_PROB"),
 		},
 		&cli.IntFlag{
 			Name:    "idle-threshold",
 			Usage:   "Number of consecutive quiet time ticks before triggering intrinsic motivation",
 			Value:   10,
-			Sources: cli.EnvVars("AGENTMUD_IDLE_THRESHOLD"),
+			Sources: cli.EnvVars("OV_IDLE_THRESHOLD"),
 		},
 
 		// Action flags
 		&cli.StringFlag{
 			Name:    "action",
 			Usage:   "Intent action to submit (MOVE, CHAT, TRANSFER, FORAGE, PLANT, HARVEST, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, BUY, SELL, RESTOCK)",
-			Sources: cli.EnvVars("AGENTMUD_ACTION"),
+			Sources: cli.EnvVars("OV_ACTION"),
 		},
 		&cli.StringFlag{
 			Name:  "target",
@@ -365,7 +365,7 @@ func NewPlayerApp() *cli.Command {
 				Aliases:   []string{"c"},
 				Usage:     "Path to client configuration YAML/JSON file",
 				TakesFile: true,
-				Sources:   cli.EnvVars("AGENTMUD_CONFIG"),
+				Sources:   cli.EnvVars("OV_CONFIG"),
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {

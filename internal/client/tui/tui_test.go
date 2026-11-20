@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"agentmud/internal/client/memory"
-	"agentmud/internal/client/spatial"
+	"ourvillage/internal/client/memory"
+	"ourvillage/internal/client/spatial"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )

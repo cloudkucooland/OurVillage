@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	worlddb "agentmud/internal/db"
-	"agentmud/internal/server/admin"
+	worlddb "ourvillage/internal/db"
+	"ourvillage/internal/server/admin"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"

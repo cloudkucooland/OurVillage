@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"agentmud/internal/client/dispatcher"
-	"agentmud/internal/client/spatial"
+	"ourvillage/internal/client/dispatcher"
+	"ourvillage/internal/client/spatial"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"

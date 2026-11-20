@@ -1,7 +1,7 @@
 package server
 
 import (
-	"agentmud/internal/db"
+	"ourvillage/internal/db"
 	"testing"
 	"time"
 

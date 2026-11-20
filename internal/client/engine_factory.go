@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"agentmud/internal/client/model"
+	"ourvillage/internal/client/model"
 )
 
 // NewEngine instantiates the model.InferenceEngine configured in cfg.

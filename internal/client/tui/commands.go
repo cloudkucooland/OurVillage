@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"agentmud/internal/client/dispatcher"
-	"agentmud/internal/client/model"
-	"agentmud/internal/client/routine"
-	"agentmud/internal/client/spatial"
+	"ourvillage/internal/client/dispatcher"
+	"ourvillage/internal/client/model"
+	"ourvillage/internal/client/routine"
+	"ourvillage/internal/client/spatial"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

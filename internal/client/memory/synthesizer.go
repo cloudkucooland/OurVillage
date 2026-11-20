@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"agentmud/internal/client/model"
+	"ourvillage/internal/client/model"
 )
 
 type EventRecord struct {
@@ -231,12 +231,17 @@ func (s *ReflectionSynthesizer) SynthesizeNextBatch(ctx context.Context) error {
 			continue
 		}
 
-		updated, reflection, salience, parseErr := parseRelationshipResponse(respText, previous)
+		updated, reflection, salience, noEntry, parseErr := parseRelationshipResponse(respText, previous)
 		if parseErr != nil {
 			batchErr = errors.Join(batchErr, fmt.Errorf("parse relationship reflection for %s: %w", peerID, parseErr))
 			if deferErr := s.store.DeferEvents(eventIDs(peerEvents), retryDelay(peerEvents)); deferErr != nil {
 				batchErr = errors.Join(batchErr, fmt.Errorf("defer relationship events for %s: %w", peerID, deferErr))
 			}
+			continue
+		}
+		if noEntry {
+			completedIDs = append(completedIDs, eventIDs(peerEvents)...)
+			log.Printf("[Synthesizer] No entry needed for peer %s", peerID)
 			continue
 		}
 		tick := peerEvents[len(peerEvents)-1].Tick
@@ -438,7 +443,11 @@ func (s *ReflectionSynthesizer) SynthesizeSelfIdentity(ctx context.Context, tick
 		return fmt.Errorf("failed to generate self-identity update: %w", err)
 	}
 
-	traitKey, traitVal, selfRef, lesson, salience := parseSelfIdentityResponse(respText)
+	noEntry, traitKey, traitVal, selfRef, lesson, salience := parseSelfIdentityResponse(respText)
+	if noEntry {
+		log.Printf("[Synthesizer] No self-identity entry needed for tick %d", tick)
+		return nil
+	}
 	if traitKey != "" && traitVal != "" {
 		if err := s.store.UpsertIdentityTrait(traitKey, traitVal, tick, salience); err != nil {
 			return fmt.Errorf("store identity trait: %w", err)
@@ -497,7 +506,8 @@ func (s *ReflectionSynthesizer) buildSelfIdentityPrompt(tick uint64, traits []Id
 	sb.WriteString("2. Write a fresh, highly contextual one-sentence self-reflection anchored directly in your recent work, trades, conversations, or movements in the village. Focus on tangible work, economic realities, relationships, and daily life rather than vague magical realism.\n")
 	sb.WriteString("3. Record a key lesson or empirical insight learned from recent experiences (\"What have you learned about trading, crafting, or community relations?\").\n")
 	sb.WriteString("4. Assign a salience score from 1 to 10.\n")
-	sb.WriteString("Respond in valid JSON:\n")
+	sb.WriteString("5. If nothing significant, meaningful, or new occurred, or if no self-reflection or identity trait update is warranted by these routine events, you may return {\"no_entry\": true} to skip recording a self-reflection and identity trait update for this batch.\n")
+	sb.WriteString("Respond in valid JSON (or {\"no_entry\": true} if nothing happened):\n")
 	sb.WriteString("{\n")
 	sb.WriteString("  \"trait_key\": \"daily_focus\",\n")
 	sb.WriteString("  \"trait_value\": \"Focusing on smithing iron tools and maintaining stock for travelers.\",\n")
@@ -508,8 +518,9 @@ func (s *ReflectionSynthesizer) buildSelfIdentityPrompt(tick uint64, traits []Id
 	return sb.String()
 }
 
-func parseSelfIdentityResponse(raw string) (string, string, string, string, int) {
+func parseSelfIdentityResponse(raw string) (bool, string, string, string, string, int) {
 	type selfJSON struct {
+		NoEntry        bool   `json:"no_entry"`
 		TraitKey       string `json:"trait_key"`
 		TraitValue     string `json:"trait_value"`
 		SelfReflection string `json:"self_reflection"`
@@ -525,6 +536,9 @@ func parseSelfIdentityResponse(raw string) (string, string, string, string, int)
 
 	var res selfJSON
 	if err := json.Unmarshal([]byte(raw), &res); err == nil {
+		if res.NoEntry || (res.TraitKey == "" && res.SelfReflection == "" && res.Lesson == "") {
+			return true, "", "", "", "", 5
+		}
 		salience := res.Salience
 		if salience <= 0 {
 			salience = 5
@@ -532,9 +546,9 @@ func parseSelfIdentityResponse(raw string) (string, string, string, string, int)
 		if salience > 10 {
 			salience = 10
 		}
-		return res.TraitKey, res.TraitValue, res.SelfReflection, res.Lesson, salience
+		return false, res.TraitKey, res.TraitValue, res.SelfReflection, res.Lesson, salience
 	}
-	return "", "", "", "", 5
+	return true, "", "", "", "", 5
 }
 
 func (s *ReflectionSynthesizer) buildReflectionPrompt(peerID string, events []EventRecord, previous RelationshipMemory) string {
@@ -560,7 +574,8 @@ func (s *ReflectionSynthesizer) buildReflectionPrompt(peerID string, events []Ev
 	sb.WriteString("1. Provide a concise cumulative relationship summary, grounded in existing information and these events.\n")
 	sb.WriteString("2. List only genuine open commitments or follow-ups between you and this person.\n")
 	sb.WriteString("3. Write one reflection on the new events and rate its salience from 1 to 10.\n")
-	sb.WriteString("Respond in valid JSON:\n")
+	sb.WriteString("4. If nothing significant, meaningful, or new occurred with this person in these events (e.g., routine ambient chatter or nothing worth recording), you may return {\"no_entry\": true} to record no new reflection or change.\n")
+	sb.WriteString("Respond in valid JSON (or {\"no_entry\": true} if nothing happened):\n")
 	sb.WriteString("{\n")
 	sb.WriteString("  \"salience\": 7,\n")
 	sb.WriteString("  \"reflection\": \"One-sentence takeaway from this batch.\",\n")
@@ -601,8 +616,9 @@ func parseReflectionResponse(raw string) (string, int) {
 	return "", 0
 }
 
-func parseRelationshipResponse(raw string, previous RelationshipMemory) (RelationshipMemory, string, int, error) {
+func parseRelationshipResponse(raw string, previous RelationshipMemory) (RelationshipMemory, string, int, bool, error) {
 	type relationshipResponse struct {
+		NoEntry     bool     `json:"no_entry"`
 		Salience    int      `json:"salience"`
 		Reflection  string   `json:"reflection"`
 		Summary     string   `json:"summary"`
@@ -610,17 +626,17 @@ func parseRelationshipResponse(raw string, previous RelationshipMemory) (Relatio
 	}
 	start, end := strings.Index(raw, "{"), strings.LastIndex(raw, "}")
 	if start < 0 || end <= start {
-		return RelationshipMemory{}, "", 0, fmt.Errorf("response is not a JSON object")
+		return RelationshipMemory{}, "", 0, false, fmt.Errorf("response is not a JSON object")
 	}
 	var response relationshipResponse
 	if err := json.Unmarshal([]byte(raw[start:end+1]), &response); err != nil {
-		return RelationshipMemory{}, "", 0, err
+		return RelationshipMemory{}, "", 0, false, err
+	}
+	if response.NoEntry || strings.TrimSpace(response.Reflection) == "" {
+		return RelationshipMemory{}, "", 0, true, nil
 	}
 	response.Reflection = strings.TrimSpace(response.Reflection)
 	response.Summary = strings.TrimSpace(response.Summary)
-	if response.Reflection == "" {
-		return RelationshipMemory{}, "", 0, fmt.Errorf("reflection is empty")
-	}
 	if response.Summary == "" {
 		response.Summary = previous.Summary
 		if response.Summary == "" {
@@ -641,5 +657,5 @@ func parseRelationshipResponse(raw string, previous RelationshipMemory) (Relatio
 		PeerID:      previous.PeerID,
 		Summary:     response.Summary,
 		Commitments: response.Commitments,
-	}, response.Reflection, salience, nil
+	}, response.Reflection, salience, false, nil
 }

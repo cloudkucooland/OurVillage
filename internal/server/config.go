@@ -100,7 +100,7 @@ func LoadConfig(configPath string) (*ServerConfig, error) {
 	cfg := DefaultConfig()
 
 	if configPath == "" {
-		if envPath := os.Getenv("AGENTMUD_SERVER_CONFIG"); envPath != "" {
+		if envPath := os.Getenv("OV_SERVER_CONFIG"); envPath != "" {
 			configPath = envPath
 		} else if _, err := os.Stat("server.yaml"); err == nil {
 			configPath = "server.yaml"
@@ -133,46 +133,46 @@ func LoadConfig(configPath string) (*ServerConfig, error) {
 	}
 
 	// Environment variable overrides
-	if envInterval := os.Getenv("AGENTMUD_TICK_INTERVAL"); envInterval != "" {
+	if envInterval := os.Getenv("OV_TICK_INTERVAL"); envInterval != "" {
 		if parsed, err := time.ParseDuration(envInterval); err == nil && parsed > 0 {
 			cfg.Clock.TickInterval = parsed
 			cfg.Clock.TickIntervalStr = envInterval
 		}
 	}
-	if envAPIKey := os.Getenv("AGENTMUD_OPENWEATHER_API_KEY"); envAPIKey != "" {
+	if envAPIKey := os.Getenv("OV_OPENWEATHER_API_KEY"); envAPIKey != "" {
 		cfg.Weather.APIKey = envAPIKey
 	} else if envAPIKey2 := os.Getenv("OPENWEATHER_API_KEY"); envAPIKey2 != "" {
 		cfg.Weather.APIKey = envAPIKey2
 	}
-	if envLat := os.Getenv("AGENTMUD_WEATHER_LAT"); envLat != "" {
+	if envLat := os.Getenv("OV_WEATHER_LAT"); envLat != "" {
 		if parsed, err := strconv.ParseFloat(envLat, 64); err == nil {
 			cfg.Weather.Lat = parsed
 		}
 	}
-	if envLon := os.Getenv("AGENTMUD_WEATHER_LON"); envLon != "" {
+	if envLon := os.Getenv("OV_WEATHER_LON"); envLon != "" {
 		if parsed, err := strconv.ParseFloat(envLon, 64); err == nil {
 			cfg.Weather.Lon = parsed
 		}
 	}
-	if envPoll := os.Getenv("AGENTMUD_WEATHER_POLL_INTERVAL"); envPoll != "" {
+	if envPoll := os.Getenv("OV_WEATHER_POLL_INTERVAL"); envPoll != "" {
 		if parsed, err := time.ParseDuration(envPoll); err == nil && parsed > 0 {
 			cfg.Weather.PollInterval = parsed
 			cfg.Weather.PollIntervalStr = envPoll
 		}
 	}
-	if envAddr := os.Getenv("AGENTMUD_MQTT_ADDR"); envAddr != "" {
+	if envAddr := os.Getenv("OV_MQTT_ADDR"); envAddr != "" {
 		cfg.Server.MQTTAddr = envAddr
 	}
-	if envTLSAddr := os.Getenv("AGENTMUD_MQTT_TLS_ADDR"); envTLSAddr != "" {
+	if envTLSAddr := os.Getenv("OV_MQTT_TLS_ADDR"); envTLSAddr != "" {
 		cfg.Server.MQTTTLSAddr = envTLSAddr
 	}
-	if envCert := os.Getenv("AGENTMUD_TLS_CERT"); envCert != "" {
+	if envCert := os.Getenv("OV_TLS_CERT"); envCert != "" {
 		cfg.Server.TLSCert = envCert
 	}
-	if envKey := os.Getenv("AGENTMUD_TLS_KEY"); envKey != "" {
+	if envKey := os.Getenv("OV_TLS_KEY"); envKey != "" {
 		cfg.Server.TLSKey = envKey
 	}
-	if envDB := os.Getenv("AGENTMUD_DB"); envDB != "" {
+	if envDB := os.Getenv("OV_DB"); envDB != "" {
 		cfg.Server.DBPath = envDB
 	}
 

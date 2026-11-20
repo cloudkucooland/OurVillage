@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"agentmud/internal/client/dispatcher"
-	"agentmud/internal/client/spatial"
-	"agentmud/internal/client/tui"
+	"ourvillage/internal/client/dispatcher"
+	"ourvillage/internal/client/spatial"
+	"ourvillage/internal/client/tui"
 
 	tea "github.com/charmbracelet/bubbletea"
 	mqtt "github.com/eclipse/paho.mqtt.golang"

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"agentmud/internal/client/dispatcher"
-	"agentmud/internal/client/spatial"
+	"ourvillage/internal/client/dispatcher"
+	"ourvillage/internal/client/spatial"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

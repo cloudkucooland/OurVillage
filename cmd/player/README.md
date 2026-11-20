@@ -16,6 +16,6 @@ client:
 ```
 
 If `--config` is omitted, the command looks for `agent.yaml` or `agent.yml` in
-the current directory. `AGENTMUD_CONFIG` can also specify the config path.
+the current directory. `OV_CONFIG` can also specify the config path.
 Inside the TUI, `/help` lists the direct action commands. Plain text is not
 sent to or interpreted by an LLM.

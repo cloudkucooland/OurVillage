@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"agentmud/internal/db"
+	"ourvillage/internal/db"
 )
 
 func TestSpoilageTickAndConsumptionPenalties(t *testing.T) {

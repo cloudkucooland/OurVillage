@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"agentmud/internal/client/routine"
+	"ourvillage/internal/client/routine"
 
 	_ "modernc.org/sqlite"
 )

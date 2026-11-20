@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"agentmud/internal/client/routine"
+	"ourvillage/internal/client/routine"
 )
 
 func TestContextManager_PromptAssembly(t *testing.T) {

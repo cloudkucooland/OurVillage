@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"agentmud/internal/db"
+	"ourvillage/internal/db"
 )
 
 func TestServerTickResumption(t *testing.T) {

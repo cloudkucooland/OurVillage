@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"agentmud/internal/db"
+	"ourvillage/internal/db"
 )
 
 func setupTestDB(t *testing.T) *sql.DB {

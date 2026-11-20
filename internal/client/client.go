@@ -18,12 +18,12 @@ import (
 	"syscall"
 	"time"
 
-	"agentmud/internal/client/dispatcher"
-	"agentmud/internal/client/memory"
-	"agentmud/internal/client/model"
-	"agentmud/internal/client/routine"
-	"agentmud/internal/client/spatial"
-	"agentmud/internal/client/tui"
+	"ourvillage/internal/client/dispatcher"
+	"ourvillage/internal/client/memory"
+	"ourvillage/internal/client/model"
+	"ourvillage/internal/client/routine"
+	"ourvillage/internal/client/spatial"
+	"ourvillage/internal/client/tui"
 
 	tea "github.com/charmbracelet/bubbletea"
 	mqtt "github.com/eclipse/paho.mqtt.golang"

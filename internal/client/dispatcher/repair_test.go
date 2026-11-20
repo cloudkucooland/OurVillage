@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"agentmud/internal/client/model"
+	"ourvillage/internal/client/model"
 )
 
 func TestParseAndRepairIntent(t *testing.T) {

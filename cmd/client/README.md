@@ -160,7 +160,7 @@ model:
   # Parameters for cloud providers (if provider is cloud-*)
   cloud:
     api_base: "https://api.openai.com/v1"
-    api_key: ""             # Reads from AGENTMUD_API_KEY if blank
+    api_key: ""             # Reads from OV_API_KEY if blank
     model_name: "gpt-4o-mini"
     timeout_seconds: 15
     max_tokens: 256

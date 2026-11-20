@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"agentmud/internal/db"
+	"ourvillage/internal/db"
 
 	mqtt "github.com/mochi-mqtt/server/v2"
 	"github.com/mochi-mqtt/server/v2/packets"

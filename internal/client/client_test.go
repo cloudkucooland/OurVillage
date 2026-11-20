@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"agentmud/internal/client/dispatcher"
-	"agentmud/internal/client/memory"
-	"agentmud/internal/client/routine"
-	"agentmud/internal/client/spatial"
+	"ourvillage/internal/client/dispatcher"
+	"ourvillage/internal/client/memory"
+	"ourvillage/internal/client/routine"
+	"ourvillage/internal/client/spatial"
 	"testing"
 )
 

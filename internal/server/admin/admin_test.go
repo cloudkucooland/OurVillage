@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"agentmud/internal/db"
+	"ourvillage/internal/db"
 )
 
 func TestAdminCommands(t *testing.T) {

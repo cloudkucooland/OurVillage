@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"agentmud/internal/db"
+	"ourvillage/internal/db"
 )
 
 type AdminCommandExecutor struct {

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"agentmud/internal/client/routine"
+	"ourvillage/internal/client/routine"
 )
 
 type PeerMemoryContext struct {

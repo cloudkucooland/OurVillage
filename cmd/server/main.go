@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
-	"agentmud/internal/db"
-	"agentmud/internal/server"
+	"ourvillage/internal/db"
+	"ourvillage/internal/server"
 )
 
 func main() {
@@ -20,11 +20,11 @@ func main() {
 	}
 
 	useTUI := false
-	if os.Getenv("AGENTMUD_TUI") == "true" || os.Getenv("AGENTMUD_TUI") == "1" {
+	if os.Getenv("OV_TUI") == "true" || os.Getenv("OV_TUI") == "1" {
 		useTUI = true
 	}
 	doSeed := false
-	if os.Getenv("AGENTMUD_SEED") == "true" || os.Getenv("AGENTMUD_SEED") == "1" {
+	if os.Getenv("OV_SEED") == "true" || os.Getenv("OV_SEED") == "1" {
 		doSeed = true
 	}
 	args := os.Args[1:]

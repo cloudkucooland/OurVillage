@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"agentmud/internal/client/model"
+	"ourvillage/internal/client/model"
 )
 
 func TestReflectionSynthesizer_FailedPeerEventRemainsRetryable(t *testing.T) {
@@ -99,13 +99,23 @@ func TestMemorySynthesis_ProjectsAreOptionalAndRelationshipsRemainCumulative(t *
 		PeerID: "mira", Summary: "We help each other restore the mill.",
 		Commitments: []string{"Ask about timber"},
 	}
-	updated, reflection, _, err := parseRelationshipResponse(
+	updated, reflection, _, noEntry, err := parseRelationshipResponse(
 		`{"reflection":"Mira shared a useful design.","salience":6}`, previous)
-	if err != nil {
+	if err != nil || noEntry {
 		t.Fatal(err)
 	}
 	if updated.Summary != previous.Summary || len(updated.Commitments) != 1 || reflection == "" {
 		t.Fatalf("updated relationship = %#v, reflection = %q", updated, reflection)
+	}
+
+	_, _, _, noEntryFlag, err := parseRelationshipResponse(`{"no_entry":true}`, previous)
+	if err != nil || !noEntryFlag {
+		t.Fatalf("expected noEntry=true for relationship response, got err=%v, noEntry=%v", err, noEntryFlag)
+	}
+
+	noEntryIdentity, _, _, _, _, _ := parseSelfIdentityResponse(`{"no_entry":true}`)
+	if !noEntryIdentity {
+		t.Fatal("expected noEntry=true for self-identity response")
 	}
 }
 

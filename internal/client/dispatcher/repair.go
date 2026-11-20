@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"agentmud/internal/client/model"
+	"ourvillage/internal/client/model"
 )
 
 // ParseAndRepairIntent parses raw text from inference output, extracts JSON,

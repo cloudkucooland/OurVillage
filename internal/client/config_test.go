@@ -68,7 +68,7 @@ cognition:
   small_system: true
 
 memory:
-  db_path: "~/.agentmud/memory_custom.db"
+  db_path: "~/.ourvillage/memory_custom.db"
   max_reflections_per_peer: 8
   synthesis_timeout_seconds: 180
 `
@@ -124,8 +124,8 @@ memory:
 	if !cfg.Cognition.SmallSystem {
 		t.Error("expected small_system enabled from config")
 	}
-	if cfg.Memory.DBPath != "~/.agentmud/memory_custom.db" {
-		t.Errorf("expected ~/.agentmud/memory_custom.db, got %s", cfg.Memory.DBPath)
+	if cfg.Memory.DBPath != "~/.ourvillage/memory_custom.db" {
+		t.Errorf("expected ~/.ourvillage/memory_custom.db, got %s", cfg.Memory.DBPath)
 	}
 	if cfg.Memory.MaxReflectionsPerPeer != 8 {
 		t.Errorf("expected max reflections 8, got %d", cfg.Memory.MaxReflectionsPerPeer)
@@ -150,9 +150,9 @@ model:
 		t.Fatalf("failed to write test config file: %v", err)
 	}
 
-	t.Setenv("AGENTMUD_AGENT", "env_agent")
-	t.Setenv("AGENTMUD_BROKER", "tcp://env-broker:1883")
-	t.Setenv("AGENTMUD_CONFIG", configPath)
+	t.Setenv("OV_AGENT", "env_agent")
+	t.Setenv("OV_BROKER", "tcp://env-broker:1883")
+	t.Setenv("OV_CONFIG", configPath)
 
 	app := NewApp()
 	var resolved *Config
@@ -198,9 +198,9 @@ model:
 		t.Fatalf("failed to write test config file: %v", err)
 	}
 
-	t.Setenv("AGENTMUD_AGENT", "env_agent")
-	t.Setenv("AGENTMUD_BROKER", "tcp://env-broker:1883")
-	t.Setenv("AGENTMUD_ENGINE", "cloud-openai")
+	t.Setenv("OV_AGENT", "env_agent")
+	t.Setenv("OV_BROKER", "tcp://env-broker:1883")
+	t.Setenv("OV_ENGINE", "cloud-openai")
 
 	app := NewApp()
 	var resolved *Config
@@ -262,7 +262,7 @@ client:
 `), 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("AGENTMUD_CONFIG", configPath)
+	t.Setenv("OV_CONFIG", configPath)
 
 	cfg, err := ResolvePlayerConfig(nil)
 	if err != nil {
@@ -317,8 +317,8 @@ client:
 	}
 
 	// 2. Test environment variable override
-	t.Setenv("AGENTMUD_LOG_FILE", "env_custom.log")
-	t.Setenv("AGENTMUD_CONFIG", configPath)
+	t.Setenv("OV_LOG_FILE", "env_custom.log")
+	t.Setenv("OV_CONFIG", configPath)
 
 	app := NewApp()
 	var resolved *Config

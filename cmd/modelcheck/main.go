@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"agentmud/internal/client/dispatcher"
-	"agentmud/internal/client/model"
+	"ourvillage/internal/client/dispatcher"
+	"ourvillage/internal/client/model"
 )
 
 type BenchmarkResult struct {

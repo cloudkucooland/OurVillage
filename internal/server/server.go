@@ -22,9 +22,9 @@ import (
 	"syscall"
 	"time"
 
-	"agentmud/internal/db"
-	"agentmud/internal/server/admin"
-	"agentmud/internal/server/tui"
+	"ourvillage/internal/db"
+	"ourvillage/internal/server/admin"
+	"ourvillage/internal/server/tui"
 
 	tea "github.com/charmbracelet/bubbletea"
 	mqtt "github.com/mochi-mqtt/server/v2"
@@ -156,18 +156,18 @@ func NewServerWithConfig(database *sql.DB, cfg *ServerConfig, listenAddr ...stri
 	}
 
 	address := cfg.Server.MQTTAddr
-	if envAddr := os.Getenv("AGENTMUD_MQTT_ADDR"); envAddr != "" {
+	if envAddr := os.Getenv("OV_MQTT_ADDR"); envAddr != "" {
 		address = envAddr
 	}
 
 	tlsAddress := cfg.Server.MQTTTLSAddr
-	if envTLSAddr := os.Getenv("AGENTMUD_MQTT_TLS_ADDR"); envTLSAddr != "" {
+	if envTLSAddr := os.Getenv("OV_MQTT_TLS_ADDR"); envTLSAddr != "" {
 		tlsAddress = envTLSAddr
 	}
 
 	if len(listenAddr) > 0 {
 		address = listenAddr[0]
-		if len(listenAddr[0]) == 0 && os.Getenv("AGENTMUD_MQTT_TLS_ADDR") == "" {
+		if len(listenAddr[0]) == 0 && os.Getenv("OV_MQTT_TLS_ADDR") == "" {
 			tlsAddress = ""
 		}
 	}
@@ -300,7 +300,7 @@ func (s *Server) StartTUI() error {
 	// Start OpenWeatherMap weather polling worker
 	go s.startWeatherPolling(s.weatherCtx)
 
-	logPath := os.Getenv("AGENTMUD_LOG")
+	logPath := os.Getenv("OV_LOG")
 	if logPath == "" {
 		logPath = "agentmud-server.log"
 	}
@@ -381,7 +381,7 @@ func (s *Server) runClock() {
 	if s.config != nil && s.config.Clock.TickInterval > 0 {
 		interval = s.config.Clock.TickInterval
 	}
-	if envInterval := os.Getenv("AGENTMUD_TICK_INTERVAL"); envInterval != "" {
+	if envInterval := os.Getenv("OV_TICK_INTERVAL"); envInterval != "" {
 		if parsed, err := time.ParseDuration(envInterval); err == nil && parsed > 0 {
 			interval = parsed
 		}

@@ -148,7 +148,7 @@ func DefaultConfig() *Config {
 			},
 		},
 		Memory: MemoryConfig{
-			DBPath:                  "~/.agentmud/memory.db",
+			DBPath:                  "~/.ourvillage/memory.db",
 			MaxReflectionsPerPeer:   5,
 			SynthesisTimeoutSeconds: 60,
 		},
@@ -201,7 +201,7 @@ func ResolveConfig(cmd *cli.Command) (*Config, error) {
 	if cmd != nil && cmd.IsSet("config") {
 		configPath = cmd.String("config")
 		explicitConfig = true
-	} else if envPath := os.Getenv("AGENTMUD_CONFIG"); envPath != "" {
+	} else if envPath := os.Getenv("OV_CONFIG"); envPath != "" {
 		configPath = envPath
 		explicitConfig = true
 	} else {
@@ -245,7 +245,7 @@ func ResolvePlayerConfig(cmd *cli.Command) (*Config, error) {
 	if cmd != nil && cmd.IsSet("config") {
 		configPath = cmd.String("config")
 		explicitConfig = true
-	} else if envPath := os.Getenv("AGENTMUD_CONFIG"); envPath != "" {
+	} else if envPath := os.Getenv("OV_CONFIG"); envPath != "" {
 		configPath = envPath
 		explicitConfig = true
 	} else {
@@ -285,112 +285,112 @@ func ResolvePlayerConfig(cmd *cli.Command) (*Config, error) {
 
 // applyEnvOverrides updates cfg with any non-empty environment variables.
 func applyEnvOverrides(cfg *Config) {
-	if val := getFirstEnv("AGENTMUD_BROKER", "MQTT_BROKER"); val != "" {
+	if val := getFirstEnv("OV_BROKER", "MQTT_BROKER"); val != "" {
 		cfg.Client.BrokerURL = val
 	}
-	if val := getFirstEnv("AGENTMUD_AGENT", "AGENTMUD_AGENT_ID"); val != "" {
+	if val := getFirstEnv("OV_AGENT", "OV_AGENT_ID"); val != "" {
 		cfg.Client.AgentID = val
 	}
-	if val := getFirstEnv("AGENTMUD_PASS", "AGENTMUD_PASSWORD"); val != "" {
+	if val := getFirstEnv("OV_PASS", "OV_PASSWORD"); val != "" {
 		cfg.Client.Password = val
 	}
-	if val := os.Getenv("AGENTMUD_CLIENT_ID"); val != "" {
+	if val := os.Getenv("OV_CLIENT_ID"); val != "" {
 		cfg.Client.ClientID = val
 	}
-	if val := os.Getenv("AGENTMUD_KEEPALIVE"); val != "" {
+	if val := os.Getenv("OV_KEEPALIVE"); val != "" {
 		if n, err := strconv.Atoi(val); err == nil {
 			cfg.Client.KeepAliveSeconds = n
 		}
 	}
-	if val := os.Getenv("AGENTMUD_TUI"); val != "" {
+	if val := os.Getenv("OV_TUI"); val != "" {
 		if b, err := strconv.ParseBool(val); err == nil {
 			cfg.Client.TUI = b
 		}
 	}
-	if val := getFirstEnv("AGENTMUD_LOG_FILE", "AGENTMUD_LOG"); val != "" {
+	if val := getFirstEnv("OV_LOG_FILE", "OV_LOG"); val != "" {
 		cfg.Client.LogFile = val
 	}
 
-	if val := getFirstEnv("AGENTMUD_ENGINE", "AGENTMUD_MODEL_PROVIDER"); val != "" {
+	if val := getFirstEnv("OV_ENGINE", "OV_MODEL_PROVIDER"); val != "" {
 		cfg.Model.Provider = val
 	}
-	if val := os.Getenv("AGENTMUD_MODEL_PATH"); val != "" {
+	if val := os.Getenv("OV_MODEL_PATH"); val != "" {
 		cfg.Model.LlamaPure.ModelPath = val
 	}
-	if val := os.Getenv("AGENTMUD_LLAMA_LIB"); val != "" {
+	if val := os.Getenv("OV_LLAMA_LIB"); val != "" {
 		cfg.Model.LlamaPure.LibraryPath = val
 	}
-	if val := os.Getenv("AGENTMUD_THREADS"); val != "" {
+	if val := os.Getenv("OV_THREADS"); val != "" {
 		if n, err := strconv.Atoi(val); err == nil {
 			cfg.Model.LlamaPure.Threads = n
 		}
 	}
-	if val := os.Getenv("AGENTMUD_CONTEXT_SIZE"); val != "" {
+	if val := os.Getenv("OV_CONTEXT_SIZE"); val != "" {
 		if n, err := strconv.Atoi(val); err == nil {
 			cfg.Model.LlamaPure.ContextSize = n
 		}
 	}
-	if val := os.Getenv("AGENTMUD_GPU_LAYERS"); val != "" {
+	if val := os.Getenv("OV_GPU_LAYERS"); val != "" {
 		if n, err := strconv.Atoi(val); err == nil {
 			cfg.Model.LlamaPure.GPULayers = n
 		}
 	}
-	if val := os.Getenv("AGENTMUD_LLAMA_MAX_TOKENS"); val != "" {
+	if val := os.Getenv("OV_LLAMA_MAX_TOKENS"); val != "" {
 		if n, err := strconv.Atoi(val); err == nil {
 			cfg.Model.LlamaPure.MaxTokens = n
 		}
 	}
-	if val := os.Getenv("AGENTMUD_TEMPERATURE"); val != "" {
+	if val := os.Getenv("OV_TEMPERATURE"); val != "" {
 		if f, err := strconv.ParseFloat(val, 64); err == nil {
 			cfg.Model.LlamaPure.Temperature = f
 		}
 	}
-	if val := os.Getenv("AGENTMUD_TOP_P"); val != "" {
+	if val := os.Getenv("OV_TOP_P"); val != "" {
 		if f, err := strconv.ParseFloat(val, 64); err == nil {
 			cfg.Model.LlamaPure.TopP = f
 		}
 	}
-	if val := os.Getenv("AGENTMUD_GRAMMAR_FILE"); val != "" {
+	if val := os.Getenv("OV_GRAMMAR_FILE"); val != "" {
 		cfg.Model.LlamaPure.GrammarFile = val
 	}
 
-	if val := getFirstEnv("AGENTMUD_API_KEY", "OPENAI_API_KEY"); val != "" {
+	if val := getFirstEnv("OV_API_KEY", "OPENAI_API_KEY"); val != "" {
 		cfg.Model.Cloud.APIKey = val
 	}
-	if val := os.Getenv("AGENTMUD_API_BASE"); val != "" {
+	if val := os.Getenv("OV_API_BASE"); val != "" {
 		cfg.Model.Cloud.APIBase = val
 	}
-	if val := os.Getenv("AGENTMUD_MODEL_NAME"); val != "" {
+	if val := os.Getenv("OV_MODEL_NAME"); val != "" {
 		cfg.Model.Cloud.ModelName = val
 	}
-	if val := os.Getenv("AGENTMUD_TIMEOUT"); val != "" {
+	if val := os.Getenv("OV_TIMEOUT"); val != "" {
 		if n, err := strconv.Atoi(val); err == nil {
 			cfg.Model.Cloud.TimeoutSeconds = n
 		}
 	}
-	if val := os.Getenv("AGENTMUD_MAX_TOKENS"); val != "" {
+	if val := os.Getenv("OV_MAX_TOKENS"); val != "" {
 		if n, err := strconv.Atoi(val); err == nil {
 			cfg.Model.Cloud.MaxTokens = n
 		}
 	}
 
-	if val := os.Getenv("AGENTMUD_DEBOUNCE_MS"); val != "" {
+	if val := os.Getenv("OV_DEBOUNCE_MS"); val != "" {
 		if n, err := strconv.Atoi(val); err == nil {
 			cfg.Cognition.TickIntervalDebounceMS = n
 		}
 	}
-	if val := os.Getenv("AGENTMUD_CHAT_PROB"); val != "" {
+	if val := os.Getenv("OV_CHAT_PROB"); val != "" {
 		if f, err := strconv.ParseFloat(val, 64); err == nil {
 			cfg.Cognition.ChatResponseProbability = f
 		}
 	}
-	if val := os.Getenv("AGENTMUD_IDLE_THRESHOLD"); val != "" {
+	if val := os.Getenv("OV_IDLE_THRESHOLD"); val != "" {
 		if n, err := strconv.Atoi(val); err == nil {
 			cfg.Cognition.IdleThresholdTicks = n
 		}
 	}
 
-	if val := os.Getenv("AGENTMUD_ACTION"); val != "" {
+	if val := os.Getenv("OV_ACTION"); val != "" {
 		cfg.Action.Action = val
 	}
 }

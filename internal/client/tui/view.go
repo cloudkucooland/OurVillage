@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"agentmud/internal/client/memory"
-	"agentmud/internal/client/spatial"
+	"ourvillage/internal/client/memory"
+	"ourvillage/internal/client/spatial"
 
 	"github.com/charmbracelet/lipgloss"
 )

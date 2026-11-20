@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"agentmud/internal/db"
-	"agentmud/internal/server/admin"
+	"ourvillage/internal/db"
+	"ourvillage/internal/server/admin"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
