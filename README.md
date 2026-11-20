@@ -74,7 +74,7 @@ Start a fresh local world with the built-in demo characters and content:
 ./bin/agentmud-server --seed
 ```
 
-The server stores its database in `agentmud.db` by default and listens for MQTT clients on port `1883`. Set `AGENTMUD_DB` to use a different database path. The `--seed` option loads the built-in sample village data.
+The server stores its database in `agentmud.db` by default and listens for MQTT clients on port `1883`. Set `OV_DB` to use a different database path. The `--seed` option loads the built-in sample village data.
 
 In another terminal, save a client configuration as `agent.yaml`:
 
