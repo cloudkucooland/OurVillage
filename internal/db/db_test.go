@@ -4,6 +4,25 @@ import (
 	"testing"
 )
 
+func TestInitDBConfiguresWALAndBusyTimeout(t *testing.T) {
+	database, err := InitDB(":memory:", false)
+	if err != nil {
+		t.Fatalf("Failed to initialize in-memory DB: %v", err)
+	}
+	defer database.Close()
+
+	var timeout int
+	if err := database.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil {
+		t.Fatalf("Failed to query busy timeout: %v", err)
+	}
+	if timeout != 5000 {
+		t.Errorf("busy timeout = %d, want 5000", timeout)
+	}
+	if database.Stats().MaxOpenConnections != 1 {
+		t.Errorf("max open connections = %d, want 1", database.Stats().MaxOpenConnections)
+	}
+}
+
 func TestInitDBAndSeed(t *testing.T) {
 	database, err := InitDB(":memory:")
 	if err != nil {

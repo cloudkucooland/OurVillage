@@ -86,6 +86,9 @@ type Model struct {
 	locationRows        []locationSummary
 	selectedLocation    int
 	inspectingLocation  bool
+	locationEditor      bool
+	locationEditing     bool
+	locationStatus      string
 	recipeRows          []worlddb.Recipe
 	selectedRecipe      int
 	inspectingRecipe    bool
@@ -124,6 +127,7 @@ var commandSyntaxes = map[string]string{
 	"temp":             "temp <celsius>",
 	"temperature":      "temperature <celsius>",
 	"set-desc":         "set-desc <loc_id> <description>",
+	"set-name":         "set-name <loc_id> <name>",
 	"set-owner":        "set-owner <loc_id> <char_id|none>",
 	"set-public":       "set-public <loc_id> <public|private>",
 	"set-indoor":       "set-indoor <loc_id> <indoor|outdoor>",
@@ -217,6 +221,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "a":
+			if (m.state == locationsTab || m.state == mapTab) && !m.locationEditor {
+				m.locationEditor = true
+				m.locationEditing = false
+				m.locationStatus = ""
+				m.textInput.Placeholder = `id "name" "description" owner|none public true|false indoor true|false access open_HH:MM close_HH:MM "rules"|none`
+				m.textInput.SetValue("")
+				m.textInput.Focus()
+				return m, nil
+			}
 			if m.state == itemsTab && !m.itemEditor && !m.itemDeletePrompt {
 				m.itemEditor = true
 				m.itemEditing = false
@@ -241,6 +254,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textInput.Placeholder = "Directory for CSV backup"
 				m.textInput.SetValue("agentmud-backup")
 				m.textInput.CursorEnd()
+				return m, nil
+			}
+			if (m.state == locationsTab || m.state == mapTab) && !m.locationEditor && len(m.locationRows) > 0 {
+				m.locationEditor = true
+				m.locationEditing = true
+				m.locationStatus = ""
+				m.textInput.Placeholder = `id "name" "description" owner|none public true|false indoor true|false access open_HH:MM close_HH:MM "rules"|none`
+				m.textInput.SetValue(locationEditorValue(m.locationRows[m.selectedLocation]))
+				m.textInput.CursorEnd()
+				m.textInput.Focus()
 				return m, nil
 			}
 			if m.state == itemsTab && !m.itemEditor && len(m.itemRows) > 0 {
@@ -325,6 +348,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.state == recipesTab && m.recipeEditor && msg.String() == "?" {
 				break
 			}
+			if (m.state == locationsTab || m.state == mapTab) && m.locationEditor && msg.String() == "?" {
+				break
+			}
 			if msg.String() == "?" && m.state == adminTab && m.textInput.Value() != "" {
 				break
 			}
@@ -333,7 +359,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.textInput.CursorEnd()
 			return m, nil
 		case "tab", "shift+tab":
-			if (m.state == recipesTab && m.recipeEditor) || (m.state == itemsTab && m.itemEditor) || (m.state == backupTab && m.backupAction != backupIdle) {
+			if (m.state == recipesTab && m.recipeEditor) || (m.state == itemsTab && m.itemEditor) || ((m.state == locationsTab || m.state == mapTab) && m.locationEditor) || (m.state == backupTab && m.backupAction != backupIdle) {
 				break
 			}
 			if msg.String() == "shift+tab" || (m.state == adminTab && m.textInput.Value() == "") {
@@ -474,6 +500,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.inspectingRecipe = false
 				return m, nil
 			}
+			if (m.state == locationsTab || m.state == mapTab) && m.locationEditor {
+				m.locationEditor = false
+				m.locationEditing = false
+				m.textInput.Placeholder = "Enter admin command..."
+				m.textInput.SetValue("")
+				return m, nil
+			}
 			if (m.state == locationsTab || m.state == mapTab) && m.inspectingLocation {
 				m.inspectingLocation = false
 				return m, nil
@@ -522,6 +555,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.state == recipesTab && len(m.recipeRows) > 0 {
 				m.inspectingRecipe = !m.inspectingRecipe
+				return m, nil
+			}
+			if (m.state == locationsTab || m.state == mapTab) && m.locationEditor {
+				m = m.saveLocationEditor()
 				return m, nil
 			}
 			if (m.state == locationsTab || m.state == mapTab) && len(m.locationRows) > 0 {
@@ -574,7 +611,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.listenLogs()
 	}
 
-	if m.state == adminTab || (m.state == recipesTab && m.recipeEditor) || (m.state == itemsTab && m.itemEditor) || (m.state == backupTab && (m.backupAction == backupExportPath || m.backupAction == backupImportPath)) {
+	if m.state == adminTab || (m.state == recipesTab && m.recipeEditor) || (m.state == itemsTab && m.itemEditor) || ((m.state == locationsTab || m.state == mapTab) && m.locationEditor) || (m.state == backupTab && (m.backupAction == backupExportPath || m.backupAction == backupImportPath)) {
 		m.textInput, cmd = m.textInput.Update(msg)
 		m.viewport, _ = m.viewport.Update(msg)
 	} else if m.state == logsTab {
@@ -690,6 +727,13 @@ func (m Model) executeCommand(cmdStr string) Model {
 		} else {
 			err = m.admin.SetLocationDescription(args[0], strings.Join(args[1:], " "))
 			output = fmt.Sprintf("Description updated for %s", args[0])
+		}
+	case "set-name":
+		if len(args) < 2 {
+			err = fmt.Errorf("usage: set-name <loc_id> <name>")
+		} else {
+			err = m.admin.SetLocationName(args[0], strings.Join(args[1:], " "))
+			output = fmt.Sprintf("Name updated for %s", args[0])
 		}
 	case "set-owner":
 		if len(args) < 2 {
@@ -1219,9 +1263,22 @@ func (m *Model) renderMap(sb *strings.Builder) {
 	if m.selectedLocation < 0 {
 		m.selectedLocation = 0
 	}
+	if m.locationEditor {
+		mode := "Add location"
+		if m.locationEditing {
+			mode = "Edit location"
+		}
+		sb.WriteString(mode + "\n\nFields: id, quoted name, quoted description, owner|none, public true|false, indoor true|false, access ALL|FOOT_AND_WHEELBARROW|FOOT_ONLY, open time HH:MM, close time HH:MM, quoted rules|none\n")
+		sb.WriteString("Example: tavern \"The Tavern\" \"A warm cozy tavern.\" none true false ALL 08:00 02:00 \"Quiet after closing.\"\nEsc cancels.\n\n")
+		sb.WriteString(m.textInput.View() + "\n")
+		if m.locationStatus != "" {
+			sb.WriteString(m.locationStatus + "\n")
+		}
+		return
+	}
 
 	if !m.inspectingLocation {
-		sb.WriteString("Village Spatial Map & Topology — use ↑/↓ to select, Enter to inspect connections & occupants\n\n")
+		sb.WriteString("Village Spatial Map & Topology — use ↑/↓ to select, Enter to inspect connections & occupants, a add, e edit\n\n")
 		for i, loc := range m.locationRows {
 			marker := "  "
 			if i == m.selectedLocation {
@@ -1323,8 +1380,21 @@ func (m *Model) renderLocations(sb *strings.Builder) {
 	if m.selectedLocation < 0 {
 		m.selectedLocation = 0
 	}
+	if m.locationEditor {
+		mode := "Add location"
+		if m.locationEditing {
+			mode = "Edit location"
+		}
+		sb.WriteString(mode + "\n\nFields: id, quoted name, quoted description, owner|none, public true|false, indoor true|false, access ALL|FOOT_AND_WHEELBARROW|FOOT_ONLY, open time HH:MM, close time HH:MM, quoted rules|none\n")
+		sb.WriteString("Example: tavern \"The Tavern\" \"A warm cozy tavern.\" none true false ALL 08:00 02:00 \"Quiet after closing.\"\nEsc cancels.\n\n")
+		sb.WriteString(m.textInput.View() + "\n")
+		if m.locationStatus != "" {
+			sb.WriteString(m.locationStatus + "\n")
+		}
+		return
+	}
 	if !m.inspectingLocation {
-		sb.WriteString("Locations — use ↑/↓ to select, Enter to inspect\n\n")
+		sb.WriteString("Locations — ↑/↓ select, Enter inspect, a add, e edit\n\n")
 		for i, location := range m.locationRows {
 			marker := "  "
 			if i == m.selectedLocation {
@@ -1402,7 +1472,7 @@ func (m *Model) renderLocations(sb *strings.Builder) {
 			}
 			return fmt.Sprintf("• %s — %s, matures at tick %d", id, crop, mature)
 		}, "(none)")
-	sb.WriteString("\n↑/↓ select another location • Esc return to list")
+	sb.WriteString("\n↑/↓ select another location • Esc return to list • e edit")
 }
 
 func writeLocationRows(sb *strings.Builder, database *sql.DB, query, locationID string, format func(string, string, int) string, emptyText string) {
@@ -1749,6 +1819,69 @@ func recipeEditorValue(recipe worlddb.Recipe) string {
 		recipe.OutputQuantity, recipe.DurationTicks, recipe.EnergyCost, station, skill, recipe.MinSkillLevel, strings.Join(ingredients, ","))
 }
 
+func locationEditorValue(location locationSummary) string {
+	owner, rules := displayOr(location.owner, "none"), displayOr(location.rules, "none")
+	return fmt.Sprintf("%s %s %s %s %t %t %s %s %s %s", location.id,
+		strconv.Quote(location.name), strconv.Quote(location.description), owner,
+		location.public, location.indoor, location.access, location.openTime,
+		location.closeTime, strconv.Quote(rules))
+}
+
+func (m Model) saveLocationEditor() Model {
+	parts, err := parseCommandLine(m.textInput.Value())
+	if err != nil {
+		m.locationStatus = "Invalid location: " + err.Error()
+		return m
+	}
+	if len(parts) != 10 {
+		m.locationStatus = "Enter all 10 fields. Quote the name, description, and rules; use none for owner or rules."
+		return m
+	}
+	location := admin.LocationDefinition{ID: parts[0], Name: parts[1], Description: parts[2], AccessTier: parts[6], OpenTime: parts[7], CloseTime: parts[8]}
+	if !strings.EqualFold(parts[3], "none") {
+		location.OwnerID = parts[3]
+	}
+	if location.IsPublic, err = strconv.ParseBool(parts[4]); err != nil {
+		m.locationStatus = "Public must be true or false."
+		return m
+	}
+	if location.IsIndoor, err = strconv.ParseBool(parts[5]); err != nil {
+		m.locationStatus = "Indoor must be true or false."
+		return m
+	}
+	if !strings.EqualFold(parts[9], "none") {
+		location.Rules = parts[9]
+	}
+	if m.locationEditing && m.selectedLocation < len(m.locationRows) && location.ID != m.locationRows[m.selectedLocation].id {
+		m.locationStatus = "Location ids cannot be changed while editing; create a new location instead."
+		return m
+	}
+	if m.admin == nil {
+		m.locationStatus = "Location editor unavailable: admin executor is not connected."
+		return m
+	}
+	if m.locationEditing {
+		err = m.admin.UpdateLocation(location)
+	} else {
+		err = m.admin.CreateLocationObj(location)
+	}
+	if err != nil {
+		m.locationStatus = "Save failed: " + err.Error()
+		return m
+	}
+	if m.locationEditing {
+		m.locationStatus = "Location updated."
+	} else {
+		m.locationStatus = "Location added."
+	}
+	m.locationEditor = false
+	m.locationEditing = false
+	m.textInput.Placeholder = "Enter admin command..."
+	m.textInput.SetValue("")
+	m.refreshLocationRows()
+	return m
+}
+
 func (m Model) saveRecipeEditor() Model {
 	parts, err := parseCommandLine(m.textInput.Value())
 	if err != nil {
@@ -1960,7 +2093,7 @@ func (m *Model) fetchCandidatesForArg(cmdName string, argIndex int) []string {
 		if argIndex == 0 {
 			return m.queryDBValues("SELECT id FROM characters")
 		}
-	case "set-desc", "set-hours", "set-rules", "set-resource":
+	case "set-desc", "set-name", "set-hours", "set-rules", "set-resource":
 		if argIndex == 0 {
 			return m.queryDBValues("SELECT id FROM locations")
 		}

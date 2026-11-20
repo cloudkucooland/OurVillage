@@ -170,3 +170,40 @@ func TestTransferNotification(t *testing.T) {
 		t.Fatal("expected message on sysChan for room system broadcast")
 	}
 }
+
+func TestItemTransferWithWeightCheck(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("failed to init in-memory db: %v", err)
+	}
+	defer database.Close()
+
+	srv, err := NewServer(database, "")
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+	srv.SetTickCount(50)
+
+	_, _ = database.Exec("UPDATE characters SET is_online = 1, current_location = 'town_mill' WHERE id IN ('eldon_millwright', 'martha_barkeep')")
+	_, _ = database.Exec("INSERT INTO inventories (character_id, item_id, quantity) VALUES ('eldon_millwright', 'bread', 2)")
+	_, _ = database.Exec("DELETE FROM inventories WHERE character_id = 'martha_barkeep' AND item_id = 'bread'")
+
+	transferPayload, _ := json.Marshal(TransferPayload{
+		RecipientID: "martha_barkeep",
+		ItemID:      "bread",
+		Quantity:    1,
+	})
+
+	srv.handleTransfer("eldon_millwright", "req_item_transfer_1", transferPayload)
+
+	var eldonQty, marthaQty int
+	_ = database.QueryRow("SELECT quantity FROM inventories WHERE character_id = 'eldon_millwright' AND item_id = 'bread'").Scan(&eldonQty)
+	_ = database.QueryRow("SELECT quantity FROM inventories WHERE character_id = 'martha_barkeep' AND item_id = 'bread'").Scan(&marthaQty)
+
+	if eldonQty != 1 {
+		t.Errorf("expected eldon to have 1 bread left, got %d", eldonQty)
+	}
+	if marthaQty != 1 {
+		t.Errorf("expected martha to have received 1 bread, got %d", marthaQty)
+	}
+}

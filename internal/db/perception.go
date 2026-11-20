@@ -204,11 +204,11 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 	if err != nil {
 		return nil, fmt.Errorf("failed to query character skills: %w", err)
 	}
-	defer skillRows.Close()
 	char.Skills = make([]CharacterSkillEntry, 0)
 	for skillRows.Next() {
 		var skill CharacterSkillEntry
 		if err := skillRows.Scan(&skill.SkillID, &skill.Level, &skill.Experience); err != nil {
+			skillRows.Close()
 			return nil, fmt.Errorf("failed to scan character skill: %w", err)
 		}
 		if skill.Level < 100 {
@@ -218,8 +218,10 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 		char.Skills = append(char.Skills, skill)
 	}
 	if err := skillRows.Err(); err != nil {
+		skillRows.Close()
 		return nil, fmt.Errorf("failed to read character skills: %w", err)
 	}
+	skillRows.Close()
 
 	// 3. Query Inventory Items
 	invRows, err := database.Query(`
@@ -232,17 +234,18 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 	if err != nil {
 		return nil, fmt.Errorf("failed to query inventory: %w", err)
 	}
-	defer invRows.Close()
 
 	char.Inventory = make([]InventoryItemEntry, 0)
 	for invRows.Next() {
 		var item InventoryItemEntry
 		if err := invRows.Scan(&item.ItemID, &item.Name, &item.Quantity, &item.WeightKg); err != nil {
+			invRows.Close()
 			return nil, fmt.Errorf("failed to scan inventory row: %w", err)
 		}
 		item.TotalWeightKg = float64(item.Quantity) * item.WeightKg
 		char.Inventory = append(char.Inventory, item)
 	}
+	invRows.Close()
 
 	// 4. Query Location Info
 	var loc LocationOverview
@@ -273,7 +276,6 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 		ORDER BY lc.travel_ticks ASC, l.name ASC
 	`, char.CurrentLocation)
 	if err == nil {
-		defer connRows.Close()
 		loc.ConnectedLocations = make([]ConnectedLocationEntry, 0)
 		for connRows.Next() {
 			var conn ConnectedLocationEntry
@@ -281,6 +283,7 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 				loc.ConnectedLocations = append(loc.ConnectedLocations, conn)
 			}
 		}
+		connRows.Close()
 	}
 
 	// 5. Query Other Characters Present in Room (Public Perception Descriptions)
@@ -293,20 +296,21 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 	if err != nil {
 		return nil, fmt.Errorf("failed to query characters in room: %w", err)
 	}
-	defer charRows.Close()
-
-	loc.CharactersPresent = make([]CharacterPublicPerception, 0)
+	var otherIDs []string
 	for charRows.Next() {
 		var otherID string
-		if err := charRows.Scan(&otherID); err != nil {
-			return nil, fmt.Errorf("failed to scan other character ID: %w", err)
+		if err := charRows.Scan(&otherID); err == nil {
+			otherIDs = append(otherIDs, otherID)
 		}
+	}
+	charRows.Close()
 
+	loc.CharactersPresent = make([]CharacterPublicPerception, 0)
+	for _, otherID := range otherIDs {
 		pubDesc, err := GetPublicCharacterDescription(database, otherID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate public description for %s: %w", otherID, err)
+		if err == nil {
+			loc.CharactersPresent = append(loc.CharactersPresent, *pubDesc)
 		}
-		loc.CharactersPresent = append(loc.CharactersPresent, *pubDesc)
 	}
 
 	// 6. Query Ground Items at Location
@@ -320,16 +324,17 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 	if err != nil {
 		return nil, fmt.Errorf("failed to query ground items: %w", err)
 	}
-	defer groundRows.Close()
 
 	loc.GroundItems = make([]GroundItemEntry, 0)
 	for groundRows.Next() {
 		var g GroundItemEntry
 		if err := groundRows.Scan(&g.ItemID, &g.Name, &g.Quantity); err != nil {
+			groundRows.Close()
 			return nil, fmt.Errorf("failed to scan ground item: %w", err)
 		}
 		loc.GroundItems = append(loc.GroundItems, g)
 	}
+	groundRows.Close()
 
 	// 7. Query Workstations at Location
 	wsRows, err := database.Query(`
@@ -341,16 +346,17 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 	if err != nil {
 		return nil, fmt.Errorf("failed to query workstations: %w", err)
 	}
-	defer wsRows.Close()
 
 	loc.Workstations = make([]WorkstationEntry, 0)
 	for wsRows.Next() {
 		var ws WorkstationEntry
 		if err := wsRows.Scan(&ws.ID, &ws.Name, &ws.CraftingDomain); err != nil {
+			wsRows.Close()
 			return nil, fmt.Errorf("failed to scan workstation: %w", err)
 		}
 		loc.Workstations = append(loc.Workstations, ws)
 	}
+	wsRows.Close()
 
 	// 8. Query Resource Pools at Location
 	resRows, err := database.Query(`
@@ -362,16 +368,17 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 	if err != nil {
 		return nil, fmt.Errorf("failed to query resource pools: %w", err)
 	}
-	defer resRows.Close()
 
 	loc.ResourcePools = make([]ResourcePoolEntry, 0)
 	for resRows.Next() {
 		var r ResourcePoolEntry
 		if err := resRows.Scan(&r.ResourceID, &r.CurrentStock, &r.MaxStock); err != nil {
+			resRows.Close()
 			return nil, fmt.Errorf("failed to scan resource pool: %w", err)
 		}
 		loc.ResourcePools = append(loc.ResourcePools, r)
 	}
+	resRows.Close()
 
 	farmCrops, farmPlots, err := GetFarmLocationData(database, char.CurrentLocation)
 	if err != nil {
@@ -391,7 +398,6 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 		ORDER BY itm.name ASC
 	`, char.CurrentLocation)
 	if err == nil {
-		defer shopRows.Close()
 		loc.ShopItems = make([]ShopItemEntry, 0)
 		for shopRows.Next() {
 			var si ShopItemEntry
@@ -399,6 +405,7 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 				loc.ShopItems = append(loc.ShopItems, si)
 			}
 		}
+		shopRows.Close()
 	}
 
 	// 10. Query known recipes that meet skill requirements and are usable at this location.
@@ -413,25 +420,45 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 		  AND (r.required_skill_id IS NULL OR r.required_skill_id = '' OR COALESCE(cs.level, 1) >= COALESCE(r.min_skill_level, 1))
 		ORDER BY r.name ASC
 	`, characterID, char.CurrentLocation)
+	loc.AvailableRecipes = make([]AvailableRecipeEntry, 0)
 	if err == nil {
-		defer recRows.Close()
-		loc.AvailableRecipes = make([]AvailableRecipeEntry, 0)
+		type recInfo struct {
+			recipeID, name, outputItemID, requiredSkillID                            string
+			outputQuantity, baseDurationTicks, energyCost, skillLevel, minSkillLevel int
+		}
+		var list []recInfo
 		for recRows.Next() {
-			var rec AvailableRecipeEntry
-			if err := recRows.Scan(&rec.RecipeID, &rec.RecipeName, &rec.OutputItemID, &rec.OutputQuantity, &rec.BaseDurationTicks, &rec.EnergyCost, &rec.RequiredSkillID, &rec.SkillLevel, &rec.MinSkillLevel); err == nil {
-				rec.DurationTicks = ScaleDurationForSkill(rec.BaseDurationTicks, rec.SkillLevel)
-				ingRows, err := database.Query("SELECT item_id, quantity FROM recipe_ingredients WHERE recipe_id = ?", rec.RecipeID)
-				if err == nil {
-					defer ingRows.Close()
-					for ingRows.Next() {
-						var ing RecipeIngredient
-						if err := ingRows.Scan(&ing.ItemID, &ing.Quantity); err == nil {
-							rec.Ingredients = append(rec.Ingredients, ing)
-						}
+			var r recInfo
+			if err := recRows.Scan(&r.recipeID, &r.name, &r.outputItemID, &r.outputQuantity, &r.baseDurationTicks, &r.energyCost, &r.requiredSkillID, &r.skillLevel, &r.minSkillLevel); err == nil {
+				list = append(list, r)
+			}
+		}
+		recRows.Close()
+
+		for _, r := range list {
+			rec := AvailableRecipeEntry{
+				RecipeID:          r.recipeID,
+				RecipeName:        r.name,
+				OutputItemID:      r.outputItemID,
+				OutputQuantity:    r.outputQuantity,
+				BaseDurationTicks: r.baseDurationTicks,
+				EnergyCost:        r.energyCost,
+				RequiredSkillID:   r.requiredSkillID,
+				SkillLevel:        r.skillLevel,
+				MinSkillLevel:     r.minSkillLevel,
+				DurationTicks:     ScaleDurationForSkill(r.baseDurationTicks, r.skillLevel),
+			}
+			ingRows, err := database.Query("SELECT item_id, quantity FROM recipe_ingredients WHERE recipe_id = ?", r.recipeID)
+			if err == nil {
+				for ingRows.Next() {
+					var ing RecipeIngredient
+					if err := ingRows.Scan(&ing.ItemID, &ing.Quantity); err == nil {
+						rec.Ingredients = append(rec.Ingredients, ing)
 					}
 				}
-				loc.AvailableRecipes = append(loc.AvailableRecipes, rec)
+				ingRows.Close()
 			}
+			loc.AvailableRecipes = append(loc.AvailableRecipes, rec)
 		}
 	}
 
@@ -450,18 +477,20 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 	if err != nil {
 		return nil, fmt.Errorf("failed to query location graph: %w", err)
 	}
-	defer graphRows.Close()
 	locationGraph := make([]LocationConnectionEntry, 0)
 	for graphRows.Next() {
 		var connection LocationConnectionEntry
 		if err := graphRows.Scan(&connection.FromLocationID, &connection.ToLocationID); err != nil {
+			graphRows.Close()
 			return nil, fmt.Errorf("failed to scan location graph: %w", err)
 		}
 		locationGraph = append(locationGraph, connection)
 	}
 	if err := graphRows.Err(); err != nil {
+		graphRows.Close()
 		return nil, fmt.Errorf("failed to read location graph: %w", err)
 	}
+	graphRows.Close()
 
 	return &PerceptionData{
 		Type:          "STATE_SYNC",

@@ -418,7 +418,7 @@ func (s *Server) handleTransfer(agentID string, intentID string, rawPayload json
 		var itemWeight float64
 		_ = tx.QueryRow("SELECT weight_kg FROM items WHERE id = ?", payload.ItemID).Scan(&itemWeight)
 
-		recipWeightInfo, err := db.GetCharacterWeightInfo(s.db, payload.RecipientID)
+		recipWeightInfo, err := db.GetCharacterWeightInfo(tx, payload.RecipientID)
 		if err == nil && recipWeightInfo != nil {
 			addedWeight := float64(payload.Quantity) * itemWeight
 			if recipWeightInfo.TotalWeightKg+addedWeight > recipWeightInfo.OverburdenLimitKg {
@@ -1097,13 +1097,17 @@ func (s *Server) handleLook(agentID string, intentID string, customMsg ...string
 
 	var presentCharacters []db.CharacterPublicPerception
 	if err == nil {
-		defer rows.Close()
+		var otherIDs []string
 		for rows.Next() {
 			var otherID string
 			if err := rows.Scan(&otherID); err == nil {
-				if pubDesc, err := db.GetPublicCharacterDescription(s.db, otherID); err == nil {
-					presentCharacters = append(presentCharacters, *pubDesc)
-				}
+				otherIDs = append(otherIDs, otherID)
+			}
+		}
+		rows.Close()
+		for _, otherID := range otherIDs {
+			if pubDesc, err := db.GetPublicCharacterDescription(s.db, otherID); err == nil {
+				presentCharacters = append(presentCharacters, *pubDesc)
 			}
 		}
 	}

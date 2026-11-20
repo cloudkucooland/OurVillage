@@ -73,8 +73,8 @@ func DefaultConfig() *ServerConfig {
 			TickInterval:    90 * time.Second,
 		},
 		Decay: DecaySection{
-			HungerRate:           1.5,
-			EnergyRate:           1.5,
+			HungerRate:           1.0,
+			EnergyRate:           1.0,
 			StarvationHealthRate: 1.0,
 			WeatherHealthRate:    1.0,
 		},
@@ -109,11 +109,11 @@ func LoadConfig(configPath string) (*ServerConfig, error) {
 
 	if configPath != "" {
 		data, err := os.ReadFile(configPath)
-		if err == nil {
-			if err := yaml.Unmarshal(data, cfg); err != nil {
+		if err != nil {
+			if !os.IsNotExist(err) {
 				return nil, err
 			}
-		} else if !os.IsNotExist(err) {
+		} else if err := yaml.Unmarshal(data, cfg); err != nil {
 			return nil, err
 		}
 	}

@@ -438,10 +438,15 @@ func (s *ReflectionSynthesizer) SynthesizeSelfIdentity(ctx context.Context, tick
 		return fmt.Errorf("failed to generate self-identity update: %w", err)
 	}
 
-	traitKey, traitVal, selfRef, salience := parseSelfIdentityResponse(respText)
+	traitKey, traitVal, selfRef, lesson, salience := parseSelfIdentityResponse(respText)
 	if traitKey != "" && traitVal != "" {
 		if err := s.store.UpsertIdentityTrait(traitKey, traitVal, tick, salience); err != nil {
 			return fmt.Errorf("store identity trait: %w", err)
+		}
+	}
+	if lesson != "" {
+		if err := s.store.UpsertIdentityTrait("learned_insight", lesson, tick, salience); err != nil {
+			return fmt.Errorf("store learned insight trait: %w", err)
 		}
 	}
 	if selfRef != "" {
@@ -490,22 +495,25 @@ func (s *ReflectionSynthesizer) buildSelfIdentityPrompt(tick uint64, traits []Id
 	sb.WriteString("Instructions:\n")
 	sb.WriteString("1. Update or refine an identity trait key and value grounded in your recent actions and experiences (e.g., craft_philosophy, community_bond, daily_focus, merchant_ethics).\n")
 	sb.WriteString("2. Write a fresh, highly contextual one-sentence self-reflection anchored directly in your recent work, trades, conversations, or movements in the village. Focus on tangible work, economic realities, relationships, and daily life rather than vague magical realism.\n")
-	sb.WriteString("3. Assign a salience score from 1 to 10.\n")
+	sb.WriteString("3. Record a key lesson or empirical insight learned from recent experiences (\"What have you learned about trading, crafting, or community relations?\").\n")
+	sb.WriteString("4. Assign a salience score from 1 to 10.\n")
 	sb.WriteString("Respond in valid JSON:\n")
 	sb.WriteString("{\n")
 	sb.WriteString("  \"trait_key\": \"daily_focus\",\n")
 	sb.WriteString("  \"trait_value\": \"Focusing on smithing iron tools and maintaining stock for travelers.\",\n")
 	sb.WriteString("  \"self_reflection\": \"Today's forge work yielded three solid iron ingots, keeping me busy as villagers dropped by the workshop.\",\n")
+	sb.WriteString("  \"lesson\": \"Crafting iron requires securing raw ore early before shop stocks deplete.\",\n")
 	sb.WriteString("  \"salience\": 7\n")
 	sb.WriteString("}\n")
 	return sb.String()
 }
 
-func parseSelfIdentityResponse(raw string) (string, string, string, int) {
+func parseSelfIdentityResponse(raw string) (string, string, string, string, int) {
 	type selfJSON struct {
 		TraitKey       string `json:"trait_key"`
 		TraitValue     string `json:"trait_value"`
 		SelfReflection string `json:"self_reflection"`
+		Lesson         string `json:"lesson"`
 		Salience       int    `json:"salience"`
 	}
 
@@ -524,9 +532,9 @@ func parseSelfIdentityResponse(raw string) (string, string, string, int) {
 		if salience > 10 {
 			salience = 10
 		}
-		return res.TraitKey, res.TraitValue, res.SelfReflection, salience
+		return res.TraitKey, res.TraitValue, res.SelfReflection, res.Lesson, salience
 	}
-	return "", "", "", 5
+	return "", "", "", "", 5
 }
 
 func (s *ReflectionSynthesizer) buildReflectionPrompt(peerID string, events []EventRecord, previous RelationshipMemory) string {

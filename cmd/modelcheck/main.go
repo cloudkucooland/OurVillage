@@ -50,6 +50,19 @@ type ModelReport struct {
 	Results          []BenchmarkResult `json:"results"`
 }
 
+type ModelSummary struct {
+	ModelName        string  `json:"model_name"`
+	Backend          string  `json:"backend"`
+	ContextSize      int     `json:"context_size"`
+	TotalPrompts     int     `json:"total_prompts"`
+	JSONValidCount   int     `json:"json_valid_count"`
+	IntentValidCount int     `json:"intent_valid_count"`
+	JSONValidPct     float64 `json:"json_valid_pct"`
+	IntentValidPct   float64 `json:"intent_valid_pct"`
+	AvgTokensPerSec  float64 `json:"avg_tokens_per_sec"`
+	AvgDurationMs    float64 `json:"avg_duration_ms"`
+}
+
 func main() {
 	backendFlag := flag.String("backend", "", "Model backend: llama-pure or rkllm (required)")
 	modelsDirFlag := flag.String("models-dir", ".", "Directory containing model files (*.gguf or *.rkllm)")
@@ -154,6 +167,8 @@ Task: `
 	}
 
 	contextSizes := []int{1024, 2048, 4096, 8192, 16384}
+
+	var summaries []ModelSummary
 
 	ctx := context.Background()
 
@@ -293,6 +308,65 @@ Task: `
 			} else {
 				log.Printf("[ModelCheck] Saved report to %q", outFilePath)
 			}
+
+			totalPrompts := len(results)
+			jsonValidCount := 0
+			intentValidCount := 0
+			var totalTokensPerSec float64
+			var totalDurationMs int64
+
+			for _, r := range results {
+				if r.JSONValid {
+					jsonValidCount++
+				}
+				if r.IntentValid {
+					intentValidCount++
+				}
+				totalTokensPerSec += r.TokensPerSec
+				totalDurationMs += r.DurationMs
+			}
+
+			jsonValidPct := 0.0
+			intentValidPct := 0.0
+			avgTokensPerSec := 0.0
+			avgDurationMs := 0.0
+			if totalPrompts > 0 {
+				jsonValidPct = float64(jsonValidCount) / float64(totalPrompts) * 100.0
+				intentValidPct = float64(intentValidCount) / float64(totalPrompts) * 100.0
+				avgTokensPerSec = totalTokensPerSec / float64(totalPrompts)
+				avgDurationMs = float64(totalDurationMs) / float64(totalPrompts)
+			}
+
+			summaries = append(summaries, ModelSummary{
+				ModelName:        modelName,
+				Backend:          backend,
+				ContextSize:      ctxSize,
+				TotalPrompts:     totalPrompts,
+				JSONValidCount:   jsonValidCount,
+				IntentValidCount: intentValidCount,
+				JSONValidPct:     jsonValidPct,
+				IntentValidPct:   intentValidPct,
+				AvgTokensPerSec:  avgTokensPerSec,
+				AvgDurationMs:    avgDurationMs,
+			})
+		}
+	}
+
+	if len(summaries) > 0 {
+		log.Print("\n=== BENCHMARK SUMMARY REPORT ===")
+		log.Printf("%-35s | %-10s | %-6s | %-10s | %-10s | %-10s", "Model", "Context", "Total", "JSON %", "Intent %", "Tok/s")
+		log.Printf("%s", strings.Repeat("-", 95))
+		for _, s := range summaries {
+			log.Printf("%-35s | %-10d | %-6d | %9.1f%% | %9.1f%% | %10.2f",
+				s.ModelName, s.ContextSize, s.TotalPrompts, s.JSONValidPct, s.IntentValidPct, s.AvgTokensPerSec)
+		}
+
+		summaryFilePath := filepath.Join(*outputDirFlag, "summary.json")
+		summaryData, _ := json.MarshalIndent(summaries, "", "  ")
+		if writeErr := os.WriteFile(summaryFilePath, summaryData, 0644); writeErr != nil {
+			log.Printf("[ModelCheck] Error writing summary report to %q: %v", summaryFilePath, writeErr)
+		} else {
+			log.Printf("[ModelCheck] Saved summary report to %q", summaryFilePath)
 		}
 	}
 

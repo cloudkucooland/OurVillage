@@ -3,15 +3,20 @@ package main
 import (
 	"log"
 	"os"
+	"strings"
 
 	"agentmud/internal/db"
 	"agentmud/internal/server"
 )
 
 func main() {
-	dbPath := "agentmud.db"
-	if envPath := os.Getenv("AGENTMUD_DB"); envPath != "" {
-		dbPath = envPath
+	cfg, err := server.LoadConfig("")
+	if err != nil {
+		log.Fatalf("Failed to load server config: %v", err)
+	}
+	dbPath := cfg.Server.DBPath
+	if dbPath == "" {
+		dbPath = "agentmud.db"
 	}
 
 	useTUI := false
@@ -22,12 +27,35 @@ func main() {
 	if os.Getenv("AGENTMUD_SEED") == "true" || os.Getenv("AGENTMUD_SEED") == "1" {
 		doSeed = true
 	}
-	for _, arg := range os.Args {
+	args := os.Args[1:]
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if arg == "--tui" {
 			useTUI = true
 		}
 		if arg == "--seed" {
 			doSeed = true
+		}
+		if arg == "--config" && i+1 < len(args) {
+			i++
+			cfg, err = server.LoadConfig(args[i])
+			if err != nil {
+				log.Fatalf("Failed to load server config %q: %v", args[i], err)
+			}
+			dbPath = cfg.Server.DBPath
+			if dbPath == "" {
+				dbPath = "agentmud.db"
+			}
+		} else if strings.HasPrefix(arg, "--config=") {
+			configPath := strings.TrimPrefix(arg, "--config=")
+			cfg, err = server.LoadConfig(configPath)
+			if err != nil {
+				log.Fatalf("Failed to load server config %q: %v", configPath, err)
+			}
+			dbPath = cfg.Server.DBPath
+			if dbPath == "" {
+				dbPath = "agentmud.db"
+			}
 		}
 	}
 
@@ -38,7 +66,7 @@ func main() {
 	}
 	defer database.Close()
 
-	srv, err := server.NewServer(database)
+	srv, err := server.NewServerWithConfig(database, cfg)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}

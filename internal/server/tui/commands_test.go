@@ -154,6 +154,47 @@ func TestConfigureResourceAndShopCommands(t *testing.T) {
 	}
 }
 
+func TestLocationEditorCreatesAndUpdatesLocation(t *testing.T) {
+	database, err := db.InitDB(":memory:")
+	if err != nil {
+		t.Fatalf("failed to initialize database: %v", err)
+	}
+	defer database.Close()
+
+	model := NewModel(database, admin.NewAdminCommandExecutor(database, nil, nil), nil)
+	model.state = locationsTab
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	model = updated.(Model)
+	model.textInput.SetValue(`quiet_room "Quiet Room" "A calm place." none true false FOOT_ONLY 08:00 20:00 "Keep voices low."`)
+	model = model.saveLocationEditor()
+	if model.locationEditor {
+		t.Fatalf("location editor did not close after save: %s", model.locationStatus)
+	}
+	var name, description, tier, rules string
+	if err := database.QueryRow(`SELECT name, description, vehicle_access_tier, rules_prompt FROM locations WHERE id = 'quiet_room'`).Scan(&name, &description, &tier, &rules); err != nil {
+		t.Fatalf("created location not found: %v", err)
+	}
+	if name != "Quiet Room" || description != "A calm place." || tier != "FOOT_ONLY" || rules != "Keep voices low." {
+		t.Fatalf("created location fields = %q %q %q %q", name, description, tier, rules)
+	}
+
+	model.locationRows = []locationSummary{{id: "quiet_room", name: name, description: description, access: tier, openTime: "08:00", closeTime: "20:00", rules: rules, public: true}}
+	model.selectedLocation = 0
+	model.locationEditor = true
+	model.locationEditing = true
+	model.textInput.SetValue(`quiet_room "Quiet Room Annex" "A quiet reading room." none false true ALL 09:00 18:00 none`)
+	model = model.saveLocationEditor()
+	if model.locationEditor {
+		t.Fatalf("location editor did not close after update: %s", model.locationStatus)
+	}
+	if err := database.QueryRow(`SELECT name, is_public_property, is_indoor FROM locations WHERE id = 'quiet_room'`).Scan(&name, new(bool), new(bool)); err != nil {
+		t.Fatalf("updated location not found: %v", err)
+	}
+	if name != "Quiet Room Annex" {
+		t.Fatalf("updated location name = %q", name)
+	}
+}
+
 func TestSetLocationParameterCommands(t *testing.T) {
 	database, err := db.InitDB(":memory:")
 	if err != nil {

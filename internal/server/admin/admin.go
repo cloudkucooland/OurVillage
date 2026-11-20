@@ -373,19 +373,100 @@ func boolInt(value bool) int {
 	return 0
 }
 
+func (a *AdminCommandExecutor) SetLocationName(locID, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return fmt.Errorf("location name cannot be empty")
+	}
+	return updateExisting(a.db, "locations", locID, "UPDATE locations SET name = ? WHERE id = ?", name, locID)
+}
+
+type LocationDefinition struct {
+	ID          string
+	Name        string
+	Description string
+	OwnerID     string
+	IsPublic    bool
+	IsIndoor    bool
+	AccessTier  string
+	OpenTime    string
+	CloseTime   string
+	Rules       string
+}
+
 func (a *AdminCommandExecutor) CreateLocation(locationID, name, description string) error {
-	if !validID(locationID) {
+	return a.CreateLocationObj(LocationDefinition{
+		ID:          locationID,
+		Name:        name,
+		Description: description,
+		IsPublic:    true,
+		IsIndoor:    false,
+		AccessTier:  "ALL",
+		OpenTime:    "00:00",
+		CloseTime:   "23:59",
+	})
+}
+
+func (a *AdminCommandExecutor) CreateLocationObj(loc LocationDefinition) error {
+	return a.saveLocation(loc, false)
+}
+
+func (a *AdminCommandExecutor) UpdateLocation(loc LocationDefinition) error {
+	return a.saveLocation(loc, true)
+}
+
+func (a *AdminCommandExecutor) saveLocation(loc LocationDefinition, update bool) error {
+	if err := validateLocation(a.db, loc); err != nil {
+		return err
+	}
+	if update {
+		if err := requireExists(a.db, "locations", loc.ID); err != nil {
+			return err
+		}
+		_, err := a.db.Exec(`
+			UPDATE locations SET name = ?, description = ?, owner_id = ?, is_public_property = ?, is_indoor = ?, vehicle_access_tier = ?, open_time = ?, close_time = ?, rules_prompt = ?
+			WHERE id = ?
+		`, loc.Name, loc.Description, nullableString(loc.OwnerID), boolInt(loc.IsPublic), boolInt(loc.IsIndoor), loc.AccessTier, loc.OpenTime, loc.CloseTime, nullableString(loc.Rules), loc.ID)
+		if err != nil {
+			return fmt.Errorf("update location %q: %w", loc.ID, err)
+		}
+	} else {
+		_, err := a.db.Exec(`
+			INSERT INTO locations (id, name, description, owner_id, is_public_property, is_indoor, vehicle_access_tier, open_time, close_time, rules_prompt)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, loc.ID, loc.Name, loc.Description, nullableString(loc.OwnerID), boolInt(loc.IsPublic), boolInt(loc.IsIndoor), loc.AccessTier, loc.OpenTime, loc.CloseTime, nullableString(loc.Rules))
+		if err != nil {
+			return fmt.Errorf("create location %q: %w", loc.ID, err)
+		}
+	}
+	return nil
+}
+
+func validateLocation(dbConn *sql.DB, loc LocationDefinition) error {
+	if !validID(loc.ID) {
 		return fmt.Errorf("location id must contain only letters, numbers, underscores, and hyphens")
 	}
-	if strings.TrimSpace(name) == "" || strings.TrimSpace(description) == "" {
-		return fmt.Errorf("location name and description are required")
+	if strings.TrimSpace(loc.Name) == "" {
+		return fmt.Errorf("location name is required")
 	}
-	_, err := a.db.Exec(`
-		INSERT INTO locations (id, name, description, is_public_property, is_indoor, vehicle_access_tier, open_time, close_time)
-		VALUES (?, ?, ?, 1, 0, 'ALL', '00:00', '23:59')
-	`, locationID, name, description)
-	if err != nil {
-		return fmt.Errorf("create location %q: %w", locationID, err)
+	if strings.TrimSpace(loc.Description) == "" {
+		return fmt.Errorf("location description is required")
+	}
+	if loc.OwnerID != "" {
+		if err := requireExists(dbConn, "characters", loc.OwnerID); err != nil {
+			return err
+		}
+	}
+	tier := strings.ToUpper(loc.AccessTier)
+	switch tier {
+	case "ALL", "FOOT_AND_WHEELBARROW", "FOOT_ONLY":
+	default:
+		return fmt.Errorf("invalid access tier %q (use ALL, FOOT_AND_WHEELBARROW, or FOOT_ONLY)", loc.AccessTier)
+	}
+	if _, err := time.Parse("15:04", loc.OpenTime); err != nil {
+		return fmt.Errorf("invalid opening time %q (use HH:MM, 00:00-23:59)", loc.OpenTime)
+	}
+	if _, err := time.Parse("15:04", loc.CloseTime); err != nil {
+		return fmt.Errorf("invalid closing time %q (use HH:MM, 00:00-23:59)", loc.CloseTime)
 	}
 	return nil
 }

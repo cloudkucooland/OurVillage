@@ -222,3 +222,43 @@ func TestReflectionSynthesizer_ConsolidateOnRest(t *testing.T) {
 		t.Fatalf("projects after rest consolidation = %#v, err = %v", projects, err)
 	}
 }
+
+func TestReflectionSynthesizer_SelfIdentityWithLesson(t *testing.T) {
+	store, err := NewClientMemoryStore(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.AddEvent(50, "elda", "ACTION_RESULT", `{"status":"SUCCESS","message":"Crafted iron sword."}`); err != nil {
+		t.Fatal(err)
+	}
+	engine := model.NewMockEngine()
+	engine.SetDefaultResponse(`{"trait_key":"craft_focus","trait_value":"Focusing on weapon smithing.","self_reflection":"Hammered iron into a sturdy blade today.","lesson":"Good swords require higher carbon charcoal and patience.","salience":8}`)
+	synth := NewReflectionSynthesizer(store, engine, "elda", 0, 0)
+	if err := synth.SynthesizeSelfIdentity(context.Background(), 50); err != nil {
+		t.Fatal(err)
+	}
+
+	traits, err := store.GetIdentityTraits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundInsight := false
+	foundFocus := false
+	for _, tr := range traits {
+		if tr.Key == "learned_insight" && tr.Value == "Good swords require higher carbon charcoal and patience." {
+			foundInsight = true
+		}
+		if tr.Key == "craft_focus" && tr.Value == "Focusing on weapon smithing." {
+			foundFocus = true
+		}
+	}
+	if !foundInsight || !foundFocus {
+		t.Fatalf("traits = %#v; want learned_insight and craft_focus traits", traits)
+	}
+
+	refs, err := store.GetRecentSelfReflections(5)
+	if err != nil || len(refs) != 1 || refs[0].ReflectionText != "Hammered iron into a sturdy blade today." {
+		t.Fatalf("self reflections = %#v, err = %v", refs, err)
+	}
+}
