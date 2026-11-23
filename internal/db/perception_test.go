@@ -104,16 +104,16 @@ func TestGetCharacterPerception(t *testing.T) {
 	if len(perception.Location.Workstations) == 0 {
 		t.Error("expected workstation in town mill (timber_saw)")
 	}
-	if _, err := database.Exec("UPDATE characters SET current_location = 'tavern' WHERE id = 'eldon_millwright'"); err != nil {
+	if _, err := database.Exec("UPDATE characters SET current_location = 'herbalist' WHERE id = 'eldon_millwright'"); err != nil {
 		t.Fatal(err)
 	}
-	tavernPerception, err := GetCharacterPerception(database, "eldon_millwright")
+	herbalistPerception, err := GetCharacterPerception(database, "eldon_millwright")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, recipe := range tavernPerception.Location.AvailableRecipes {
-		if recipe.RecipeID == "brew_berry_wine" {
-			t.Fatal("Eldon should not see a recipe he does not know")
+	for _, recipe := range herbalistPerception.Location.AvailableRecipes {
+		if recipe.RecipeID == "brew_charcoal_draught" {
+			t.Fatal("Eldon should not see brew_charcoal_draught because his herbalism skill is too low")
 		}
 	}
 	marthaPerception, err := GetCharacterPerception(database, "martha_barkeep")
@@ -125,8 +125,15 @@ func TestGetCharacterPerception(t *testing.T) {
 		foundBerryWine = foundBerryWine || recipe.RecipeID == "brew_berry_wine"
 		foundAdvancedWine = foundAdvancedWine || recipe.RecipeID == "brew_elderflower_wine"
 	}
-	if !foundBerryWine || foundAdvancedWine {
-		t.Errorf("Martha's recipe list should include her basic wine but gate advanced wine by skill: %+v", marthaPerception.Location.AvailableRecipes)
+	if !foundBerryWine || !foundAdvancedWine {
+		t.Errorf("Martha's recipe list should include both basic wine and her specialty elderflower wine: %+v", marthaPerception.Location.AvailableRecipes)
+	}
+	if _, err := database.Exec("UPDATE characters SET current_location = 'tavern' WHERE id = 'eldon_millwright'"); err != nil {
+		t.Fatal(err)
+	}
+	tavernPerception, err := GetCharacterPerception(database, "eldon_millwright")
+	if err != nil {
+		t.Fatal(err)
 	}
 	foundWeightedShopItem := false
 	for _, item := range tavernPerception.Location.ShopItems {

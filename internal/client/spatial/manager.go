@@ -146,19 +146,20 @@ type SyncInventoryEntry struct {
 }
 
 type SyncLocationOverview struct {
-	ID                 string                  `json:"id"`
-	Name               string                  `json:"name"`
-	Description        string                  `json:"description"`
-	RulesPrompt        string                  `json:"rules_prompt,omitempty"`
-	CharactersPresent  []SyncCharacterPresence `json:"characters_present"`
-	GroundItems        []SyncGroundItem        `json:"ground_items"`
-	Workstations       []SyncWorkstation       `json:"workstations"`
-	ResourcePools      []SyncResourcePool      `json:"resource_pools"`
-	FarmCrops          []SyncFarmCrop          `json:"farm_crops"`
-	FarmPlots          []SyncFarmPlot          `json:"farm_plots"`
-	ConnectedLocations []SyncConnectedLocation `json:"connected_locations"`
-	ShopItems          []SyncShopItem          `json:"shop_items"`
-	AvailableRecipes   []SyncAvailableRecipe   `json:"available_recipes"`
+        ID                 string                  `json:"id"`
+        Name               string                  `json:"name"`
+        Description        string                  `json:"description"`
+        RulesPrompt        string                  `json:"rules_prompt,omitempty"`
+        OwnerID            string                  `json:"owner_id,omitempty"`
+        CharactersPresent  []SyncCharacterPresence `json:"characters_present"`
+        GroundItems        []SyncGroundItem        `json:"ground_items"`
+        Workstations       []SyncWorkstation       `json:"workstations"`
+        ResourcePools      []SyncResourcePool      `json:"resource_pools"`
+        FarmCrops          []SyncFarmCrop          `json:"farm_crops"`
+        FarmPlots          []SyncFarmPlot          `json:"farm_plots"`
+        ConnectedLocations []SyncConnectedLocation `json:"connected_locations"`
+        ShopItems          []SyncShopItem          `json:"shop_items"`
+        AvailableRecipes   []SyncAvailableRecipe   `json:"available_recipes"`
 }
 
 type SyncFarmCrop struct {
@@ -283,6 +284,7 @@ type ContextManager struct {
 	agentName                 string
 	currentLocation           string
 	locationName              string
+	locationOwnerID           string
 	homeLocationID            string
 	homeLocationName          string
 	workLocationID            string
@@ -702,11 +704,12 @@ func (cm *ContextManager) IngestDirectResponse(raw []byte) error {
 		}
 
 		if msg.Location != nil {
-			cm.SetLocation(msg.Location.ID, msg.Location.Name)
+		        cm.SetLocation(msg.Location.ID, msg.Location.Name)
 
-			cm.mu.Lock()
-			cm.locationSynced = true
-			if msg.Location.RulesPrompt != "" {
+		        cm.mu.Lock()
+		        cm.locationSynced = true
+		        cm.locationOwnerID = msg.Location.OwnerID
+		        if msg.Location.RulesPrompt != "" {
 				cm.locationRules[msg.Location.ID] = []string{msg.Location.RulesPrompt}
 			}
 
@@ -1070,6 +1073,10 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 	isFullMoon := day > 0 && day%30 == 0
 	isCommunity := day > 0 && day%10 == 0
 
+	seasonIndex := ((day - 1) / 30) % 4
+	seasons := []string{"Spring", "Summer", "Autumn", "Winter"}
+	season := seasons[seasonIndex]
+
 	if isFullMoon {
 		if cm.smallSystem {
 			sb.WriteString(fmt.Sprintf("Day %d: Full Moon Festival! Grand celebration under the moonlight. Gather in town square or tavern, feast, and celebrate.\n\n", day))
@@ -1110,7 +1117,7 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 		}
 	} else {
 		sb.WriteString("=== TIME & DAILY RHYTHM ===\n")
-		sb.WriteString(fmt.Sprintf("Current In-Game Time: %s\n", cm.lastInGameTime))
+		sb.WriteString(fmt.Sprintf("Current In-Game Time: %s (Season: %s)\n", cm.lastInGameTime, season))
 		if hour >= 22 || hour < 6 {
 			switch {
 			case cm.homeLocationID == "":
@@ -1190,20 +1197,23 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 	sb.WriteString("\n")
 
 	sb.WriteString(fmt.Sprintf("=== LOCATION RULES (%s) ===\n", locationName))
+	if cm.locationOwnerID != "" && cm.locationOwnerID == cm.agentID {
+	        sb.WriteString("- You own this location. You are responsible for maintaining the inventory for others to purchase from.\n")
+	}
 	rules := cm.locationRules[cm.currentLocation]
-	if len(rules) == 0 {
-		sb.WriteString("Follow your own curiosity.\n")
+	if len(rules) == 0 && (cm.locationOwnerID == "" || cm.locationOwnerID != cm.agentID) {
+	        sb.WriteString("Follow your own curiosity.\n")
 	} else {
-		ruleLimit := len(rules)
-		if cm.smallSystem && ruleLimit > 3 {
-			ruleLimit = 3
-		}
-		for _, rule := range rules[:ruleLimit] {
-			if cm.smallSystem {
-				rule = limitPromptText(rule, 160)
-			}
-			sb.WriteString(fmt.Sprintf("- %s\n", rule))
-		}
+	        ruleLimit := len(rules)
+	        if cm.smallSystem && ruleLimit > 3 {
+	                ruleLimit = 3
+	        }
+	        for _, rule := range rules[:ruleLimit] {
+	                if cm.smallSystem {
+	                        rule = limitPromptText(rule, 160)
+	                }
+	                sb.WriteString(fmt.Sprintf("- %s\n", rule))
+	        }
 	}
 	sb.WriteString("\n")
 

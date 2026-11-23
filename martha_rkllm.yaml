@@ -10,16 +10,16 @@ model:
   provider: "rkllm"
   rkllm:
     library_path: "/usr/lib/librkllmrt.so"
-    # model_path: "/home/scot/rkllama-models/qwen3-4b-16k/qwen3-4b.rkllm"
+    model_path: "/home/scot/rkllama-models/qwen3-4b-16k/qwen3-4b.rkllm"
     # model_path: "/home/scot/rkllama-models/smolvlm-instruct-Prince-1.rkllm"
-    model_path: "/home/scot/rkllama-models/Huihui-Qwen3-8B-abliterated-v2_W8A8_RK3588/Huihui-Qwen3-8B-abliterated-v2_W8A8_RK3588.rkllm"
+    # model_path: "/home/scot/rkllama-models/Huihui-Qwen3-8B-abliterated-v2_W8A8_RK3588/Huihui-Qwen3-8B-abliterated-v2_W8A8_RK3588.rkllm"
     # model_path: "/home/scot/rkllama-models/kanana-2-3b-instruct/kanana-2-3b-instruct-oliver0804.rkllm"
     # context_size: 16384
     # context_size: 8192
     context_size: 4096
     # context_size: 2048
-    temperature: 1.1
-    top_p: 0.8
+    # temperature: 1.1
+    # top_p: 0.8
     # enable_thinking: false
 
 memory:
@@ -28,7 +28,7 @@ memory:
 
 cognition:
   # tick_interval_debounce_ms: 4000
-  chat_response_probability: 0.90
+  # chat_response_probability: 0.90
   # max_sensory_log_lines: 10 
   # reflection_interval_ticks: 120
-  small_model: true
+  # small_model: true

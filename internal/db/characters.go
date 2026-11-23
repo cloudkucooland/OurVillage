@@ -94,6 +94,7 @@ var DefaultItems = []ItemSeed{
 	{ID: "elderflower_wine", Name: "Jug of Elderflower Wine", Description: "Delicate floral fruit wine with hints of honey and elder blossoms.", WeightKg: 1.0, IsConsumable: true, HungerRestore: 15},
 	{ID: "willowbark_tea", Name: "Willowbark Tea", Description: "A bitter herbal infusion used to reduce fevers and heal body wear.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 5, HealthRestore: 20},
 	{ID: "charcoal_draught", Name: "Activated Charcoal Draught", Description: "A medicinal draught to neutralize toxins and restore vitality.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 5, HealthRestore: 25},
+	{ID: "raw_mutton", Name: "Raw Mutton", Description: "Fresh cut of raw mutton ready for roasting.", WeightKg: 0.6, IsConsumable: false, IsPerishable: true, ShelfLifeTicks: 48, SpoilageItemID: "rotting_waste"},
 }
 
 var DefaultCharacters = []CharacterSeed{

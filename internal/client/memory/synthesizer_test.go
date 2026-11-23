@@ -87,11 +87,11 @@ func TestReflectionSynthesizer_PersistsProjectUpdatesFromActionOutcomes(t *testi
 }
 
 func TestMemorySynthesis_ProjectsAreOptionalAndRelationshipsRemainCumulative(t *testing.T) {
-	projects, err := parseProjectUpdates(`{"projects":[]}`, 7)
+	projects, err := ParseProjectUpdates(`{"projects":[]}`, 7)
 	if err != nil || len(projects) != 0 {
 		t.Fatalf("empty project update = %#v, err = %v; want a valid no-op", projects, err)
 	}
-	if _, err := parseProjectUpdates(`{}`, 7); err == nil {
+	if _, err := ParseProjectUpdates(`{}`, 7); err == nil {
 		t.Fatal("expected malformed project response to remain retryable")
 	}
 
@@ -99,7 +99,7 @@ func TestMemorySynthesis_ProjectsAreOptionalAndRelationshipsRemainCumulative(t *
 		PeerID: "mira", Summary: "We help each other restore the mill.",
 		Commitments: []string{"Ask about timber"},
 	}
-	updated, reflection, _, noEntry, err := parseRelationshipResponse(
+	updated, reflection, _, noEntry, err := ParseRelationshipResponse(
 		`{"reflection":"Mira shared a useful design.","salience":6}`, previous)
 	if err != nil || noEntry {
 		t.Fatal(err)
@@ -108,12 +108,12 @@ func TestMemorySynthesis_ProjectsAreOptionalAndRelationshipsRemainCumulative(t *
 		t.Fatalf("updated relationship = %#v, reflection = %q", updated, reflection)
 	}
 
-	_, _, _, noEntryFlag, err := parseRelationshipResponse(`{"no_entry":true}`, previous)
+	_, _, _, noEntryFlag, err := ParseRelationshipResponse(`{"no_entry":true}`, previous)
 	if err != nil || !noEntryFlag {
 		t.Fatalf("expected noEntry=true for relationship response, got err=%v, noEntry=%v", err, noEntryFlag)
 	}
 
-	noEntryIdentity, _, _, _, _, _ := parseSelfIdentityResponse(`{"no_entry":true}`)
+	noEntryIdentity, _, _, _, _, _ := ParseSelfIdentityResponse(`{"no_entry":true}`)
 	if !noEntryIdentity {
 		t.Fatal("expected noEntry=true for self-identity response")
 	}

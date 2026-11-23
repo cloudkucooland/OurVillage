@@ -17,6 +17,40 @@ type Queryable interface {
 
 type EncumbranceState string
 
+type Season string
+
+const (
+	SeasonSpring Season = "Spring"
+	SeasonSummer Season = "Summer"
+	SeasonAutumn Season = "Autumn"
+	SeasonWinter Season = "Winter"
+)
+
+const (
+	TicksPerInGameDay  uint64 = 96
+	DaysPerSeason      uint64 = 30
+	SeasonsPerYear     uint64 = 4
+)
+
+// SeasonForTick maps the master clock tick (96 ticks/day, 30 days/season) to an in-game season.
+func SeasonForTick(tick uint64) Season {
+	day := uint64(1)
+	if tick > 0 {
+		day = (tick-1)/TicksPerInGameDay + 1
+	}
+	seasonIndex := ((day - 1) / DaysPerSeason) % SeasonsPerYear
+	switch seasonIndex {
+	case 0:
+		return SeasonSpring
+	case 1:
+		return SeasonSummer
+	case 2:
+		return SeasonAutumn
+	default:
+		return SeasonWinter
+	}
+}
+
 const (
 	EncumbranceUnencumbered EncumbranceState = "UNENCUMBERED"
 	EncumbranceEncumbered   EncumbranceState = "ENCUMBERED"
@@ -62,19 +96,35 @@ type SecondaryDropRule struct {
 	SecondaryItemID  string
 	BaseRatePerHour  float64 // e.g. 0.03 for 3.0%
 	DiscoveryContext string
+	AllowedSeasons   []Season // Empty means available year-round
 }
 
 var SecondaryDropRules = []SecondaryDropRule{
-	{LocationID: "deep_forest", PrimaryTarget: "firewood", SecondaryItemID: "wild_mushrooms", BaseRatePerHour: 0.03, DiscoveryContext: "Found on damp decaying bark."},
-	{LocationID: "deep_forest", PrimaryTarget: "wood_log", SecondaryItemID: "wild_mushrooms", BaseRatePerHour: 0.03, DiscoveryContext: "Found on damp decaying bark."},
-	{LocationID: "deep_forest", PrimaryTarget: "logs", SecondaryItemID: "wild_mushrooms", BaseRatePerHour: 0.03, DiscoveryContext: "Found on damp decaying bark."},
+	{LocationID: "deep_forest", PrimaryTarget: "firewood", SecondaryItemID: "wild_mushrooms", BaseRatePerHour: 0.03, AllowedSeasons: []Season{SeasonSpring, SeasonSummer, SeasonAutumn}, DiscoveryContext: "Found on damp decaying bark."},
+	{LocationID: "deep_forest", PrimaryTarget: "wood_log", SecondaryItemID: "wild_mushrooms", BaseRatePerHour: 0.03, AllowedSeasons: []Season{SeasonSpring, SeasonSummer, SeasonAutumn}, DiscoveryContext: "Found on damp decaying bark."},
+	{LocationID: "deep_forest", PrimaryTarget: "logs", SecondaryItemID: "wild_mushrooms", BaseRatePerHour: 0.03, AllowedSeasons: []Season{SeasonSpring, SeasonSummer, SeasonAutumn}, DiscoveryContext: "Found on damp decaying bark."},
 	{LocationID: "deep_forest", PrimaryTarget: "firewood", SecondaryItemID: "bird_feather", BaseRatePerHour: 0.05, DiscoveryContext: "Fallen from overhead canopy."},
 	{LocationID: "deep_forest", PrimaryTarget: "wood_log", SecondaryItemID: "bird_feather", BaseRatePerHour: 0.05, DiscoveryContext: "Fallen from overhead canopy."},
 	{LocationID: "deep_forest", PrimaryTarget: "logs", SecondaryItemID: "bird_feather", BaseRatePerHour: 0.05, DiscoveryContext: "Fallen from overhead canopy."},
 	{LocationID: "prairie", PrimaryTarget: "animal_fodder", SecondaryItemID: "medicinal_herbs", BaseRatePerHour: 0.04, DiscoveryContext: "Hidden among meadow grasses."},
-	{LocationID: "prairie", PrimaryTarget: "wild_grain", SecondaryItemID: "field_berries", BaseRatePerHour: 0.035, DiscoveryContext: "Shaded under wild brambles."},
+	{LocationID: "prairie", PrimaryTarget: "wild_grain", SecondaryItemID: "field_berries", BaseRatePerHour: 0.035, AllowedSeasons: []Season{SeasonSummer, SeasonAutumn}, DiscoveryContext: "Shaded under wild brambles."},
+	{LocationID: "prairie", PrimaryTarget: "animal_fodder", SecondaryItemID: "honey_jar", BaseRatePerHour: 0.025, DiscoveryContext: "Harvested from a wild beehive in the oak grove."},
+	{LocationID: "prairie", PrimaryTarget: "wild_grain", SecondaryItemID: "elderflowers", BaseRatePerHour: 0.035, AllowedSeasons: []Season{SeasonSpring, SeasonSummer}, DiscoveryContext: "Picked from hedgerow elder bushes."},
+	{LocationID: "riverbank", PrimaryTarget: "fresh_water", SecondaryItemID: "wild_mint", BaseRatePerHour: 0.04, AllowedSeasons: []Season{SeasonSpring, SeasonSummer}, DiscoveryContext: "Growing along the damp riverbank."},
 	{LocationID: "riverbank", PrimaryTarget: "clay_lumps", SecondaryItemID: "freshwater_pearl", BaseRatePerHour: 0.005, DiscoveryContext: "Uncovered in riverbed mussel."},
 	{LocationID: "riverbank", PrimaryTarget: "fresh_water", SecondaryItemID: "river_reeds", BaseRatePerHour: 0.06, DiscoveryContext: "Gathered along the shoreline."},
+}
+
+func isRuleActiveInSeason(rule SecondaryDropRule, season Season) bool {
+	if len(rule.AllowedSeasons) == 0 {
+		return true
+	}
+	for _, s := range rule.AllowedSeasons {
+		if s == season {
+			return true
+		}
+	}
+	return false
 }
 
 type ForageYieldItem struct {
@@ -590,6 +640,7 @@ func ResolveForaging(
 	ticksSpent int,
 	weather string,
 	isCancelled bool,
+	currentTick ...uint64,
 ) (*ForageResolutionResult, error) {
 	if ticksSpent < 0 {
 		ticksSpent = 0
@@ -656,9 +707,18 @@ func ResolveForaging(
 		})
 	}
 
+	var activeTick uint64
+	if len(currentTick) > 0 {
+		activeTick = currentTick[0]
+	}
+	currentSeason := SeasonForTick(activeTick)
+
 	hoursSpent := float64(ticksSpent) / 60.0
 	var discoveredSecondaries []string
 	for _, rule := range SecondaryDropRules {
+		if !isRuleActiveInSeason(rule, currentSeason) {
+			continue
+		}
 		if rule.LocationID == locationID && (rule.PrimaryTarget == targetResource || (targetResource == "firewood" && rule.PrimaryTarget == "logs")) {
 			effectiveRatePerHour := rule.BaseRatePerHour + (float64(skillLevel) * 0.0005)
 			chance := 1.0 - math.Pow(1.0-effectiveRatePerHour, math.Max(hoursSpent, 0.1))

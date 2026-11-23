@@ -297,7 +297,7 @@ func TestAdminCommands(t *testing.T) {
 		t.Errorf("expected reverse connection with 3 ticks, got %d (err: %v)", reverseTicks, err)
 	}
 
-	password, err := adm.CreateCharacter("test_character", "Test Character", "Tester", "test_room", "A careful tester.")
+	password, err := adm.CreateCharacter("test_character", "Test Character", "Barkeep", "test_room", "A careful barkeep.")
 	if err != nil {
 		t.Fatalf("failed to create character: %v", err)
 	}

@@ -654,7 +654,7 @@ func (s *Server) handleCancelAction(agentID string, intentID string, rawPayload 
 			ticksSpent = 0
 		}
 
-		res, err := db.ResolveForaging(s.db, agentID, currentLocation, targetResource, ticksSpent, s.GetWeather(), true)
+		res, err := db.ResolveForaging(s.db, agentID, currentLocation, targetResource, ticksSpent, s.GetWeather(), true, currentTick)
 		if err != nil {
 			s.sendDirectError(agentID, intentID, "RESOLUTION_ERROR", err.Error())
 			return

@@ -82,19 +82,26 @@ func TestBakerySeedAndOwnerStockTransfer(t *testing.T) {
 	if bakeryOwner != "ada_baker" {
 		t.Fatalf("bakery owner = %q, want ada_baker", bakeryOwner)
 	}
-	var flourBuyPrice, flourStock, breadStock, knowsBaking int
+	var flourBuyPrice, flourStock, breadStock int
 	for query, dest := range map[string]*int{
 		"SELECT buy_price_gold FROM location_shop_items WHERE location_id = 'bakery' AND item_id = 'flour'":          &flourBuyPrice,
 		"SELECT stock_quantity FROM location_shop_items WHERE location_id = 'bakery' AND item_id = 'flour'":          &flourStock,
 		"SELECT stock_quantity FROM location_shop_items WHERE location_id = 'bakery' AND item_id = 'bread'":          &breadStock,
-		"SELECT COUNT(*) FROM character_known_recipes WHERE character_id = 'ada_baker' AND recipe_id = 'bake_bread'": &knowsBaking,
 	} {
 		if err := database.QueryRow(query).Scan(dest); err != nil {
 			t.Fatalf("query %q: %v", query, err)
 		}
 	}
-	if flourBuyPrice != 2 || flourStock != 0 || breadStock != 25 || knowsBaking != 1 {
-		t.Fatalf("bakery flour offer=%d/%d bread stock=%d baker knows recipe=%d", flourBuyPrice, flourStock, breadStock, knowsBaking)
+	bakeRecipe, err := GetRecipe(database, "bake_bread")
+	if err != nil {
+		t.Fatal(err)
+	}
+	canBake, _, err := CanAccessRecipe(database, "ada_baker", bakeRecipe)
+	if err != nil || !canBake {
+		t.Fatalf("ada_baker should be able to access bake_bread: canBake=%v err=%v", canBake, err)
+	}
+	if flourBuyPrice != 2 || flourStock != 0 || breadStock != 25 {
+		t.Fatalf("bakery flour offer=%d/%d bread stock=%d", flourBuyPrice, flourStock, breadStock)
 	}
 
 	if _, err := database.Exec(`UPDATE location_shop_items SET stock_quantity = 2 WHERE location_id = 'town_mill' AND item_id = 'wheat'`); err != nil {
@@ -130,6 +137,7 @@ func TestRestockShopItem(t *testing.T) {
 	}
 	defer database.Close()
 
+	_, _ = database.Exec("UPDATE location_shop_items SET stock_quantity = 0 WHERE location_id = 'tavern' AND item_id = 'bread'")
 	_, err = database.Exec("UPDATE inventories SET quantity = 5 WHERE character_id = 'martha_barkeep' AND item_id = 'bread'")
 	if err != nil {
 		t.Fatalf("Failed to set owner inventory: %v", err)
@@ -359,10 +367,14 @@ func TestExistingWorldReceivesSellOffersAndRecipeKnowledge(t *testing.T) {
 	}
 	defer database.Close()
 
-	var eldonKnows, scotusKnows, wheatBuyPrice, wheatStock, wheatSellPrice, recipeCount, workstationCount int
+	millRecipe, err := GetRecipe(database, "mill_flour")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eldonCanAccess, _, _ := CanAccessRecipe(database, "eldon_millwright", millRecipe)
+	scotusCanAccess, _, _ := CanAccessRecipe(database, "scotus", millRecipe)
+	var wheatBuyPrice, wheatStock, wheatSellPrice, recipeCount, workstationCount int
 	for query, dest := range map[string]*int{
-		"SELECT COUNT(*) FROM character_known_recipes WHERE character_id = 'eldon_millwright' AND recipe_id = 'mill_flour'": &eldonKnows,
-		"SELECT COUNT(*) FROM character_known_recipes WHERE character_id = 'scotus' AND recipe_id = 'mill_flour'":           &scotusKnows,
 		"SELECT buy_price_gold FROM location_shop_items WHERE location_id = 'town_mill' AND item_id = 'wheat'":              &wheatBuyPrice,
 		"SELECT stock_quantity FROM location_shop_items WHERE location_id = 'town_mill' AND item_id = 'wheat'":              &wheatStock,
 		"SELECT price_gold FROM location_shop_items WHERE location_id = 'town_mill' AND item_id = 'wheat'":                  &wheatSellPrice,
@@ -373,9 +385,9 @@ func TestExistingWorldReceivesSellOffersAndRecipeKnowledge(t *testing.T) {
 			t.Fatalf("query %q: %v", query, err)
 		}
 	}
-	if eldonKnows != 1 || scotusKnows != 1 || wheatBuyPrice != 1 || wheatStock != 5 ||
+	if !eldonCanAccess || !scotusCanAccess || wheatBuyPrice != 1 || wheatStock != 5 ||
 		wheatSellPrice != 4 || recipeCount != 1 || workstationCount != 1 {
-		t.Errorf("existing-world migration: Eldon recipe=%d Scotus recipe=%d wheat buy price=%d sale price=%d stock=%d recipe count=%d workstation count=%d",
-			eldonKnows, scotusKnows, wheatBuyPrice, wheatSellPrice, wheatStock, recipeCount, workstationCount)
+		t.Errorf("existing-world migration: Eldon can access=%v Scotus can access=%v wheat buy price=%d sale price=%d stock=%d recipe count=%d workstation count=%d",
+			eldonCanAccess, scotusCanAccess, wheatBuyPrice, wheatSellPrice, wheatStock, recipeCount, workstationCount)
 	}
 }

@@ -135,7 +135,7 @@ func NewServerWithConfig(database *sql.DB, cfg *ServerConfig, listenAddr ...stri
 		InlineClient: true,
 	})
 
-	authHook := NewDBAuthHook(database)
+	authHook := NewDBAuthHook(database, mqttServer)
 	// Add database authentication and ACL hook
 	err := mqttServer.AddHook(authHook, nil)
 	if err != nil {
@@ -729,7 +729,7 @@ func (s *Server) resolveCompletedActions(currentTick uint64, weather string) {
 				ticksSpent = 1
 			}
 
-			res, err := db.ResolveForaging(s.db, a.charID, a.locID, a.target, ticksSpent, weather, false)
+			res, err := db.ResolveForaging(s.db, a.charID, a.locID, a.target, ticksSpent, weather, false, currentTick)
 			if err != nil {
 				log.Printf("Failed to resolve foraging for %s: %v", a.charID, err)
 				continue

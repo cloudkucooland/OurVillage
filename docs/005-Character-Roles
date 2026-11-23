@@ -37,5 +37,8 @@ Votes are cast via deterministic MQTT intent payloads processed directly by SQLi
   }
 }
 
-
+## 4. Occupation Autonomy & Recipe Knowledge
+Occupations define a character's starting trade, workplace, and initial specialty knowledge, **not** a permanent class lock:
+- **Open Craft Autonomy:** Any villager may attempt Level 1 / everyday recipes (such as baking bread, brewing ale, roasting meat, or weaving baskets) provided they have the ingredients, energy, and access to the required workstation.
+- **Specialty Knowledge & Mentorship:** Higher-tier specialty recipes (such as floral wines or medicinal draughts) begin in the `character_known_recipes` registry of relevant specialists and can be learned by other citizens through practice or direct teaching (`TEACH_RECIPE`) from a knowledgeable villager in the same location.
 

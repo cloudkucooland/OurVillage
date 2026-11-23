@@ -143,16 +143,16 @@ type rkllmStreamState struct {
 }
 
 type RkllmEngine struct {
-	mu           sync.Mutex
-	inferMu      sync.Mutex
-	config       RkllmEngineConfig
-	lib          uintptr
-	handle       LLMHandle
-	rkllmRun     func(handle LLMHandle, input *RKLLMInput, inferParams *RKLLMInferParam, userdata unsafe.Pointer) int32
-	rkllmDestroy func(handle LLMHandle) int32
-	rkllmAbort   func(handle LLMHandle) int32
-
-	callbackPtr uintptr
+	mu                sync.Mutex
+	inferMu           sync.Mutex
+	config            RkllmEngineConfig
+	lib               uintptr
+	handle            LLMHandle
+	rkllmRun          func(handle LLMHandle, input *RKLLMInput, inferParams *RKLLMInferParam, userdata unsafe.Pointer) int32
+	rkllmDestroy      func(handle LLMHandle) int32
+	rkllmAbort        func(handle LLMHandle) int32
+	rkllmClearKVCache func(handle LLMHandle, keepSystemPrompt int32, startPosition unsafe.Pointer, endPosition unsafe.Pointer) int32
+	callbackPtr       uintptr
 }
 
 func stringToBytePtr(s string) (*byte, []byte) {
@@ -196,12 +196,14 @@ func NewRkllmEngine(cfg RkllmEngineConfig) (*RkllmEngine, error) {
 	var rkllmRun func(handle LLMHandle, input *RKLLMInput, inferParams *RKLLMInferParam, userdata unsafe.Pointer) int32
 	var rkllmDestroy func(handle LLMHandle) int32
 	var rkllmAbort func(handle LLMHandle) int32
+	var rkllmClearKVCache func(handle LLMHandle, keep int32, starPos unsafe.Pointer, endPos unsafe.Pointer) int32
 
 	purego.RegisterLibFunc(&rkllmCreateDefaultParam, lib, "rkllm_createDefaultParam")
 	purego.RegisterLibFunc(&rkllmInit, lib, "rkllm_init")
 	purego.RegisterLibFunc(&rkllmRun, lib, "rkllm_run")
 	purego.RegisterLibFunc(&rkllmDestroy, lib, "rkllm_destroy")
 	purego.RegisterLibFunc(&rkllmAbort, lib, "rkllm_abort")
+	purego.RegisterLibFunc(&rkllmClearKVCache, lib, "rkllm_clear_kv_cache")
 
 	modelPathPtr, modelPathSlice := stringToBytePtr(cfg.ModelPath)
 	defer runtime.KeepAlive(modelPathSlice)
@@ -221,6 +223,7 @@ func NewRkllmEngine(cfg RkllmEngineConfig) (*RkllmEngine, error) {
 	if cfg.Temperature > 0 {
 		param.Temperature = cfg.Temperature
 	} else {
+		// if grammer == "" then 0.25
 		param.Temperature = 0.7
 	}
 	if cfg.TopP > 0 {
@@ -236,7 +239,7 @@ func NewRkllmEngine(cfg RkllmEngineConfig) (*RkllmEngine, error) {
 	if cfg.RepeatPenalty > 0 {
 		param.RepeatPenalty = cfg.RepeatPenalty
 	} else if param.RepeatPenalty == 0 {
-		param.RepeatPenalty = 1.15
+		param.RepeatPenalty = 1.05
 	}
 	if cfg.FrequencyPenalty != 0 {
 		param.FrequencyPen = cfg.FrequencyPenalty
@@ -258,12 +261,13 @@ func NewRkllmEngine(cfg RkllmEngineConfig) (*RkllmEngine, error) {
 
 	var handle LLMHandle
 	engine := &RkllmEngine{
-		config:       cfg,
-		lib:          lib,
-		handle:       handle,
-		rkllmRun:     rkllmRun,
-		rkllmDestroy: rkllmDestroy,
-		rkllmAbort:   rkllmAbort,
+		config:            cfg,
+		lib:               lib,
+		handle:            handle,
+		rkllmRun:          rkllmRun,
+		rkllmDestroy:      rkllmDestroy,
+		rkllmAbort:        rkllmAbort,
+		rkllmClearKVCache: rkllmClearKVCache,
 	}
 
 	callbackFn := func(result *RKLLMResult, userdata unsafe.Pointer, state LLMCallState) uintptr {
@@ -332,6 +336,8 @@ func (e *RkllmEngine) Stream(ctx context.Context, prompt string, opts Generation
 	abortFn := e.rkllmAbort
 	e.mu.Unlock()
 
+	e.rkllmClearKVCache(handle, 0, nil, nil)
+
 	ch := make(chan string, 100)
 	streamState := &rkllmStreamState{
 		ch:     ch,
@@ -339,9 +345,12 @@ func (e *RkllmEngine) Stream(ctx context.Context, prompt string, opts Generation
 	}
 
 	promptPtr, promptSlice := stringToBytePtr(prompt)
+	rolePtr, roleSlice := stringToBytePtr("user")
 	defer runtime.KeepAlive(promptSlice)
+	defer runtime.KeepAlive(roleSlice)
 
 	input := RKLLMInput{
+		Role:           rolePtr,
 		InputType:      RKLLM_INPUT_PROMPT,
 		PromptInput:    promptPtr,
 		EnableThinking: e.config.EnableThinking,
@@ -356,16 +365,26 @@ func (e *RkllmEngine) Stream(ctx context.Context, prompt string, opts Generation
 		PresencePenalty:  e.config.PresencePenalty,
 	}
 	if sampling.Temperature == 0 {
-		sampling.Temperature = e.config.Temperature
+		if opts.Grammar != "" {
+			sampling.Temperature = 0.25
+		} else if e.config.Temperature > 0 {
+			sampling.Temperature = e.config.Temperature
+		} else {
+			sampling.Temperature = 0.7
+		}
 	}
 	if sampling.TopP == 0 {
-		sampling.TopP = e.config.TopP
+		if e.config.TopP > 0 {
+			sampling.TopP = e.config.TopP
+		} else {
+			sampling.TopP = 0.9
+		}
 	}
 	if sampling.TopK == 0 {
 		sampling.TopK = 40
 	}
 	if sampling.RepeatPenalty == 0 {
-		sampling.RepeatPenalty = 1.15
+		sampling.RepeatPenalty = 1.05
 	}
 
 	inferParam := RKLLMInferParam{

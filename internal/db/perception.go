@@ -66,6 +66,7 @@ type LocationOverview struct {
 	Name               string                      `json:"name"`
 	Description        string                      `json:"description"`
 	RulesPrompt        string                      `json:"rules_prompt,omitempty"`
+	OwnerID            string                      `json:"owner_id,omitempty"`
 	CharactersPresent  []CharacterPublicPerception `json:"characters_present"`
 	GroundItems        []GroundItemEntry           `json:"ground_items"`
 	Workstations       []WorkstationEntry          `json:"workstations"`
@@ -250,21 +251,26 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 	// 4. Query Location Info
 	var loc LocationOverview
 	var rulesPrompt sql.NullString
+	var ownerID sql.NullString
 	err = database.QueryRow(`
-		SELECT id, name, description, rules_prompt
-		FROM locations
-		WHERE id = ?
+	        SELECT id, name, description, rules_prompt, owner_id
+	        FROM locations
+	        WHERE id = ?
 	`, char.CurrentLocation).Scan(
 		&loc.ID,
 		&loc.Name,
 		&loc.Description,
 		&rulesPrompt,
+		&ownerID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query location %q: %w", char.CurrentLocation, err)
 	}
 	if rulesPrompt.Valid {
 		loc.RulesPrompt = rulesPrompt.String
+	}
+	if ownerID.Valid {
+		loc.OwnerID = ownerID.String
 	}
 
 	// Query Connected Locations (Spatial Graph Adjacency)
@@ -408,59 +414,52 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 		shopRows.Close()
 	}
 
-	// 10. Query known recipes that meet skill requirements and are usable at this location.
+	// 10. Query Available Recipes usable at this location (open basic crafts + learned or skill-unlocked specialty crafts)
 	recRows, err := database.Query(`
-		SELECT r.id, r.name, r.output_item_id, r.output_quantity, r.duration_ticks, r.energy_cost,
-		       COALESCE(r.required_skill_id, ''), COALESCE(cs.level, 1), COALESCE(r.min_skill_level, 1)
+		SELECT DISTINCT r.id, r.name, r.output_item_id, r.output_quantity, r.duration_ticks, r.energy_cost, COALESCE(r.required_skill_id, ''), r.min_skill_level
 		FROM recipes r
-		JOIN character_known_recipes kr ON kr.recipe_id = r.id AND kr.character_id = ?
 		LEFT JOIN workstations w ON r.required_station = w.id
-		LEFT JOIN character_skills cs ON cs.character_id = kr.character_id AND cs.skill_id = r.required_skill_id
+		LEFT JOIN character_known_recipes ckr
+			ON ckr.recipe_id = r.id AND ckr.character_id = ?
+		LEFT JOIN character_skills cs
+			ON cs.character_id = ? AND cs.skill_id = COALESCE(NULLIF(r.required_skill_id, ''), 'crafting')
 		WHERE (r.required_station IS NULL OR r.required_station = '' OR w.location_id = ?)
-		  AND (r.required_skill_id IS NULL OR r.required_skill_id = '' OR COALESCE(cs.level, 1) >= COALESCE(r.min_skill_level, 1))
-		ORDER BY r.name ASC
-	`, characterID, char.CurrentLocation)
-	loc.AvailableRecipes = make([]AvailableRecipeEntry, 0)
+		  AND (r.min_skill_level <= 1 OR ckr.character_id IS NOT NULL OR COALESCE(cs.level, 1) >= r.min_skill_level)
+		ORDER BY r.min_skill_level ASC, r.name ASC
+	`, characterID, characterID, char.CurrentLocation)
 	if err == nil {
-		type recInfo struct {
-			recipeID, name, outputItemID, requiredSkillID                            string
-			outputQuantity, baseDurationTicks, energyCost, skillLevel, minSkillLevel int
-		}
-		var list []recInfo
+		var candidateRecipes []AvailableRecipeEntry
 		for recRows.Next() {
-			var r recInfo
-			if err := recRows.Scan(&r.recipeID, &r.name, &r.outputItemID, &r.outputQuantity, &r.baseDurationTicks, &r.energyCost, &r.requiredSkillID, &r.skillLevel, &r.minSkillLevel); err == nil {
-				list = append(list, r)
+			var r AvailableRecipeEntry
+			if err := recRows.Scan(&r.RecipeID, &r.RecipeName, &r.OutputItemID, &r.OutputQuantity, &r.BaseDurationTicks, &r.EnergyCost, &r.RequiredSkillID, &r.MinSkillLevel); err == nil {
+				candidateRecipes = append(candidateRecipes, r)
 			}
 		}
 		recRows.Close()
 
-		for _, r := range list {
-			rec := AvailableRecipeEntry{
-				RecipeID:          r.recipeID,
-				RecipeName:        r.name,
-				OutputItemID:      r.outputItemID,
-				OutputQuantity:    r.outputQuantity,
-				BaseDurationTicks: r.baseDurationTicks,
-				EnergyCost:        r.energyCost,
-				RequiredSkillID:   r.requiredSkillID,
-				SkillLevel:        r.skillLevel,
-				MinSkillLevel:     r.minSkillLevel,
-				DurationTicks:     ScaleDurationForSkill(r.baseDurationTicks, r.skillLevel),
+		loc.AvailableRecipes = make([]AvailableRecipeEntry, 0, len(candidateRecipes))
+		for _, r := range candidateRecipes {
+			skillID := r.RequiredSkillID
+			if skillID == "" {
+				skillID = "crafting"
 			}
-			ingRows, err := database.Query("SELECT item_id, quantity FROM recipe_ingredients WHERE recipe_id = ?", r.recipeID)
+			r.SkillLevel, _, _ = GetSkill(database, characterID, skillID)
+			r.DurationTicks = ScaleDurationForSkill(r.BaseDurationTicks, r.SkillLevel)
+
+			ingRows, err := database.Query("SELECT item_id, quantity FROM recipe_ingredients WHERE recipe_id = ?", r.RecipeID)
 			if err == nil {
 				for ingRows.Next() {
 					var ing RecipeIngredient
 					if err := ingRows.Scan(&ing.ItemID, &ing.Quantity); err == nil {
-						rec.Ingredients = append(rec.Ingredients, ing)
+						r.Ingredients = append(r.Ingredients, ing)
 					}
 				}
 				ingRows.Close()
 			}
-			loc.AvailableRecipes = append(loc.AvailableRecipes, rec)
+			loc.AvailableRecipes = append(loc.AvailableRecipes, r)
 		}
 	}
+
 
 	graphRows, err := database.Query(`
 		SELECT lc.from_location_id, lc.to_location_id

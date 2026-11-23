@@ -690,13 +690,29 @@ func TestContextManager_CommunityFestival(t *testing.T) {
 }
 
 func TestContextManager_FullMoonFestival(t *testing.T) {
-	cm := NewContextManager(ContextManagerConfig{AgentID: "eldon"})
-	// Day 30 corresponds to tick 2880 (29*96 + 96 = 2880)
-	cm.IngestTimeTick(TimeTickMessage{Tick: 2880, InGameTime: "20:00"})
-	prompt := cm.BuildPrompt(nil, nil)
-	if !strings.Contains(prompt, "=== COMMUNITY FESTIVAL & EVENTS ===") ||
-		!strings.Contains(prompt, "The Full Moon Festival!") ||
-		!strings.Contains(prompt, "Day 30") {
-		t.Errorf("prompt missing Full Moon Festival notice for Day 30:\n%s", prompt)
-	}
+        cm := NewContextManager(ContextManagerConfig{AgentID: "eldon"})
+        // Day 30 corresponds to tick 2880 (29*96 + 96 = 2880)
+        cm.IngestTimeTick(TimeTickMessage{Tick: 2880, InGameTime: "20:00"})
+        prompt := cm.BuildPrompt(nil, nil)
+        if !strings.Contains(prompt, "=== COMMUNITY FESTIVAL & EVENTS ===") ||
+                !strings.Contains(prompt, "The Full Moon Festival!") ||
+                !strings.Contains(prompt, "Day 30") {
+                t.Errorf("prompt missing Full Moon Festival notice for Day 30:\n%s", prompt)
+        }
+}
+
+func TestContextManager_PromptShowsLocationOwnership(t *testing.T) {
+        cm := NewContextManager(ContextManagerConfig{
+                AgentID:         "eldon_millwright",
+                InitialLocation: "town_mill",
+                LocationName:    "Town Mill",
+        })
+        cm.mu.Lock()
+        cm.locationOwnerID = "eldon_millwright"
+        cm.mu.Unlock()
+
+        prompt := cm.BuildPrompt(nil, nil)
+        if !strings.Contains(prompt, "You own this location. You are responsible for maintaining the inventory for others to purchase from.") {
+                t.Errorf("prompt missing location ownership responsibility instruction, got:\n%s", prompt)
+        }
 }

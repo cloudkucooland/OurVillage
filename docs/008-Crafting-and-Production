@@ -5,65 +5,49 @@ Target Stack: Pure Go, Mochi-MQTT, SQLite, RKLLM
 1. Executive Summary & Design Invariants
 RFC 008 defines the deterministic multi-stage crafting engine for OurVillage. Raw materials obtained from foraging or farming can be processed at designated spatial workstations. Agriculture is a separate primary-production mechanic that manages planted crops and harvests; crafting begins with items in a character's inventory. This separation supports economic interdependence between primary producers, crafters, and consumers. See RFC 019 (`docs/019-Agriculture`) for the implemented communal field.
 
-2. Crafting Workstations & Location Requisites
-Crafting is strictly bound to physical locations that feature the necessary tools and machinery:
+## 2. Crafting Workstations & Location Requisites
+Crafting is bound to physical locations that feature the necessary tools and machinery:
 | Workstation ID | Location | Equipment Present | Crafting Domain |
 |:---------------|:---------|:------------------|:----------------|
-| millstones     | town_mill | Water-driven mill wheels | Grain processing (Wheat -> Flour) |
-| stone_hearth   | bakery   | Large stone baking oven | Bread, pies, rations |
-| forge_anvil    | blacksmith | Coal forge, anvils, quench tanks | Tools, metal hardware, nails, horseshoes |
-| brew_cask      | tavern   | Fermentation casks & presses | Ale, cider, fruit wine |
-| apothecary_kit | herbalist | Mortar & pestle, alembic | Remedies, tinctures, dried herbs |
-| timber_saw     | lumberjack_lodge | Pit saws, shaping benches | Planks, beams, firewood bundles |
+| millstones | town_mill | Water-driven mill wheels | Grain processing (Wheat -> Flour) |
+| stone_hearth | bakery | Large stone baking oven | Bread, roasted meats, herbal infusions |
+| forge_anvil | blacksmith | Coal forge, anvils, quench tanks | Tools, metal hardware, smelted ingots |
+| brew_cask | tavern | Fermentation casks & presses | Ale, berry wine, floral wine |
+| apothecary_kit | herbalist | Mortar & pestle, alembic | Remedies, syrups, medicinal draughts |
+| timber_saw | lumberjack_lodge | Pit saws, shaping benches | Planks, beams, firewood bundles |
+| carpenter_bench | lumberjack_lodge | Carving benches, hand saws, planes | Wooden furniture, wheelbarrows, buckets, bowls |
 
-3. Deterministic Recipe Table
-Recipes require exact inputs, produce predetermined outputs, consume character energy, and take a specified duration in ticks:
-- Milling: 2x Wheat + 10 Ticks -> 2x Bag of Flour (Station: millstones)
-- Baking: 2x Bag of Flour + 1x Fresh Water + 20 Ticks -> 3x Loaf of Bread (Station: stone_hearth)
-- Smelting: 2x Iron Ore + 1x Lump of Coal + 30 Ticks -> 1x Iron Ingot (Station: forge_anvil)
-- Smithing: 1x Iron Ingot + 1x Firewood + 40 Ticks -> 1x Smithing Hammer (Station: forge_anvil)
-- Brewing: 3x Field Berries + 1x Fresh Water + 60 Ticks -> 2x Jug of Berry Wine (Station: brew_cask)
-- Basket Weaving: 4x River Reeds + 30 Ticks -> 1x Woven Basket (Requires no fixed station)
-- Sawing Firewood: 1x Wood Log + 20 Ticks -> 4x Firewood Bundle (Station: timber_saw)
+## 3. Recipe System & Progression Rules
+The active recipe catalog is defined in code (`internal/db/crafting.go` via `DefaultRecipes`) and seeded into the `recipes` and `recipe_ingredients` tables so recipes can be tuned or expanded freely as village behavior evolves.
 
-4. Database Schema
-```sql
-CREATE TABLE recipes (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    required_station TEXT, -- NULL if craftable anywhere
-    output_item_id TEXT NOT NULL,
-    output_quantity INTEGER NOT NULL DEFAULT 1,
-    duration_ticks INTEGER NOT NULL DEFAULT 20,
-    energy_cost INTEGER NOT NULL DEFAULT 5,
-    required_skill_id TEXT,
-    min_skill_level INTEGER DEFAULT 1,
-    FOREIGN KEY (output_item_id) REFERENCES items(id)
-);
+Every recipe follows these core invariants:
+- **Inputs & Outputs:** Consumes exact quantities of one or more inventory items and produces a fixed output item and quantity.
+- **Spatial Grounding:** Either requires a specific `Workstation` in the character's current location or is marked craftable anywhere (`required_station = NULL`).
+- **Time & Energy:** Deducts `energy_cost` and locks the character in `CRAFTING` for `duration_ticks`, scaled down by up to 30% based on the character's relevant skill level (`ScaleDurationForSkill`).
+- **Autonomy & Discovery:**
+  - **Open Basic Crafts (`min_skill_level <= 1`):** Available to any character at the proper workstation, ensuring villagers are never locked out of basic food, drink, or tools.
+  - **Specialty & Advanced Crafts (`min_skill_level > 1`):** Unlocked either by reaching the recipe's `min_skill_level` in `required_skill_id` or by learning it via `character_known_recipes` (starting trade knowledge or `TEACH_RECIPE` mentorship).
 
-CREATE TABLE recipe_ingredients (
+
+CREATE TABLE character_known_recipes (
+    character_id TEXT NOT NULL,
     recipe_id TEXT NOT NULL,
-    item_id TEXT NOT NULL,
-    quantity INTEGER NOT NULL DEFAULT 1,
-    PRIMARY KEY (recipe_id, item_id),
-    FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
-    FOREIGN KEY (item_id) REFERENCES items(id)
+    PRIMARY KEY (character_id, recipe_id),
+    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+    FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
 );
-```
 
-5. MQTT Intent Standard
-Topic: `world/agents/{agent_id}/intent`
-```json
 {
-  "intent_id": "craft_1001",
-  "action": "CRAFT",
+  "intent_id": "teach_1002",
+  "action": "TEACH_RECIPE",
   "payload": {
-    "recipe_id": "bake_bread_batch"
+    "target_character_id": "ada_baker",
+    "recipe_id": "brew_elderflower_wine"
   }
 }
-```
+
 Validation rules:
-- Character must be located in the room containing the recipe's `required_station`.
-- Character inventory must contain all required ingredient quantities.
-- Character status must be `IDLE`.
-- Sets character `status = 'CRAFTING'` until duration ticks elapse.
+Basic recipes (min_skill_level <= 1) are available to all characters without requiring a character_known_recipes entry.
+Specialty recipes (min_skill_level > 1) require either meeting min_skill_level in required_skill_id or knowing the recipe in character_known_recipes.
+TEACH_RECIPE requires both characters to be IDLE in the same location and the teacher to know recipe_id.
+

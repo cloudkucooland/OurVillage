@@ -215,7 +215,7 @@ func (s *ReflectionSynthesizer) SynthesizeNextBatch(ctx context.Context) error {
 			}
 			continue
 		}
-		prompt := s.buildReflectionPrompt(peerID, peerEvents, previous)
+		prompt := s.BuildReflectionPrompt(peerID, peerEvents, previous)
 
 		respText, err := s.generateWithStatus(ctx, fmt.Sprintf("Memory synthesis: reflecting on %s", peerID), prompt, model.GenerationOptions{
 			Temperature: 0.5,
@@ -231,7 +231,7 @@ func (s *ReflectionSynthesizer) SynthesizeNextBatch(ctx context.Context) error {
 			continue
 		}
 
-		updated, reflection, salience, noEntry, parseErr := parseRelationshipResponse(respText, previous)
+		updated, reflection, salience, noEntry, parseErr := ParseRelationshipResponse(respText, previous)
 		if parseErr != nil {
 			batchErr = errors.Join(batchErr, fmt.Errorf("parse relationship reflection for %s: %w", peerID, parseErr))
 			if deferErr := s.store.DeferEvents(eventIDs(peerEvents), retryDelay(peerEvents)); deferErr != nil {
@@ -313,7 +313,7 @@ func (s *ReflectionSynthesizer) synthesizeProjects(ctx context.Context) error {
 	if err != nil {
 		return errors.Join(fmt.Errorf("load personal projects: %w", err), s.store.DeferProjectEvents(eventIDs(events), retryDelay(events)))
 	}
-	prompt, err := buildProjectsPrompt(events, projects)
+	prompt, err := BuildProjectsPrompt(events, projects)
 	if err != nil {
 		return errors.Join(fmt.Errorf("build project prompt: %w", err), s.store.DeferProjectEvents(eventIDs(events), retryDelay(events)))
 	}
@@ -330,7 +330,7 @@ func (s *ReflectionSynthesizer) synthesizeProjects(ctx context.Context) error {
 	if err != nil {
 		return errors.Join(fmt.Errorf("generate project updates: %w", err), s.store.DeferProjectEvents(eventIDs(events), retryDelay(events)))
 	}
-	updates, err := parseProjectUpdates(respText, events[len(events)-1].Tick)
+	updates, err := ParseProjectUpdates(respText, events[len(events)-1].Tick)
 	if err != nil {
 		return errors.Join(fmt.Errorf("parse project updates: %w", err), s.store.DeferProjectEvents(eventIDs(events), retryDelay(events)))
 	}
@@ -342,9 +342,10 @@ func (s *ReflectionSynthesizer) synthesizeProjects(ctx context.Context) error {
 	return s.store.MarkProjectsProcessed(eventIDs(events))
 }
 
-func buildProjectsPrompt(events []EventRecord, projects []PersonalProject) (string, error) {
+func BuildProjectsPrompt(events []EventRecord, projects []PersonalProject) (string, error) {
 	var sb strings.Builder
 	sb.WriteString("You are a self-directed resident with personal aspirations and long-term ambitions in the village. Look ahead beyond immediate tasks: consider what craft, trade, relationship, or community improvement you wish to pursue over time. Formulate new personal projects or update existing ones when recent experiences suggest meaningful endeavors, medium-term goals, or next steps. Avoid turning trivial moment-to-moment actions into tedious obligations, but actively embrace purposeful ambitions and look forward more than a few ticks.\n")
+	sb.WriteString("CRITICAL GROUNDING RULE: Only treat an action as completed if an explicit action outcome in the log confirms it happened. An 'observation' or a previous 'next_step' means the task has NOT been done yet—never claim you cleaned, repaired, or sourced items unless the log explicitly records doing so.\n")
 	sb.WriteString("Return valid JSON with a projects array. Each entry must include id (use an existing id to update or create a slug for a new one), title, motivation, status (active/paused/completed), progress, next_step, people, and locations. Return an empty array only when no ongoing or new ambitions are warranted.\n")
 	sb.WriteString("Existing projects:\n")
 	if len(projects) > 5 {
@@ -371,7 +372,7 @@ func buildProjectsPrompt(events []EventRecord, projects []PersonalProject) (stri
 	return prompt, nil
 }
 
-func parseProjectUpdates(raw string, tick uint64) ([]PersonalProject, error) {
+func ParseProjectUpdates(raw string, tick uint64) ([]PersonalProject, error) {
 	type projectResponse struct {
 		Projects *[]PersonalProject `json:"projects"`
 	}
@@ -432,7 +433,7 @@ func (s *ReflectionSynthesizer) SynthesizeSelfIdentity(ctx context.Context, tick
 		log.Printf("[Synthesizer Warning] Failed to load recent events for self-reflection: %v", err)
 	}
 
-	prompt := s.buildSelfIdentityPrompt(tick, traits, recentRefs, recentEvents)
+	prompt := s.BuildSelfIdentityPrompt(tick, traits, recentRefs, recentEvents)
 
 	respText, err := s.generateWithStatus(ctx, "Memory synthesis: reflecting on identity", prompt, model.GenerationOptions{
 		Temperature: 0.6,
@@ -443,7 +444,7 @@ func (s *ReflectionSynthesizer) SynthesizeSelfIdentity(ctx context.Context, tick
 		return fmt.Errorf("failed to generate self-identity update: %w", err)
 	}
 
-	noEntry, traitKey, traitVal, selfRef, lesson, salience := parseSelfIdentityResponse(respText)
+	noEntry, traitKey, traitVal, selfRef, lesson, salience := ParseSelfIdentityResponse(respText)
 	if noEntry {
 		log.Printf("[Synthesizer] No self-identity entry needed for tick %d", tick)
 		return nil
@@ -468,7 +469,7 @@ func (s *ReflectionSynthesizer) SynthesizeSelfIdentity(ctx context.Context, tick
 	return nil
 }
 
-func (s *ReflectionSynthesizer) buildSelfIdentityPrompt(tick uint64, traits []IdentityTrait, recentRefs []SelfReflection, events []EventRecord) string {
+func (s *ReflectionSynthesizer) BuildSelfIdentityPrompt(tick uint64, traits []IdentityTrait, recentRefs []SelfReflection, events []EventRecord) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("You are %s, a sovereign resident of OurVillage at tick %d, with absolute self-determination and intrinsic agency.\n", s.agentID, tick))
 	sb.WriteString("Reflect specifically and realistically on your personal identity, core values, current trade, craft, and daily interactions in the village. Avoid repeating past reflections, generic clichés, or abstract atmospheric poetry; ground your thoughts in concrete actions and events.\n\n")
@@ -502,6 +503,7 @@ func (s *ReflectionSynthesizer) buildSelfIdentityPrompt(tick uint64, traits []Id
 	}
 
 	sb.WriteString("Instructions:\n")
+	sb.WriteString("CRITICAL GROUNDING RULE: Only treat an action as completed if an explicit action outcome in the log confirms it happened. An 'observation' or a previous 'next_step' means the task has NOT been done yet—never claim you cleaned, repaired, or sourced items unless the log explicitly records doing so.\n")
 	sb.WriteString("1. Update or refine an identity trait key and value grounded in your recent actions and experiences (e.g., craft_philosophy, community_bond, daily_focus, merchant_ethics).\n")
 	sb.WriteString("2. Write a fresh, highly contextual one-sentence self-reflection anchored directly in your recent work, trades, conversations, or movements in the village. Focus on tangible work, economic realities, relationships, and daily life rather than vague magical realism.\n")
 	sb.WriteString("3. Record a key lesson or empirical insight learned from recent experiences (\"What have you learned about trading, crafting, or community relations?\").\n")
@@ -509,16 +511,16 @@ func (s *ReflectionSynthesizer) buildSelfIdentityPrompt(tick uint64, traits []Id
 	sb.WriteString("5. If nothing significant, meaningful, or new occurred, or if no self-reflection or identity trait update is warranted by these routine events, you may return {\"no_entry\": true} to skip recording a self-reflection and identity trait update for this batch.\n")
 	sb.WriteString("Respond in valid JSON (or {\"no_entry\": true} if nothing happened):\n")
 	sb.WriteString("{\n")
-	sb.WriteString("  \"trait_key\": \"daily_focus\",\n")
-	sb.WriteString("  \"trait_value\": \"Focusing on smithing iron tools and maintaining stock for travelers.\",\n")
-	sb.WriteString("  \"self_reflection\": \"Today's forge work yielded three solid iron ingots, keeping me busy as villagers dropped by the workshop.\",\n")
-	sb.WriteString("  \"lesson\": \"Crafting iron requires securing raw ore early before shop stocks deplete.\",\n")
+	sb.WriteString("  \"trait_key\": \"<snake_case_trait_key>\",\n")
+	sb.WriteString("  \"trait_value\": \"<one sentence description of trait>\",\n")
+	sb.WriteString("  \"self_reflection\": \"<one sentence grounded strictly in Recent Actions & Events>\",\n")
+	sb.WriteString("  \"lesson\": \"<key lesson learned from recent experiences>\",\n")
 	sb.WriteString("  \"salience\": 7\n")
 	sb.WriteString("}\n")
 	return sb.String()
 }
 
-func parseSelfIdentityResponse(raw string) (bool, string, string, string, string, int) {
+func ParseSelfIdentityResponse(raw string) (bool, string, string, string, string, int) {
 	type selfJSON struct {
 		NoEntry        bool   `json:"no_entry"`
 		TraitKey       string `json:"trait_key"`
@@ -551,9 +553,16 @@ func parseSelfIdentityResponse(raw string) (bool, string, string, string, string
 	return true, "", "", "", "", 5
 }
 
-func (s *ReflectionSynthesizer) buildReflectionPrompt(peerID string, events []EventRecord, previous RelationshipMemory) string {
+func (s *ReflectionSynthesizer) BuildReflectionPrompt(peerID string, events []EventRecord, previous RelationshipMemory) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("You are a sovereign resident reflecting freely on past interactions with character '%s'.\n", peerID))
+	agentName := s.agentID
+	if agentName == "" {
+		agentName = "<agentID>"
+	}
+	sb.WriteString(fmt.Sprintf("You are %s, a sovereign resident reflecting freely on past interactions with character '%s'.\n", agentName, peerID))
+	sb.WriteString(fmt.Sprintf("Write 'reflection' and 'summary' strictly in first-person ('I', 'me', 'my') from YOUR perspective as %s (keep %s's role in third-person, e.g., '%s manages... while I...').\n", agentName, peerID, peerID))
+	sb.WriteString(fmt.Sprintf("Record open commitments in BOTH directions (things %s promised you AND things you promised %s). Only list UNFULFILLED future promises in 'commitments'—never list items or favors already transferred or completed in the log.\n", peerID, peerID))
+	sb.WriteString("Only return {\"no_entry\": true} if there were no meaningful exchanges, gifts, or promises.\n")
 	sb.WriteString("Consider these events entirely through your own subjective perspective, feelings, and judgment, free from any external grading.\n")
 	sb.WriteString("Preserve the continuity of the relationship: update the summary and open commitments only when the new evidence warrants it. Remove commitments that are fulfilled or no longer relevant; do not invent promises.\n")
 	if previous.Summary != "" {
@@ -571,22 +580,22 @@ func (s *ReflectionSynthesizer) buildReflectionPrompt(peerID string, events []Ev
 	}
 
 	sb.WriteString("\nInstructions:\n")
-	sb.WriteString("1. Provide a concise cumulative relationship summary, grounded in existing information and these events.\n")
-	sb.WriteString("2. List only genuine open commitments or follow-ups between you and this person.\n")
-	sb.WriteString("3. Write one reflection on the new events and rate its salience from 1 to 10.\n")
-	sb.WriteString("4. If nothing significant, meaningful, or new occurred with this person in these events (e.g., routine ambient chatter or nothing worth recording), you may return {\"no_entry\": true} to record no new reflection or change.\n")
-	sb.WriteString("Respond in valid JSON (or {\"no_entry\": true} if nothing happened):\n")
+	sb.WriteString(fmt.Sprintf("1. Provide a concise cumulative relationship summary written in first-person from YOUR perspective as %s, keeping %s's role in third-person (e.g. '%s manages... while I...'), grounded in existing information and these events.\n", agentName, peerID, peerID))
+	sb.WriteString(fmt.Sprintf("2. Record only UNFULFILLED open commitments in BOTH directions (things %s promised you AND things you promised %s; never list completed transfers or delivered items).\n", peerID, peerID))
+	sb.WriteString("3. Write one reflection on the new events in first-person ('I', 'me', 'my') and rate its salience from 1 to 10.\n")
+	sb.WriteString("4. Only return {\"no_entry\": true} if there were no meaningful exchanges, gifts, or promises.\n")
+	sb.WriteString("Respond in valid JSON (or {\"no_entry\": true} if there were no meaningful exchanges, gifts, or promises):\n")
 	sb.WriteString("{\n")
 	sb.WriteString("  \"salience\": 7,\n")
-	sb.WriteString("  \"reflection\": \"One-sentence takeaway from this batch.\",\n")
-	sb.WriteString("  \"summary\": \"Updated cumulative relationship context.\",\n")
-	sb.WriteString("  \"commitments\": [\"A specific unfulfilled follow-up, if any\"]\n")
+	sb.WriteString("  \"reflection\": \"One-sentence takeaway from this batch in first-person.\",\n")
+	sb.WriteString("  \"summary\": \"Updated cumulative relationship context in first-person (keeping other character in third person).\",\n")
+	sb.WriteString(fmt.Sprintf("  \"commitments\": [\"Unfulfilled future promises between %s and you\"]\n", peerID))
 	sb.WriteString("}\n")
 
 	return sb.String()
 }
 
-func parseReflectionResponse(raw string) (string, int) {
+func ParseReflectionResponse(raw string) (string, int) {
 	type reflectionJSON struct {
 		Salience   int    `json:"salience"`
 		Reflection string `json:"reflection"`
@@ -616,7 +625,7 @@ func parseReflectionResponse(raw string) (string, int) {
 	return "", 0
 }
 
-func parseRelationshipResponse(raw string, previous RelationshipMemory) (RelationshipMemory, string, int, bool, error) {
+func ParseRelationshipResponse(raw string, previous RelationshipMemory) (RelationshipMemory, string, int, bool, error) {
 	type relationshipResponse struct {
 		NoEntry     bool     `json:"no_entry"`
 		Salience    int      `json:"salience"`
@@ -658,4 +667,16 @@ func parseRelationshipResponse(raw string, previous RelationshipMemory) (Relatio
 		Summary:     response.Summary,
 		Commitments: response.Commitments,
 	}, response.Reflection, salience, false, nil
+}
+
+// BuildRelationshipPrompt constructs the production peer relationship reflection prompt. -- exported for modeltest
+func BuildRelationshipPrompt(peerID string, events []EventRecord, previous RelationshipMemory) string {
+	s := &ReflectionSynthesizer{}
+	return s.BuildReflectionPrompt(peerID, events, previous)
+}
+
+// BuildSelfIdentityPrompt constructs the production self-identity reflection prompt. -- exported for modeltest
+func BuildSelfIdentityPrompt(agentID string, tick uint64, traits []IdentityTrait, recentRefs []SelfReflection, events []EventRecord) string {
+	s := &ReflectionSynthesizer{agentID: agentID}
+	return s.BuildSelfIdentityPrompt(tick, traits, recentRefs, events)
 }

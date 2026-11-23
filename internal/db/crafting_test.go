@@ -26,8 +26,8 @@ func TestSeedCrafting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to count recipes: %v", err)
 	}
-	if recCount != 14 {
-		t.Errorf("Expected 14 seeded recipes, got %d", recCount)
+	if recCount != 18 {
+		t.Errorf("Expected 18 seeded recipes, got %d", recCount)
 	}
 }
 
@@ -50,15 +50,13 @@ func TestScotusKnowsMillFlourAfterProgressionInitialization(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var known int
-	if err := database.QueryRow(`
-		SELECT COUNT(*) FROM character_known_recipes
-		WHERE character_id = 'scotus' AND recipe_id = 'mill_flour'
-	`).Scan(&known); err != nil {
+	recipe, err := GetRecipe(database, "mill_flour")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if known != 1 {
-		t.Fatalf("Scotus has mill_flour knowledge count %d, want 1", known)
+	accessible, _, err := CanAccessRecipe(database, "scotus", recipe)
+	if err != nil || !accessible {
+		t.Fatalf("Scotus should be able to access level 1 recipe mill_flour: accessible=%v err=%v", accessible, err)
 	}
 }
 
@@ -109,20 +107,28 @@ func TestCanCraftRecipeValidation(t *testing.T) {
 		t.Errorf("Expected basket weaving to be allowed anywhere with ingredients, failed with: %s", reason)
 	}
 
-	// Recipe knowledge is personal, and known recipes can still require more skill.
-	ok, reason, err = CanCraftRecipe(database, "eldon_millwright", "brew_berry_wine")
+	// Recipe access for higher tier recipes (e.g., brew_charcoal_draught requires herbalism level 2).
+	charcoalRecipe, err := GetRecipe(database, "brew_charcoal_draught")
 	if err != nil {
-		t.Fatalf("Error checking unknown recipe: %v", err)
+		t.Fatal(err)
 	}
-	if ok || !strings.Contains(reason, "does not know") {
-		t.Errorf("expected Eldon not to know brew_berry_wine, got ok=%v reason=%q", ok, reason)
+	ok, reason, err = CanAccessRecipe(database, "eldon_millwright", charcoalRecipe)
+	if err != nil {
+		t.Fatalf("Error checking restricted recipe: %v", err)
 	}
-	ok, reason, err = CanCraftRecipe(database, "martha_barkeep", "brew_elderflower_wine")
+	if ok || (!strings.Contains(reason, "level") && !strings.Contains(reason, "mentorship") && !strings.Contains(reason, "required")) {
+		t.Errorf("expected Eldon not to have access to brew_charcoal_draught, got ok=%v reason=%q", ok, reason)
+	}
+	forgeHammerRecipe, err := GetRecipe(database, "forge_hammer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok, reason, err = CanAccessRecipe(database, "eldon_millwright", forgeHammerRecipe)
 	if err != nil {
 		t.Fatalf("Error checking skill-gated recipe: %v", err)
 	}
-	if ok || !strings.Contains(reason, "level 3 required") {
-		t.Errorf("expected level requirement for elderflower wine, got ok=%v reason=%q", ok, reason)
+	if ok || (!strings.Contains(reason, "level 2") && !strings.Contains(reason, "required")) {
+		t.Errorf("expected level requirement for forge_hammer, got ok=%v reason=%q", ok, reason)
 	}
 }
 
