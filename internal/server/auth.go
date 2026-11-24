@@ -1,15 +1,15 @@
 package server
 
 import (
-        "database/sql"
-        "fmt"
-        "log"
-        "strings"
-        "sync"
-        "time"
+	"database/sql"
+	"fmt"
+	"log"
+	"strings"
+	"sync"
+	"time"
 
-        mqtt "github.com/mochi-mqtt/server/v2"
-        "github.com/mochi-mqtt/server/v2/packets"
+	mqtt "github.com/mochi-mqtt/server/v2"
+	"github.com/mochi-mqtt/server/v2/packets"
 )
 
 type moveRecord struct {
@@ -20,19 +20,19 @@ type moveRecord struct {
 const recentMoveTTL = 10 * time.Minute
 
 type DBAuthHook struct {
-        mqtt.HookBase
-        db          *sql.DB
-        mqttServer  *mqtt.Server
-        mu          sync.Mutex
-        recentMoves map[string]moveRecord
+	mqtt.HookBase
+	db          *sql.DB
+	mqttServer  *mqtt.Server
+	mu          sync.Mutex
+	recentMoves map[string]moveRecord
 }
 
 func NewDBAuthHook(db *sql.DB, mqttServer *mqtt.Server) *DBAuthHook {
-        return &DBAuthHook{
-                db:          db,
-                mqttServer:  mqttServer,
-                recentMoves: make(map[string]moveRecord),
-        }
+	return &DBAuthHook{
+		db:          db,
+		mqttServer:  mqttServer,
+		recentMoves: make(map[string]moveRecord),
+	}
 }
 
 func (h *DBAuthHook) RecordMove(characterID, locationID string) {
@@ -104,53 +104,53 @@ func (h *DBAuthHook) OnConnectAuthenticate(cl *mqtt.Client, pk packets.Packet) b
 	}
 
 	for attempt := 1; attempt <= 3; attempt++ {
-	        _, err = h.db.Exec("UPDATE characters SET is_online = 1 WHERE id = ?", username)
-	        if err == nil {
-	                break
-	        }
-	        if strings.Contains(err.Error(), "database is locked") || strings.Contains(err.Error(), "SQLITE_BUSY") {
-	                time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
-	                continue
-	        }
-	        break
+		_, err = h.db.Exec("UPDATE characters SET is_online = 1 WHERE id = ?", username)
+		if err == nil {
+			break
+		}
+		if strings.Contains(err.Error(), "database is locked") || strings.Contains(err.Error(), "SQLITE_BUSY") {
+			time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
+			continue
+		}
+		break
 	}
 
 	var currentLoc string
 	if h.db != nil {
-	        _ = h.db.QueryRow("SELECT current_location FROM characters WHERE id = ?", username).Scan(&currentLoc)
+		_ = h.db.QueryRow("SELECT current_location FROM characters WHERE id = ?", username).Scan(&currentLoc)
 	}
 	if currentLoc != "" && h.mqttServer != nil {
-	        sysTopic := fmt.Sprintf("world/locations/%s/system", currentLoc)
-	        _ = h.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s has arrived.", username)), false, 0)
+		sysTopic := fmt.Sprintf("world/locations/%s/system", currentLoc)
+		_ = h.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s has arrived.", username)), false, 0)
 	}
 
 	log.Printf("[Auth] Successfully authenticated character: '%s'", username)
 	return true
-	}
+}
 
-	func (h *DBAuthHook) OnDisconnect(cl *mqtt.Client, err error, expire bool) {
+func (h *DBAuthHook) OnDisconnect(cl *mqtt.Client, err error, expire bool) {
 	if cl.Net.Inline {
-	        return
+		return
 	}
 
 	username := string(cl.Properties.Username)
 	if username == "" {
-	        username = cl.ID
+		username = cl.ID
 	}
 
 	if username != "" {
-	        var currentLoc string
-	        if h.db != nil {
-	                _ = h.db.QueryRow("SELECT current_location FROM characters WHERE id = ?", username).Scan(&currentLoc)
-	        }
-	        _, _ = h.db.Exec("UPDATE characters SET is_online = 0, status = 'IDLE', action_target = '', action_start_tick = 0, action_end_tick = 0, action_intent_id = '' WHERE id = ?", username)
-	        if currentLoc != "" && h.mqttServer != nil {
-	                sysTopic := fmt.Sprintf("world/locations/%s/system", currentLoc)
-	                _ = h.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s has left.", username)), false, 0)
-	        }
-	        log.Printf("[Auth] Character disconnected: '%s' (resetting active actions to IDLE)", username)
+		var currentLoc string
+		if h.db != nil {
+			_ = h.db.QueryRow("SELECT current_location FROM characters WHERE id = ?", username).Scan(&currentLoc)
+		}
+		_, _ = h.db.Exec("UPDATE characters SET is_online = 0, status = 'IDLE', action_target = '', action_start_tick = 0, action_end_tick = 0, action_intent_id = '' WHERE id = ?", username)
+		if currentLoc != "" && h.mqttServer != nil {
+			sysTopic := fmt.Sprintf("world/locations/%s/system", currentLoc)
+			_ = h.mqttServer.Publish(sysTopic, []byte(fmt.Sprintf("%s has left.", username)), false, 0)
+		}
+		log.Printf("[Auth] Character disconnected: '%s' (resetting active actions to IDLE)", username)
 	}
-	}
+}
 
 func (h *DBAuthHook) OnACLCheck(cl *mqtt.Client, topic string, write bool) bool {
 	if cl.Net.Inline {

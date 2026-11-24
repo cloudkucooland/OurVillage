@@ -283,6 +283,41 @@ var DefaultLocations = []LocationSeed{
 		CloseTime:         "23:59",
 		RulesPrompt:       "",
 	},
+	{
+		ID:                "adas_room",
+		Name:              "Ada's Room",
+		Description:       "Ada's cozy private quarters and resting space above the bakery.",
+		OwnerID:           "ada_baker",
+		IsPublic:          false,
+		IsIndoor:          true,
+		VehicleAccessTier: "FOOT_ONLY",
+		OpenTime:          "25:00",
+		CloseTime:         "25:00",
+		RulesPrompt:       "Private quarters for Ada. A safe place to rest and store baking goods.",
+	},
+	{
+		ID:                "marcus_room",
+		Name:              "Marcus's Lodging",
+		Description:       "Marcus's private quarters and ledger room near the village market stall.",
+		OwnerID:           "marcus_merchant",
+		IsPublic:          false,
+		IsIndoor:          true,
+		VehicleAccessTier: "FOOT_AND_WHEELBARROW",
+		OpenTime:          "25:00",
+		CloseTime:         "25:00",
+		RulesPrompt:       "Private merchant quarters. Authorized personnel only.",
+	},
+	{
+		ID:                "mine",
+		Name:              "Mountain Quarry & Mine",
+		Description:       "A rocky hillside quarry and deep dark mine shaft where iron ore, coal, and rock salt can be dug.",
+		IsPublic:          true,
+		IsIndoor:          false,
+		VehicleAccessTier: "FOOT_AND_WHEELBARROW",
+		OpenTime:          "00:00",
+		CloseTime:         "23:59",
+		RulesPrompt:       "Mining zone. Exercise caution with heavy tools and unstable rock faces.",
+	},
 }
 
 // DefaultLocationResources seeds ecological resource pools for foraging (RFC 007 Section 8 & 9)
@@ -294,6 +329,9 @@ var DefaultLocationResources = []ResourceSeed{
 	{LocationID: "prairie", ResourceID: "wild_grain", CurrentStock: 80, MaxStock: 80, ReplenishRatePerDay: 20},
 	{LocationID: "riverbank", ResourceID: "clay_lumps", CurrentStock: 50, MaxStock: 50, ReplenishRatePerDay: 15},
 	{LocationID: "riverbank", ResourceID: "fresh_water", CurrentStock: 200, MaxStock: 200, ReplenishRatePerDay: 50},
+	{LocationID: "mine", ResourceID: "iron_ore", CurrentStock: 60, MaxStock: 60, ReplenishRatePerDay: 15},
+	{LocationID: "mine", ResourceID: "coal", CurrentStock: 50, MaxStock: 50, ReplenishRatePerDay: 12},
+	{LocationID: "mine", ResourceID: "salt", CurrentStock: 40, MaxStock: 40, ReplenishRatePerDay: 10},
 }
 
 // SeedLocations inserts default locations into the database if they do not exist.

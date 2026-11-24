@@ -20,6 +20,7 @@ type ItemSeed struct {
 	IsPerishable   bool
 	ShelfLifeTicks int
 	SpoilageItemID string
+	IsReusable     bool
 }
 
 type CharacterSeed struct {
@@ -49,15 +50,16 @@ var DefaultItems = []ItemSeed{
 	{ID: "bread", Name: "Fresh Loaf of Bread", Description: "Warm, crusty bread that restores hunger.", WeightKg: 0.3, IsConsumable: true, HungerRestore: 25, IsPerishable: true, ShelfLifeTicks: 96, SpoilageItemID: "rotting_waste"},
 	{ID: "ale_mug", Name: "Mug of Ale", Description: "Foamy, refreshing village ale.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 10, IsPerishable: true, ShelfLifeTicks: 96, SpoilageItemID: "rotting_waste"},
 	{ID: "roasted_mutton", Name: "Roasted Mutton", Description: "Hearty cooked meat.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 50, IsPerishable: true, ShelfLifeTicks: 96, SpoilageItemID: "rotting_waste"},
-	{ID: "iron_wrench", Name: "Iron Wrench", Description: "A sturdy tool for maintaining mill machinery.", WeightKg: 2.0, IsConsumable: false, HungerRestore: 0},
+	{ID: "iron_wrench", Name: "Iron Wrench", Description: "A sturdy tool for maintaining mill machinery.", WeightKg: 2.0, IsConsumable: false, HungerRestore: 0, IsReusable: true},
 	{ID: "iron_ingot", Name: "Iron Ingot", Description: "Raw metal for forging tools and weapons.", WeightKg: 3.0, IsConsumable: false, HungerRestore: 0},
-	{ID: "smithing_hammer", Name: "Smithing Hammer", Description: "Heavy hammer for blacksmithing work.", WeightKg: 2.5, IsConsumable: false, HungerRestore: 0},
+	{ID: "smithing_hammer", Name: "Smithing Hammer", Description: "Heavy hammer for blacksmithing work.", WeightKg: 2.5, IsConsumable: false, HungerRestore: 0, IsReusable: true},
 	{ID: "coal", Name: "Lump of Coal", Description: "Fuel for the forge and heaters.", WeightKg: 1.0, IsConsumable: false, HungerRestore: 0},
 	{ID: "vegetable_basket", Name: "Basket of Vegetables", Description: "Fresh carrots, potatoes, and greens.", WeightKg: 1.0, IsConsumable: true, HungerRestore: 15, IsPerishable: true, ShelfLifeTicks: 96, SpoilageItemID: "rotting_waste"},
 	{ID: "vegetable_seeds", Name: "Vegetable Seeds", Description: "Seeds for planting a mixed vegetable crop in a communal field plot.", WeightKg: 0.1},
 	{ID: "parchment", Name: "Parchment & Quill", Description: "Materials for official clerk records and letters.", WeightKg: 0.1, IsConsumable: false, HungerRestore: 0},
 	{ID: "ink_bottle", Name: "Bottle of Black Ink", Description: "Standard writing ink.", WeightKg: 0.2, IsConsumable: false, HungerRestore: 0},
-	{ID: "official_seal", Name: "Official Town Seal", Description: "Brass stamp used to authenticate municipal deeds.", WeightKg: 0.5, IsConsumable: false, HungerRestore: 0},
+	{ID: "official_seal", Name: "Official Town Seal", Description: "Brass stamp used to authenticate municipal deeds.", WeightKg: 0.5, IsConsumable: false, HungerRestore: 0, IsReusable: true},
+	{ID: "official_permit", Name: "Official Town Permit", Description: "A legally validated municipal permit bearing the Town Seal.", WeightKg: 0.1, IsConsumable: false, HungerRestore: 0},
 
 	// RFC 007 Container Gear
 	{ID: "woven_basket", Name: "Woven Basket", Description: "Woven from river reeds; ideal for berries and herbs.", WeightKg: 0.5, IsContainer: true, CapacityKg: 30.0, SlotLimit: 8},
@@ -95,6 +97,26 @@ var DefaultItems = []ItemSeed{
 	{ID: "willowbark_tea", Name: "Willowbark Tea", Description: "A bitter herbal infusion used to reduce fevers and heal body wear.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 5, HealthRestore: 20},
 	{ID: "charcoal_draught", Name: "Activated Charcoal Draught", Description: "A medicinal draught to neutralize toxins and restore vitality.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 5, HealthRestore: 25},
 	{ID: "raw_mutton", Name: "Raw Mutton", Description: "Fresh cut of raw mutton ready for roasting.", WeightKg: 0.6, IsConsumable: false, IsPerishable: true, ShelfLifeTicks: 48, SpoilageItemID: "rotting_waste"},
+
+	// New Multi-Trade Ingredients & Materials
+	{ID: "wild_apples", Name: "Wild Apples", Description: "Tart autumn apples foraged from deep forest trees or bought at the market.", WeightKg: 0.2, IsConsumable: true, HungerRestore: 10, IsPerishable: true, ShelfLifeTicks: 96, SpoilageItemID: "rotting_waste"},
+	{ID: "blackberries", Name: "Blackberries", Description: "Plump, juicy wild blackberries gathered from forest or prairie brambles.", WeightKg: 0.2, IsConsumable: true, HungerRestore: 10, IsPerishable: true, ShelfLifeTicks: 96, SpoilageItemID: "rotting_waste"},
+	{ID: "dried_fruit", Name: "Dried Cherries & Raisins", Description: "Preserved sweet dried fruits available year-round for winter baking.", WeightKg: 0.3, IsConsumable: true, HungerRestore: 15, IsPerishable: true, ShelfLifeTicks: 192, SpoilageItemID: "rotting_waste"},
+	{ID: "wild_hops", Name: "Wild Hops & Bitterroot", Description: "Aromatic bitter herbs essential for brewing distinct craft ales.", WeightKg: 0.1, IsConsumable: false, HungerRestore: 0},
+	{ID: "chamomile", Name: "Chamomile Flowers", Description: "Calming white blossoms used in soothing teas and herbal infusions.", WeightKg: 0.1, IsConsumable: false, HungerRestore: 0},
+	{ID: "culinary_herbs", Name: "Rosemary & Thyme", Description: "Fragrant culinary herbs that elevate roasted meats and savory breads.", WeightKg: 0.1, IsConsumable: false, HungerRestore: 0},
+	{ID: "warm_spices", Name: "Cinnamon & Clove Pouch", Description: "Exotic imported spice pouch adding warmth to seasonal festival dishes.", WeightKg: 0.2, IsConsumable: false, HungerRestore: 0},
+	{ID: "fresh_milk", Name: "Fresh Milk", Description: "Fresh dairy milk straight from farm livestock.", WeightKg: 1.0, IsConsumable: true, HungerRestore: 10, IsPerishable: true, ShelfLifeTicks: 48, SpoilageItemID: "rotting_waste"},
+	{ID: "butter", Name: "Butter", Description: "Rich churned dairy butter for baking and cooking.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 15, IsPerishable: true, ShelfLifeTicks: 96, SpoilageItemID: "rotting_waste"},
+	{ID: "eggs", Name: "Farm Eggs", Description: "Fresh farm eggs essential for tarts, cakes, and hearty breakfasts.", WeightKg: 0.2, IsConsumable: true, HungerRestore: 10, IsPerishable: true, ShelfLifeTicks: 96, SpoilageItemID: "rotting_waste"},
+	{ID: "salt", Name: "Rock Salt", Description: "Essential mineral seasoning used for cooking and preserving meats.", WeightKg: 0.5, IsConsumable: false, HungerRestore: 0},
+	{ID: "sugar", Name: "Brown Sugar & Maple Sap", Description: "Sweetener for baking pastries and fruit preserves.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 15, IsPerishable: true, ShelfLifeTicks: 192, SpoilageItemID: "rotting_waste"},
+	{ID: "beeswax", Name: "Beeswax", Description: "Natural wax harvested alongside honey, used for salves and candles.", WeightKg: 0.3, IsConsumable: false, HungerRestore: 0},
+	{ID: "pine_resin", Name: "Tree Resin & Pitch", Description: "Sticky pine pitch gathered from timber logs for waterproofing and varnishes.", WeightKg: 0.4, IsConsumable: false, HungerRestore: 0},
+	{ID: "flax_fiber", Name: "Flax Fiber", Description: "Plant fibers harvested for spinning into linen cloth and sturdy twine.", WeightKg: 0.2, IsConsumable: false, HungerRestore: 0},
+	{ID: "framboise_ale", Name: "Framboise Berry Ale", Description: "Rich, tart dark ale brewed with fresh blackberries and wild hops.", WeightKg: 0.5, IsConsumable: true, HungerRestore: 15, IsPerishable: true, ShelfLifeTicks: 120, SpoilageItemID: "rotting_waste"},
+	{ID: "ceramic_bowl", Name: "Ceramic Bowl", Description: "A smooth glazed earthenware bowl fired from river clay.", WeightKg: 0.6, IsContainer: true, CapacityKg: 3.0, SlotLimit: 2},
+	{ID: "clay_jug", Name: "Clay Jug", Description: "A sealed earthenware jug ideal for storing liquids and fermented beverages.", WeightKg: 0.8, IsContainer: true, CapacityKg: 5.0, SlotLimit: 3},
 }
 
 var DefaultCharacters = []CharacterSeed{
@@ -171,7 +193,7 @@ var DefaultCharacters = []CharacterSeed{
 		Hunger:         90,
 		Energy:         100,
 		Location:       "bakery",
-		HomeLocationID: "bakery",
+		HomeLocationID: "adas_room",
 		WorkLocationID: "bakery",
 		ControllerType: "agent",
 		MQTTPassword:   "secret_ada_123",
@@ -193,14 +215,40 @@ var DefaultCharacters = []CharacterSeed{
 		MQTTPassword:        "secret_eleanor_123",
 		Inventory:           map[string]int{"parchment": 5, "ink_bottle": 5, "official_seal": 1},
 	},
+	{
+		ID:                  "marcus_merchant",
+		Name:                "Marcus the Merchant",
+		PersonaPrompt:       "Marcus is a shrewd, well-traveled merchant who runs the Village Market stall. He deals in imported spices, dried fruits, orchard produce, and general wares.",
+		Occupation:          "Merchant",
+		Gold:                60,
+		Hunger:              100,
+		Energy:              100,
+		Location:            "market",
+		HomeLocationID:      "marcus_room",
+		WorkLocationID:      "market",
+		EquippedContainerID: "woven_basket",
+		ControllerType:      "human", // Placeholder / meat-based agent or auxiliary player
+		MQTTPassword:        "secret_marcus_123",
+		Inventory:           map[string]int{"wild_apples": 5, "dried_fruit": 5, "warm_spices": 3, "salt": 10, "sugar": 5, "woven_basket": 1},
+	},
 }
 
 // SeedItemsAndCharacters seeds items, initial characters, and their starting inventories.
 func SeedItemsAndCharacters(db *sql.DB) error {
+	// Seed location operators
+	operatorQuery := `
+	INSERT INTO location_operators (location_id, character_id)
+	VALUES (?, ?)
+	ON CONFLICT(location_id, character_id) DO NOTHING;
+	`
+	_, _ = db.Exec(operatorQuery, "market", "marcus_merchant")
+	_, _ = db.Exec(operatorQuery, "town_hall", "eleanor_clerk")
+	_, _ = db.Exec(operatorQuery, "tavern", "martha_barkeep")
+
 	// Seed Items
 	itemQuery := `
-	INSERT INTO items (id, name, description, weight_kg, is_consumable, hunger_restore, health_restore, is_container, capacity_kg, slot_limit, is_perishable, shelf_life_ticks, spoilage_item_id)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO items (id, name, description, weight_kg, is_consumable, hunger_restore, health_restore, is_container, capacity_kg, slot_limit, is_perishable, shelf_life_ticks, spoilage_item_id, is_reusable)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		name=excluded.name,
 		description=excluded.description,
@@ -213,7 +261,8 @@ func SeedItemsAndCharacters(db *sql.DB) error {
 		slot_limit=excluded.slot_limit,
 		is_perishable=excluded.is_perishable,
 		shelf_life_ticks=excluded.shelf_life_ticks,
-		spoilage_item_id=excluded.spoilage_item_id;
+		spoilage_item_id=excluded.spoilage_item_id,
+		is_reusable=excluded.is_reusable;
 	`
 	itemStmt, err := db.Prepare(itemQuery)
 	if err != nil {
@@ -242,7 +291,11 @@ func SeedItemsAndCharacters(db *sql.DB) error {
 		if spoilageID == "" {
 			spoilageID = "rotting_waste"
 		}
-		_, err := itemStmt.Exec(item.ID, item.Name, item.Description, item.WeightKg, consumableVal, item.HungerRestore, item.HealthRestore, containerVal, item.CapacityKg, item.SlotLimit, perishableVal, shelfLife, spoilageID)
+		reusableVal := 0
+		if item.IsReusable {
+			reusableVal = 1
+		}
+		_, err := itemStmt.Exec(item.ID, item.Name, item.Description, item.WeightKg, consumableVal, item.HungerRestore, item.HealthRestore, containerVal, item.CapacityKg, item.SlotLimit, perishableVal, shelfLife, spoilageID, reusableVal)
 		if err != nil {
 			return fmt.Errorf("failed to seed item %s: %w", item.ID, err)
 		}

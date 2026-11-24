@@ -51,8 +51,8 @@ func TestInitDBAndSeed(t *testing.T) {
 		}
 	}
 
-	if locCount != 22 {
-		t.Errorf("Expected 22 seeded locations, got %d", locCount)
+	if locCount != 25 {
+		t.Errorf("Expected 25 seeded locations, got %d", locCount)
 	}
 	if !foundTownSquare {
 		t.Errorf("Expected to find town_square location")
@@ -82,8 +82,8 @@ func TestInitDBAndSeed(t *testing.T) {
 		}
 	}
 
-	if charCount != 6 {
-		t.Errorf("Expected 6 seeded characters, got %d", charCount)
+	if charCount != 7 {
+		t.Errorf("Expected 7 seeded characters, got %d", charCount)
 	}
 	if !foundEldon {
 		t.Errorf("Expected to find eldon_millwright character")
@@ -157,8 +157,8 @@ func TestInitDBWithoutSeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to count locations after seeding: %v", err)
 	}
-	if locCount != 22 {
-		t.Errorf("Expected 22 locations after manual seeding, got %d", locCount)
+	if locCount != 25 {
+		t.Errorf("Expected 25 locations after manual seeding, got %d", locCount)
 	}
 }
 

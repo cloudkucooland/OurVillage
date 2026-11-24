@@ -84,9 +84,9 @@ func TestBakerySeedAndOwnerStockTransfer(t *testing.T) {
 	}
 	var flourBuyPrice, flourStock, breadStock int
 	for query, dest := range map[string]*int{
-		"SELECT buy_price_gold FROM location_shop_items WHERE location_id = 'bakery' AND item_id = 'flour'":          &flourBuyPrice,
-		"SELECT stock_quantity FROM location_shop_items WHERE location_id = 'bakery' AND item_id = 'flour'":          &flourStock,
-		"SELECT stock_quantity FROM location_shop_items WHERE location_id = 'bakery' AND item_id = 'bread'":          &breadStock,
+		"SELECT buy_price_gold FROM location_shop_items WHERE location_id = 'bakery' AND item_id = 'flour'": &flourBuyPrice,
+		"SELECT stock_quantity FROM location_shop_items WHERE location_id = 'bakery' AND item_id = 'flour'": &flourStock,
+		"SELECT stock_quantity FROM location_shop_items WHERE location_id = 'bakery' AND item_id = 'bread'": &breadStock,
 	} {
 		if err := database.QueryRow(query).Scan(dest); err != nil {
 			t.Fatalf("query %q: %v", query, err)
@@ -375,11 +375,11 @@ func TestExistingWorldReceivesSellOffersAndRecipeKnowledge(t *testing.T) {
 	scotusCanAccess, _, _ := CanAccessRecipe(database, "scotus", millRecipe)
 	var wheatBuyPrice, wheatStock, wheatSellPrice, recipeCount, workstationCount int
 	for query, dest := range map[string]*int{
-		"SELECT buy_price_gold FROM location_shop_items WHERE location_id = 'town_mill' AND item_id = 'wheat'":              &wheatBuyPrice,
-		"SELECT stock_quantity FROM location_shop_items WHERE location_id = 'town_mill' AND item_id = 'wheat'":              &wheatStock,
-		"SELECT price_gold FROM location_shop_items WHERE location_id = 'town_mill' AND item_id = 'wheat'":                  &wheatSellPrice,
-		"SELECT COUNT(*) FROM recipes WHERE id = 'mill_flour'":                                                              &recipeCount,
-		"SELECT COUNT(*) FROM workstations WHERE id = 'millstones'":                                                         &workstationCount,
+		"SELECT buy_price_gold FROM location_shop_items WHERE location_id = 'town_mill' AND item_id = 'wheat'": &wheatBuyPrice,
+		"SELECT stock_quantity FROM location_shop_items WHERE location_id = 'town_mill' AND item_id = 'wheat'": &wheatStock,
+		"SELECT price_gold FROM location_shop_items WHERE location_id = 'town_mill' AND item_id = 'wheat'":     &wheatSellPrice,
+		"SELECT COUNT(*) FROM recipes WHERE id = 'mill_flour'":                                                 &recipeCount,
+		"SELECT COUNT(*) FROM workstations WHERE id = 'millstones'":                                            &workstationCount,
 	} {
 		if err := database.QueryRow(query).Scan(dest); err != nil {
 			t.Fatalf("query %q: %v", query, err)

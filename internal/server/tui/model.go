@@ -163,15 +163,15 @@ func NewModel(db *sql.DB, adm *admin.AdminCommandExecutor, provider ServerStateP
 	itemVP.SetContent("Items will appear here.")
 
 	return Model{
-	        db:           db,
-	        admin:        adm,
-	        provider:     provider,
-	        state:        statusTab,
-	        startTime:    time.Now(),
-	        textInput:    ti,
-	        viewport:     vp,
-	        logViewport:  logVP,
-	        itemViewport: itemVP,
+		db:           db,
+		admin:        adm,
+		provider:     provider,
+		state:        statusTab,
+		startTime:    time.Now(),
+		textInput:    ti,
+		viewport:     vp,
+		logViewport:  logVP,
+		itemViewport: itemVP,
 	}
 }
 
@@ -384,13 +384,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = (m.state + 1) % tabCount
 			return m, nil
 		case "up":
-		        if m.state == itemsTab && !m.itemEditor && !m.itemDeletePrompt {
-		                if m.selectedItem > 0 {
-		                        m.selectedItem--
-		                        m.updateItemViewport()
-		                }
-		                return m, nil
-		        }
+			if m.state == itemsTab && !m.itemEditor && !m.itemDeletePrompt {
+				if m.selectedItem > 0 {
+					m.selectedItem--
+					m.updateItemViewport()
+				}
+				return m, nil
+			}
 			if m.state == recipesTab && !m.recipeEditor && !m.recipeDeletePrompt {
 				if m.selectedRecipe > 0 {
 					m.selectedRecipe--
@@ -428,13 +428,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "down":
-		        if m.state == itemsTab && !m.itemEditor && !m.itemDeletePrompt {
-		                if m.selectedItem+1 < len(m.itemRows) {
-		                        m.selectedItem++
-		                        m.updateItemViewport()
-		                }
-		                return m, nil
-		        }
+			if m.state == itemsTab && !m.itemEditor && !m.itemDeletePrompt {
+				if m.selectedItem+1 < len(m.itemRows) {
+					m.selectedItem++
+					m.updateItemViewport()
+				}
+				return m, nil
+			}
 			if m.state == recipesTab && !m.recipeEditor && !m.recipeDeletePrompt {
 				if m.selectedRecipe+1 < len(m.recipeRows) {
 					m.selectedRecipe++
@@ -591,15 +591,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.WindowSizeMsg:
-	        m.width = msg.Width
-	        m.height = msg.Height
-	        m.viewport.Width = msg.Width - 4
-	        m.viewport.Height = msg.Height - 10
-	        m.logViewport.Width = msg.Width - 4
-	        m.logViewport.Height = msg.Height - 6
-	        m.itemViewport.Width = msg.Width - 4
-	        m.itemViewport.Height = msg.Height - 10
-	        m.updateItemViewport()
+		m.width = msg.Width
+		m.height = msg.Height
+		m.viewport.Width = msg.Width - 4
+		m.viewport.Height = msg.Height - 10
+		m.logViewport.Width = msg.Width - 4
+		m.logViewport.Height = msg.Height - 6
+		m.itemViewport.Width = msg.Width - 4
+		m.itemViewport.Height = msg.Height - 10
+		m.updateItemViewport()
 
 	case tickMsg:
 		m.tickCount = msg.tick
@@ -621,14 +621,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.state == adminTab || (m.state == recipesTab && m.recipeEditor) || (m.state == itemsTab && m.itemEditor) || ((m.state == locationsTab || m.state == mapTab) && m.locationEditor) || (m.state == backupTab && (m.backupAction == backupExportPath || m.backupAction == backupImportPath)) {
-	        m.textInput, cmd = m.textInput.Update(msg)
-	        m.viewport, _ = m.viewport.Update(msg)
+		m.textInput, cmd = m.textInput.Update(msg)
+		m.viewport, _ = m.viewport.Update(msg)
 	} else if m.state == logsTab {
-	        m.logViewport, cmd = m.logViewport.Update(msg)
+		m.logViewport, cmd = m.logViewport.Update(msg)
 	} else if m.state == itemsTab && !m.itemEditor && !m.inspectingItem {
-	        m.itemViewport, cmd = m.itemViewport.Update(msg)
+		m.itemViewport, cmd = m.itemViewport.Update(msg)
 	} else {
-	        m.viewport, cmd = m.viewport.Update(msg)
+		m.viewport, cmd = m.viewport.Update(msg)
 	}
 
 	return m, cmd
@@ -1614,100 +1614,100 @@ func (m *Model) renderRecipes(sb *strings.Builder) {
 }
 
 func (m *Model) updateItemViewport() {
-        if len(m.itemRows) == 0 {
-                m.itemViewport.SetContent("No items found.")
-                return
-        }
-        var listSb strings.Builder
-        for i, item := range m.itemRows {
-                marker := "  "
-                if i == m.selectedItem {
-                        marker = "› "
-                }
-                line := fmt.Sprintf("%s%-30s (%s)  %.2f kg", marker, item.Name, item.ID, item.WeightKg)
-                if i == m.selectedItem {
-                        listSb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10")).Render(line) + "\n")
-                } else {
-                        listSb.WriteString(line + "\n")
-                }
-        }
-        content := strings.TrimSuffix(listSb.String(), "\n")
-        m.itemViewport.SetContent(content)
+	if len(m.itemRows) == 0 {
+		m.itemViewport.SetContent("No items found.")
+		return
+	}
+	var listSb strings.Builder
+	for i, item := range m.itemRows {
+		marker := "  "
+		if i == m.selectedItem {
+			marker = "› "
+		}
+		line := fmt.Sprintf("%s%-30s (%s)  %.2f kg", marker, item.Name, item.ID, item.WeightKg)
+		if i == m.selectedItem {
+			listSb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10")).Render(line) + "\n")
+		} else {
+			listSb.WriteString(line + "\n")
+		}
+	}
+	content := strings.TrimSuffix(listSb.String(), "\n")
+	m.itemViewport.SetContent(content)
 
-        if m.itemViewport.Height > 0 {
-                if m.selectedItem < m.itemViewport.YOffset {
-                        m.itemViewport.SetYOffset(m.selectedItem)
-                } else if m.selectedItem >= m.itemViewport.YOffset + m.itemViewport.Height {
-                        m.itemViewport.SetYOffset(m.selectedItem - m.itemViewport.Height + 1)
-                }
-        }
+	if m.itemViewport.Height > 0 {
+		if m.selectedItem < m.itemViewport.YOffset {
+			m.itemViewport.SetYOffset(m.selectedItem)
+		} else if m.selectedItem >= m.itemViewport.YOffset+m.itemViewport.Height {
+			m.itemViewport.SetYOffset(m.selectedItem - m.itemViewport.Height + 1)
+		}
+	}
 }
 
 func (m *Model) refreshItemRows() {
-        if m.db == nil {
-                m.itemRows = nil
-                return
-        }
-        rows, err := m.db.Query(`SELECT id, name, COALESCE(description, ''), weight_kg, is_consumable,
+	if m.db == nil {
+		m.itemRows = nil
+		return
+	}
+	rows, err := m.db.Query(`SELECT id, name, COALESCE(description, ''), weight_kg, is_consumable,
                 hunger_restore, health_restore, is_container, capacity_kg, slot_limit, is_perishable,
                 shelf_life_ticks, COALESCE(spoilage_item_id, '') FROM items ORDER BY name, id`)
-        if err != nil {
-                m.itemRows = nil
-                return
-        }
-        defer rows.Close()
-        m.itemRows = nil
-        for rows.Next() {
-                var item admin.ItemDefinition
-                if rows.Scan(&item.ID, &item.Name, &item.Description, &item.WeightKg, &item.IsConsumable,
-                        &item.HungerRestore, &item.HealthRestore, &item.IsContainer, &item.CapacityKg,
-                        &item.SlotLimit, &item.IsPerishable, &item.ShelfLifeTicks, &item.SpoilageItemID) == nil {
-                        m.itemRows = append(m.itemRows, item)
-                }
-        }
-        m.updateItemViewport()
+	if err != nil {
+		m.itemRows = nil
+		return
+	}
+	defer rows.Close()
+	m.itemRows = nil
+	for rows.Next() {
+		var item admin.ItemDefinition
+		if rows.Scan(&item.ID, &item.Name, &item.Description, &item.WeightKg, &item.IsConsumable,
+			&item.HungerRestore, &item.HealthRestore, &item.IsContainer, &item.CapacityKg,
+			&item.SlotLimit, &item.IsPerishable, &item.ShelfLifeTicks, &item.SpoilageItemID) == nil {
+			m.itemRows = append(m.itemRows, item)
+		}
+	}
+	m.updateItemViewport()
 }
 
 func (m *Model) renderItems(sb *strings.Builder) {
-        if m.db == nil {
-                sb.WriteString("Item data unavailable: database is not connected.\n")
-                return
-        }
-        if m.selectedItem >= len(m.itemRows) {
-                m.selectedItem = len(m.itemRows) - 1
-        }
-        if m.selectedItem < 0 {
-                m.selectedItem = 0
-        }
-        if m.itemDeletePrompt && len(m.itemRows) > 0 {
-                sb.WriteString(fmt.Sprintf("Delete item %q? Deletion is blocked while it is used by inventory, recipes, shops, or farm crops. Press y to delete, n or Esc to cancel.\n", m.itemRows[m.selectedItem].Name))
-                return
-        }
-        if m.itemEditor {
-                mode := "Add item"
-                if m.itemEditing {
-                        mode = "Edit item"
-                }
-                sb.WriteString(mode + "\n\nFields: id, quoted name, weight kg, quoted description, hunger restore, health restore, consumable true|false, container true|false, capacity kg, slots, perishable true|false, shelf life ticks, spoilage item id|none\n")
-                sb.WriteString("Example: bread \"Fresh Bread\" 0.3 \"Restores hunger\" 25 0 true false 0 0 true 96 rotting_waste\nEsc cancels.\n\n")
-                sb.WriteString(m.textInput.View() + "\n")
-                if m.itemStatus != "" {
-                        sb.WriteString(m.itemStatus + "\n")
-                }
-                return
-        }
-        if m.itemStatus != "" {
-                sb.WriteString(m.itemStatus + "\n\n")
-        }
-        if len(m.itemRows) == 0 {
-                sb.WriteString("No items found. Press a to add one.\n")
-                return
-        }
-        if !m.inspectingItem {
-                sb.WriteString("Items — ↑/↓ select, Enter inspect, a add, e edit, d delete (scroll with PgUp/PgDn)\n\n")
-                sb.WriteString(m.itemViewport.View())
-                return
-        }
+	if m.db == nil {
+		sb.WriteString("Item data unavailable: database is not connected.\n")
+		return
+	}
+	if m.selectedItem >= len(m.itemRows) {
+		m.selectedItem = len(m.itemRows) - 1
+	}
+	if m.selectedItem < 0 {
+		m.selectedItem = 0
+	}
+	if m.itemDeletePrompt && len(m.itemRows) > 0 {
+		sb.WriteString(fmt.Sprintf("Delete item %q? Deletion is blocked while it is used by inventory, recipes, shops, or farm crops. Press y to delete, n or Esc to cancel.\n", m.itemRows[m.selectedItem].Name))
+		return
+	}
+	if m.itemEditor {
+		mode := "Add item"
+		if m.itemEditing {
+			mode = "Edit item"
+		}
+		sb.WriteString(mode + "\n\nFields: id, quoted name, weight kg, quoted description, hunger restore, health restore, consumable true|false, container true|false, capacity kg, slots, perishable true|false, shelf life ticks, spoilage item id|none\n")
+		sb.WriteString("Example: bread \"Fresh Bread\" 0.3 \"Restores hunger\" 25 0 true false 0 0 true 96 rotting_waste\nEsc cancels.\n\n")
+		sb.WriteString(m.textInput.View() + "\n")
+		if m.itemStatus != "" {
+			sb.WriteString(m.itemStatus + "\n")
+		}
+		return
+	}
+	if m.itemStatus != "" {
+		sb.WriteString(m.itemStatus + "\n\n")
+	}
+	if len(m.itemRows) == 0 {
+		sb.WriteString("No items found. Press a to add one.\n")
+		return
+	}
+	if !m.inspectingItem {
+		sb.WriteString("Items — ↑/↓ select, Enter inspect, a add, e edit, d delete (scroll with PgUp/PgDn)\n\n")
+		sb.WriteString(m.itemViewport.View())
+		return
+	}
 	item := m.itemRows[m.selectedItem]
 	sb.WriteString(lipgloss.NewStyle().Bold(true).Render(item.Name) + "  (" + item.ID + ")\n\n")
 	sb.WriteString(fmt.Sprintf("Description: %s\nWeight: %.2f kg\nConsumable: %t (hunger +%d, health +%d)\nContainer: %t (%.2f kg capacity, %d slots)\n",

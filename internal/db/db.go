@@ -146,6 +146,35 @@ CREATE TABLE IF NOT EXISTS recipe_ingredients (
     FOREIGN KEY (item_id) REFERENCES items(id)
 );
 
+-- Notice Boards Table (RFC 010)
+CREATE TABLE IF NOT EXISTS notice_boards (
+    id TEXT PRIMARY KEY,
+    location_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE
+);
+
+-- Contracts Table (RFC 010)
+CREATE TABLE IF NOT EXISTS contracts (
+    id TEXT PRIMARY KEY,
+    board_id TEXT NOT NULL,
+    creator_id TEXT NOT NULL,
+    assignee_id TEXT,
+    contract_type TEXT NOT NULL, -- 'BUY_ORDER', 'SELL_ORDER', 'SERVICE_BOUNTY'
+    required_item_id TEXT,
+    required_quantity INTEGER DEFAULT 0,
+    reward_gold INTEGER NOT NULL DEFAULT 0,
+    escrow_held_gold INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'OPEN', -- 'OPEN', 'IN_PROGRESS', 'COMPLETED', 'EXPIRED', 'CANCELLED'
+    created_at_tick INTEGER NOT NULL,
+    expires_at_tick INTEGER NOT NULL,
+    delivery_location_id TEXT NOT NULL,
+    FOREIGN KEY (board_id) REFERENCES notice_boards(id) ON DELETE CASCADE,
+    FOREIGN KEY (creator_id) REFERENCES characters(id) ON DELETE CASCADE,
+    FOREIGN KEY (assignee_id) REFERENCES characters(id) ON DELETE SET NULL,
+    FOREIGN KEY (delivery_location_id) REFERENCES locations(id)
+);
+
 -- Characters Table
 CREATE TABLE IF NOT EXISTS characters (
     id TEXT PRIMARY KEY,
@@ -197,7 +226,8 @@ CREATE TABLE IF NOT EXISTS items (
     hunger_restore INTEGER DEFAULT 0,
     is_container BOOLEAN DEFAULT 0,
     capacity_kg REAL DEFAULT 0.0,
-    slot_limit INTEGER DEFAULT 0
+    slot_limit INTEGER DEFAULT 0,
+    is_reusable BOOLEAN DEFAULT 0
 );
 
 -- Inventories Table
@@ -356,6 +386,7 @@ func migrateSchema(db *sql.DB) error {
 		{"items", "is_perishable", "BOOLEAN DEFAULT 0"},
 		{"items", "shelf_life_ticks", "INTEGER DEFAULT 96"},
 		{"items", "spoilage_item_id", "TEXT DEFAULT 'rotting_waste'"},
+		{"items", "is_reusable", "BOOLEAN DEFAULT 0"},
 		{"inventories", "freshness_percent", "INTEGER NOT NULL DEFAULT 100"},
 		{"location_shop_items", "buy_price_gold", "INTEGER"},
 	}
@@ -469,6 +500,9 @@ func SeedDB(db *sql.DB) error {
 	}
 	if err := SeedShopInventory(db); err != nil {
 		return fmt.Errorf("failed to seed shop inventory: %w", err)
+	}
+	if err := SeedNoticeBoards(db); err != nil {
+		return fmt.Errorf("failed to seed notice boards: %w", err)
 	}
 	if err := ensureBakerySetup(db); err != nil {
 		return fmt.Errorf("failed to seed bakery setup: %w", err)

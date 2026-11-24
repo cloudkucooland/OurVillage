@@ -1,13 +1,13 @@
 package server
 
 import (
-        "strings"
-        "ourvillage/internal/db"
-        "testing"
-        "time"
+	"ourvillage/internal/db"
+	"strings"
+	"testing"
+	"time"
 
-        mqtt "github.com/mochi-mqtt/server/v2"
-        "github.com/mochi-mqtt/server/v2/packets"
+	mqtt "github.com/mochi-mqtt/server/v2"
+	"github.com/mochi-mqtt/server/v2/packets"
 )
 
 func TestDBAuthHook(t *testing.T) {
@@ -109,14 +109,14 @@ func TestRecordMovePurgesExpiredMoves(t *testing.T) {
 		t.Error("recent move was incorrectly purged")
 	}
 	if _, ok := hook.recentMoves["new"]; !ok {
-	        t.Error("new move was not recorded")
+		t.Error("new move was not recorded")
 	}
-	}
+}
 
-	func TestDBAuthHook_ArrivalDepartureAnnouncements(t *testing.T) {
+func TestDBAuthHook_ArrivalDepartureAnnouncements(t *testing.T) {
 	database, err := db.InitDB(":memory:")
 	if err != nil {
-	        t.Fatalf("Failed to init in-memory db: %v", err)
+		t.Fatalf("Failed to init in-memory db: %v", err)
 	}
 	defer database.Close()
 
@@ -125,43 +125,43 @@ func TestRecordMovePurgesExpiredMoves(t *testing.T) {
 
 	arrivedChan := make(chan string, 5)
 	_ = mqttServer.Subscribe("world/locations/town_mill/system", 0, func(_ *mqtt.Client, _ packets.Subscription, pk packets.Packet) {
-	        arrivedChan <- string(pk.Payload)
+		arrivedChan <- string(pk.Payload)
 	})
 
 	validPacket := packets.Packet{
-	        Connect: packets.ConnectParams{
-	                Username: []byte("eldon_millwright"),
-	                Password: []byte("secret_eldon_123"),
-	        },
+		Connect: packets.ConnectParams{
+			Username: []byte("eldon_millwright"),
+			Password: []byte("secret_eldon_123"),
+		},
 	}
 	client := &mqtt.Client{
-	        ID: "test_client_announcement",
-	        Properties: mqtt.ClientProperties{
-	                Username: []byte("eldon_millwright"),
-	        },
+		ID: "test_client_announcement",
+		Properties: mqtt.ClientProperties{
+			Username: []byte("eldon_millwright"),
+		},
 	}
 
 	if !hook.OnConnectAuthenticate(client, validPacket) {
-	        t.Fatalf("Expected authentication to pass")
+		t.Fatalf("Expected authentication to pass")
 	}
 
 	select {
 	case msg := <-arrivedChan:
-	        if !strings.Contains(msg, "eldon_millwright has arrived.") {
-	                t.Errorf("Expected arrival announcement, got %q", msg)
-	        }
+		if !strings.Contains(msg, "eldon_millwright has arrived.") {
+			t.Errorf("Expected arrival announcement, got %q", msg)
+		}
 	case <-time.After(time.Second):
-	        t.Error("Timed out waiting for arrival announcement")
+		t.Error("Timed out waiting for arrival announcement")
 	}
 
 	hook.OnDisconnect(client, nil, false)
 
 	select {
 	case msg := <-arrivedChan:
-	        if !strings.Contains(msg, "eldon_millwright has left.") {
-	                t.Errorf("Expected departure announcement, got %q", msg)
-	        }
+		if !strings.Contains(msg, "eldon_millwright has left.") {
+			t.Errorf("Expected departure announcement, got %q", msg)
+		}
 	case <-time.After(time.Second):
-	        t.Error("Timed out waiting for departure announcement")
+		t.Error("Timed out waiting for departure announcement")
 	}
-	}
+}

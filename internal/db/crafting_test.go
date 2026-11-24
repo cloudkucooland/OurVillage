@@ -17,8 +17,8 @@ func TestSeedCrafting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to count workstations: %v", err)
 	}
-	if wsCount != 7 {
-		t.Errorf("Expected 7 seeded workstations, got %d", wsCount)
+	if wsCount != 8 {
+		t.Errorf("Expected 8 seeded workstations, got %d", wsCount)
 	}
 
 	var recCount int
@@ -26,8 +26,8 @@ func TestSeedCrafting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to count recipes: %v", err)
 	}
-	if recCount != 18 {
-		t.Errorf("Expected 18 seeded recipes, got %d", recCount)
+	if recCount != 32 {
+		t.Errorf("Expected 32 seeded recipes, got %d", recCount)
 	}
 }
 
@@ -277,5 +277,38 @@ func TestResolveCraftingReturnsSkillPersistenceErrors(t *testing.T) {
 	}
 	if energy != 100 {
 		t.Errorf("crafting should not deduct energy when skill progression fails, got %d", energy)
+	}
+}
+
+func TestNonConsumableToolNotConsumed(t *testing.T) {
+	database, err := InitDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	_, _ = database.Exec("INSERT OR IGNORE INTO characters (id, name, energy, current_location, status) VALUES ('eleanor_clerk', 'Eleanor', 100, 'town_hall', 'IDLE')")
+	_, _ = database.Exec("INSERT OR REPLACE INTO inventories (character_id, item_id, quantity) VALUES ('eleanor_clerk', 'parchment', 2)")
+	_, _ = database.Exec("INSERT OR REPLACE INTO inventories (character_id, item_id, quantity) VALUES ('eleanor_clerk', 'ink_bottle', 2)")
+	_, _ = database.Exec("INSERT OR REPLACE INTO inventories (character_id, item_id, quantity) VALUES ('eleanor_clerk', 'official_seal', 1)")
+
+	err = StartCrafting(database, "eleanor_clerk", "draft_official_permit", "intent_1", 1)
+	if err != nil {
+		t.Fatalf("Failed to start crafting: %v", err)
+	}
+
+	var parchmentQty, inkQty, sealQty int
+	_ = database.QueryRow("SELECT quantity FROM inventories WHERE character_id = 'eleanor_clerk' AND item_id = 'parchment'").Scan(&parchmentQty)
+	_ = database.QueryRow("SELECT quantity FROM inventories WHERE character_id = 'eleanor_clerk' AND item_id = 'ink_bottle'").Scan(&inkQty)
+	_ = database.QueryRow("SELECT quantity FROM inventories WHERE character_id = 'eleanor_clerk' AND item_id = 'official_seal'").Scan(&sealQty)
+
+	if parchmentQty != 1 {
+		t.Errorf("Expected 1 parchment remaining, got %d", parchmentQty)
+	}
+	if inkQty != 1 {
+		t.Errorf("Expected 1 ink_bottle remaining, got %d", inkQty)
+	}
+	if sealQty != 1 {
+		t.Errorf("Expected official_seal quantity to remain 1 (non-consumable), got %d", sealQty)
 	}
 }

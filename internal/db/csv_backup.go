@@ -24,6 +24,8 @@ var csvBackupTables = []string{
 	"workstations",
 	"recipes",
 	"recipe_ingredients",
+	"notice_boards",
+	"contracts",
 	"character_skills",
 	"character_known_recipes",
 	"inventories",

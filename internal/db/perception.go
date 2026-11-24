@@ -460,7 +460,6 @@ func GetCharacterPerception(database *sql.DB, characterID string) (*PerceptionDa
 		}
 	}
 
-
 	graphRows, err := database.Query(`
 		SELECT lc.from_location_id, lc.to_location_id
 		FROM location_connections lc

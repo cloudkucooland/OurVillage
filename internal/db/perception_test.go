@@ -74,11 +74,11 @@ func TestGetCharacterPerception(t *testing.T) {
 	if !foundCraftingSkill {
 		t.Errorf("expected crafting level and progress in perception, got %+v", perception.Character.Skills)
 	}
-	if len(perception.Location.AvailableRecipes) != 2 {
-		t.Fatalf("expected Eldon's two known recipes at the mill, got %+v", perception.Location.AvailableRecipes)
+	if len(perception.Location.AvailableRecipes) != 3 {
+		t.Fatalf("expected Eldon's three known recipes at the mill, got %+v", perception.Location.AvailableRecipes)
 	}
 	for _, recipe := range perception.Location.AvailableRecipes {
-		if recipe.RecipeID != "mill_flour" && recipe.RecipeID != "weave_basket" {
+		if recipe.RecipeID != "mill_flour" && recipe.RecipeID != "weave_basket" && recipe.RecipeID != "mill_wild_grain" {
 			t.Errorf("unexpected recipe in Eldon's mill perception: %s", recipe.RecipeID)
 		}
 		if recipe.DurationTicks != ScaleDurationForSkill(recipe.BaseDurationTicks, recipe.SkillLevel) {

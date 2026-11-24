@@ -27,9 +27,9 @@ const (
 )
 
 const (
-	TicksPerInGameDay  uint64 = 96
-	DaysPerSeason      uint64 = 30
-	SeasonsPerYear     uint64 = 4
+	TicksPerInGameDay uint64 = 96
+	DaysPerSeason     uint64 = 30
+	SeasonsPerYear    uint64 = 4
 )
 
 // SeasonForTick maps the master clock tick (96 ticks/day, 30 days/season) to an in-game season.
@@ -106,10 +106,20 @@ var SecondaryDropRules = []SecondaryDropRule{
 	{LocationID: "deep_forest", PrimaryTarget: "firewood", SecondaryItemID: "bird_feather", BaseRatePerHour: 0.05, DiscoveryContext: "Fallen from overhead canopy."},
 	{LocationID: "deep_forest", PrimaryTarget: "wood_log", SecondaryItemID: "bird_feather", BaseRatePerHour: 0.05, DiscoveryContext: "Fallen from overhead canopy."},
 	{LocationID: "deep_forest", PrimaryTarget: "logs", SecondaryItemID: "bird_feather", BaseRatePerHour: 0.05, DiscoveryContext: "Fallen from overhead canopy."},
+	{LocationID: "deep_forest", PrimaryTarget: "wood_log", SecondaryItemID: "wild_apples", BaseRatePerHour: 0.035, AllowedSeasons: []Season{SeasonAutumn}, DiscoveryContext: "Ripe tart wild apples hanging from deep forest branches."},
+	{LocationID: "deep_forest", PrimaryTarget: "firewood", SecondaryItemID: "pine_resin", BaseRatePerHour: 0.04, DiscoveryContext: "Sticky pine pitch oozing from split timber."},
+	{LocationID: "deep_forest", PrimaryTarget: "wood_log", SecondaryItemID: "pine_resin", BaseRatePerHour: 0.04, DiscoveryContext: "Sticky pine pitch oozing from timber logs."},
+	{LocationID: "deep_forest", PrimaryTarget: "logs", SecondaryItemID: "pine_resin", BaseRatePerHour: 0.04, DiscoveryContext: "Sticky pine pitch oozing from timber logs."},
 	{LocationID: "prairie", PrimaryTarget: "animal_fodder", SecondaryItemID: "medicinal_herbs", BaseRatePerHour: 0.04, DiscoveryContext: "Hidden among meadow grasses."},
 	{LocationID: "prairie", PrimaryTarget: "wild_grain", SecondaryItemID: "field_berries", BaseRatePerHour: 0.035, AllowedSeasons: []Season{SeasonSummer, SeasonAutumn}, DiscoveryContext: "Shaded under wild brambles."},
 	{LocationID: "prairie", PrimaryTarget: "animal_fodder", SecondaryItemID: "honey_jar", BaseRatePerHour: 0.025, DiscoveryContext: "Harvested from a wild beehive in the oak grove."},
+	{LocationID: "prairie", PrimaryTarget: "animal_fodder", SecondaryItemID: "beeswax", BaseRatePerHour: 0.03, DiscoveryContext: "Natural beeswax collected near wild beehive."},
 	{LocationID: "prairie", PrimaryTarget: "wild_grain", SecondaryItemID: "elderflowers", BaseRatePerHour: 0.035, AllowedSeasons: []Season{SeasonSpring, SeasonSummer}, DiscoveryContext: "Picked from hedgerow elder bushes."},
+	{LocationID: "prairie", PrimaryTarget: "wild_grain", SecondaryItemID: "wild_hops", BaseRatePerHour: 0.03, AllowedSeasons: []Season{SeasonSummer, SeasonAutumn}, DiscoveryContext: "Climbing wild hop vines along prairie fences."},
+	{LocationID: "prairie", PrimaryTarget: "animal_fodder", SecondaryItemID: "chamomile", BaseRatePerHour: 0.035, AllowedSeasons: []Season{SeasonSpring, SeasonSummer}, DiscoveryContext: "Blooming white chamomile flowers in the meadow."},
+	{LocationID: "prairie", PrimaryTarget: "wild_grain", SecondaryItemID: "culinary_herbs", BaseRatePerHour: 0.03, AllowedSeasons: []Season{SeasonSpring, SeasonSummer, SeasonAutumn}, DiscoveryContext: "Fragrant rosemary and thyme clumps."},
+	{LocationID: "prairie", PrimaryTarget: "wild_grain", SecondaryItemID: "blackberries", BaseRatePerHour: 0.035, AllowedSeasons: []Season{SeasonSummer, SeasonAutumn}, DiscoveryContext: "Plump dark blackberries tangled in meadow briars."},
+	{LocationID: "prairie", PrimaryTarget: "wild_grain", SecondaryItemID: "flax_fiber", BaseRatePerHour: 0.035, AllowedSeasons: []Season{SeasonSpring, SeasonSummer}, DiscoveryContext: "Fibrous flax stems growing among wild prairie grass."},
 	{LocationID: "riverbank", PrimaryTarget: "fresh_water", SecondaryItemID: "wild_mint", BaseRatePerHour: 0.04, AllowedSeasons: []Season{SeasonSpring, SeasonSummer}, DiscoveryContext: "Growing along the damp riverbank."},
 	{LocationID: "riverbank", PrimaryTarget: "clay_lumps", SecondaryItemID: "freshwater_pearl", BaseRatePerHour: 0.005, DiscoveryContext: "Uncovered in riverbed mussel."},
 	{LocationID: "riverbank", PrimaryTarget: "fresh_water", SecondaryItemID: "river_reeds", BaseRatePerHour: 0.06, DiscoveryContext: "Gathered along the shoreline."},

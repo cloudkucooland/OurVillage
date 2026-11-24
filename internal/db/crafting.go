@@ -63,6 +63,7 @@ var DefaultWorkstations = []Workstation{
 	{ID: "apothecary_kit", Name: "Apothecary Lab", LocationID: "herbalist", EquipmentPresent: "Mortar & pestle, alembic", CraftingDomain: "Remedies, tinctures, dried herbs"},
 	{ID: "timber_saw", Name: "Timber Pit Saw", LocationID: "lumberjack_lodge", EquipmentPresent: "Pit saws, shaping benches", CraftingDomain: "Planks, beams, firewood bundles"},
 	{ID: "carpenter_bench", Name: "Carpenter's Workbench", LocationID: "lumberjack_lodge", EquipmentPresent: "Carving benches, hand saws, planes", CraftingDomain: "Wooden furniture, wheelbarrows, buckets, bowls"},
+	{ID: "clerk_desk", Name: "Town Clerk Desk", LocationID: "town_hall", EquipmentPresent: "Writing desk, ledger, brass stamp", CraftingDomain: "Deeds, permits, municipal documents"},
 }
 
 var DefaultRecipes = []Recipe{
@@ -331,6 +332,226 @@ var DefaultRecipes = []Recipe{
 			{ItemID: "elderflowers", Quantity: 4},
 			{ItemID: "honey_jar", Quantity: 1},
 			{ItemID: "fresh_water", Quantity: 2},
+		},
+	},
+	{
+		ID:              "brew_herbed_ale",
+		Name:            "Brewing Herbed Meadow Ale",
+		RequiredStation: "brew_cask",
+		OutputItemID:    "ale_mug",
+		OutputQuantity:  3,
+		DurationTicks:   12,
+		EnergyCost:      5,
+		RequiredSkillID: "crafting",
+		MinSkillLevel:   2,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "wild_hops", Quantity: 1},
+			{ItemID: "wheat", Quantity: 2},
+			{ItemID: "fresh_water", Quantity: 2},
+		},
+	},
+	{
+		ID:              "brew_blackberry_ale",
+		Name:            "Brewing Fruity Blackberry Ale",
+		RequiredStation: "brew_cask",
+		OutputItemID:    "ale_mug",
+		OutputQuantity:  3,
+		DurationTicks:   12,
+		EnergyCost:      5,
+		RequiredSkillID: "crafting",
+		MinSkillLevel:   2,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "blackberries", Quantity: 2},
+			{ItemID: "wheat", Quantity: 2},
+			{ItemID: "fresh_water", Quantity: 2},
+		},
+	},
+	{
+		ID:              "brew_apple_cider",
+		Name:            "Brewing Hard Apple Cider",
+		RequiredStation: "brew_cask",
+		OutputItemID:    "berry_wine",
+		OutputQuantity:  2,
+		DurationTicks:   14,
+		EnergyCost:      5,
+		RequiredSkillID: "crafting",
+		MinSkillLevel:   2,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "wild_apples", Quantity: 3},
+			{ItemID: "sugar", Quantity: 1},
+		},
+	},
+	{
+		ID:              "brew_chamomile_tea",
+		Name:            "Brewing Calming Chamomile Tea",
+		RequiredStation: "apothecary_kit",
+		OutputItemID:    "willowbark_tea",
+		OutputQuantity:  2,
+		DurationTicks:   8,
+		EnergyCost:      4,
+		RequiredSkillID: "herbalism",
+		MinSkillLevel:   1,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "chamomile", Quantity: 2},
+			{ItemID: "fresh_water", Quantity: 1},
+		},
+	},
+	{
+		ID:              "herb_roast_mutton",
+		Name:            "Herb-Roasted Mutton",
+		RequiredStation: "stone_hearth",
+		OutputItemID:    "roasted_mutton",
+		OutputQuantity:  2,
+		DurationTicks:   10,
+		EnergyCost:      5,
+		RequiredSkillID: "crafting",
+		MinSkillLevel:   1,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "raw_mutton", Quantity: 2},
+			{ItemID: "culinary_herbs", Quantity: 1},
+			{ItemID: "firewood", Quantity: 1},
+		},
+	},
+	{
+		ID:              "cure_mutton",
+		Name:            "Salt-Cured Mutton",
+		RequiredStation: "stone_hearth",
+		OutputItemID:    "roasted_mutton",
+		OutputQuantity:  2,
+		DurationTicks:   12,
+		EnergyCost:      4,
+		RequiredSkillID: "crafting",
+		MinSkillLevel:   1,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "raw_mutton", Quantity: 2},
+			{ItemID: "salt", Quantity: 1},
+		},
+	},
+	{
+		ID:              "bake_berry_tart",
+		Name:            "Baking Sweet Berry Tart",
+		RequiredStation: "stone_hearth",
+		OutputItemID:    "bread",
+		OutputQuantity:  2,
+		DurationTicks:   12,
+		EnergyCost:      6,
+		RequiredSkillID: "crafting",
+		MinSkillLevel:   2,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "flour", Quantity: 1},
+			{ItemID: "blackberries", Quantity: 2},
+			{ItemID: "butter", Quantity: 1},
+			{ItemID: "eggs", Quantity: 1},
+		},
+	},
+	{
+		ID:              "bake_honey_cake",
+		Name:            "Baking Honey Cake",
+		RequiredStation: "stone_hearth",
+		OutputItemID:    "bread",
+		OutputQuantity:  2,
+		DurationTicks:   15,
+		EnergyCost:      8,
+		RequiredSkillID: "crafting",
+		MinSkillLevel:   3,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "flour", Quantity: 1},
+			{ItemID: "honey_jar", Quantity: 1},
+			{ItemID: "butter", Quantity: 1},
+			{ItemID: "eggs", Quantity: 1},
+			{ItemID: "sugar", Quantity: 1},
+		},
+	},
+	{
+		ID:              "craft_healing_salve",
+		Name:            "Crafting Healing Salve",
+		RequiredStation: "apothecary_kit",
+		OutputItemID:    "charcoal_draught",
+		OutputQuantity:  1,
+		DurationTicks:   10,
+		EnergyCost:      5,
+		RequiredSkillID: "herbalism",
+		MinSkillLevel:   2,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "medicinal_herbs", Quantity: 2},
+			{ItemID: "beeswax", Quantity: 1},
+		},
+	},
+	{
+		ID:              "brew_framboise_ale",
+		Name:            "Brewing Framboise Berry Ale",
+		RequiredStation: "brew_cask",
+		OutputItemID:    "framboise_ale",
+		OutputQuantity:  3,
+		DurationTicks:   14,
+		EnergyCost:      6,
+		RequiredSkillID: "crafting",
+		MinSkillLevel:   2,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "blackberries", Quantity: 2},
+			{ItemID: "wild_hops", Quantity: 1},
+			{ItemID: "wheat", Quantity: 2},
+			{ItemID: "fresh_water", Quantity: 2},
+		},
+	},
+	{
+		ID:              "craft_ceramic_bowl",
+		Name:            "Firing Ceramic Bowls",
+		RequiredStation: "stone_hearth",
+		OutputItemID:    "ceramic_bowl",
+		OutputQuantity:  2,
+		DurationTicks:   10,
+		EnergyCost:      5,
+		RequiredSkillID: "crafting",
+		MinSkillLevel:   1,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "clay_lumps", Quantity: 2},
+			{ItemID: "firewood", Quantity: 1},
+		},
+	},
+	{
+		ID:              "craft_clay_jug",
+		Name:            "Firing Clay Jug",
+		RequiredStation: "stone_hearth",
+		OutputItemID:    "clay_jug",
+		OutputQuantity:  1,
+		DurationTicks:   12,
+		EnergyCost:      6,
+		RequiredSkillID: "crafting",
+		MinSkillLevel:   2,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "clay_lumps", Quantity: 3},
+			{ItemID: "firewood", Quantity: 1},
+		},
+	},
+	{
+		ID:              "mill_wild_grain",
+		Name:            "Milling Wild Grain into Flour",
+		RequiredStation: "millstones",
+		OutputItemID:    "flour",
+		OutputQuantity:  1,
+		DurationTicks:   6,
+		EnergyCost:      3,
+		RequiredSkillID: "crafting",
+		MinSkillLevel:   1,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "wild_grain", Quantity: 2},
+		},
+	},
+	{
+		ID:              "draft_official_permit",
+		Name:            "Drafting Official Town Permit",
+		RequiredStation: "clerk_desk",
+		OutputItemID:    "official_permit",
+		OutputQuantity:  1,
+		DurationTicks:   10,
+		EnergyCost:      4,
+		RequiredSkillID: "crafting",
+		MinSkillLevel:   1,
+		Ingredients: []RecipeIngredient{
+			{ItemID: "parchment", Quantity: 1},
+			{ItemID: "ink_bottle", Quantity: 1},
+			{ItemID: "official_seal", Quantity: 1}, // Non-consumable reusable tool
 		},
 	},
 }
@@ -769,12 +990,17 @@ func StartCrafting(db *sql.DB, characterID, recipeID, intentID string, startTick
 	}
 	defer tx.Rollback()
 
-	// Deduct ingredients immediately from character inventory
+	// Deduct ingredients immediately from character inventory (skip reusable tools and seals)
 	for _, ing := range recipe.Ingredients {
 		var curQty int
-		err := tx.QueryRow("SELECT quantity FROM inventories WHERE character_id = ? AND item_id = ?", characterID, ing.ItemID).Scan(&curQty)
+		var isReusable int
+		err := tx.QueryRow("SELECT i.quantity, COALESCE(it.is_reusable, 0) FROM inventories i JOIN items it ON i.item_id = it.id WHERE character_id = ? AND item_id = ?", characterID, ing.ItemID).Scan(&curQty, &isReusable)
 		if err != nil || curQty < ing.Quantity {
 			return fmt.Errorf("insufficient ingredients for %s", ing.ItemID)
+		}
+
+		if isReusable == 1 {
+			continue // Do not consume reusable tools or seals
 		}
 
 		if curQty == ing.Quantity {
@@ -983,4 +1209,3 @@ func ResolveCrafting(db *sql.DB, characterID, recipeID string, elapsedTicks ...i
 		NarrativeLog:  narrativeLog,
 	}, nil
 }
-
