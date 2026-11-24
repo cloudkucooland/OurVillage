@@ -18,6 +18,7 @@ import (
 	"ourvillage/internal/client/dispatcher"
 	"ourvillage/internal/client/memory"
 	"ourvillage/internal/client/model"
+	"ourvillage/internal/client/spatial"
 )
 
 type BenchmarkResult struct {
@@ -43,6 +44,8 @@ type ModelReport struct {
 	ModelName        string            `json:"model_name"`
 	Backend          string            `json:"backend"`
 	ContextSize      int               `json:"context_size"`
+	PromptMode       string            `json:"prompt_mode"`
+	DBPath           string            `json:"db_path,omitempty"`
 	Temperature      float64           `json:"temperature"`
 	TopP             float64           `json:"top_p"`
 	TopK             int               `json:"top_k"`
@@ -79,10 +82,26 @@ type testCase struct {
 	ValidateFunc func(output string) (jsonValid bool, intentValid bool, errStr string)
 }
 
+type characterFixture struct {
+	AgentID          string
+	AgentName        string
+	Traits           []memory.IdentityTrait
+	SelfReflections  []memory.SelfReflection
+	Relationships    []memory.RelationshipMemory
+	PeerReflections  map[string][]memory.Reflection
+	Projects         []memory.PersonalProject
+	LocationMemories []memory.LocationMemory
+	UnreflectedEvts  []memory.EventRecord
+	ProjectEvts      []memory.EventRecord
+}
+
 func main() {
 	backendFlag := flag.String("backend", "", "Model backend: llama-pure or rkllm (required unless --rejudge is set)")
 	modelsDirFlag := flag.String("models-dir", ".", "Directory containing model files (*.gguf or *.rkllm)")
 	outputDirFlag := flag.String("output-dir", ".", "Directory to save JSON output reports")
+	dbPathFlag := flag.String("db-path", "", "Optional path to a character SQLite memory database (opened read-only)")
+	agentIDFlag := flag.String("agent-id", "", "Character agent ID (defaults to --db-path filename stem or 'martha_miller')")
+	promptModeFlag := flag.String("prompt-mode", "both", "Prompt profile mode for gameplay ticks: small, regular, or both")
 	maxTokensFlag := flag.Int("max-tokens", 512, "Maximum completion tokens")
 	tempFlag := flag.Float64("temperature", 0.2, "Sampling temperature")
 	topPFlag := flag.Float64("top-p", 0.9, "Top-P sampling")
@@ -137,11 +156,15 @@ func main() {
 		log.Fatalf("Error: invalid backend %q. Must be 'llama-pure' or 'rkllm'", backend)
 	}
 
+	promptMode := strings.ToLower(strings.TrimSpace(*promptModeFlag))
+	if promptMode != "small" && promptMode != "regular" && promptMode != "both" {
+		log.Fatalf("Error: invalid --prompt-mode %q. Must be 'small', 'regular', or 'both'", promptMode)
+	}
+
 	if err := os.MkdirAll(*outputDirFlag, 0755); err != nil {
 		log.Fatalf("Error creating output directory %q: %v", *outputDirFlag, err)
 	}
 
-	// Load grammar file if exists (used strictly for gameplay intents, NOT memory synthesis)
 	var grammarContent string
 	if *grammarFileFlag != "" {
 		if data, err := os.ReadFile(*grammarFileFlag); err == nil {
@@ -152,7 +175,6 @@ func main() {
 		}
 	}
 
-	// Discover model files
 	var ext string
 	if backend == "llama-pure" {
 		ext = ".gguf"
@@ -183,7 +205,15 @@ func main() {
 
 	log.Printf("[ModelCheck] Found %d models for backend %s in %q", len(modelPaths), backend, *modelsDirFlag)
 
-	testCases, err := buildTestCases()
+	fixture, err := loadCharacterFixture(*dbPathFlag, *agentIDFlag)
+	if err != nil {
+		log.Fatalf("Error loading character fixture: %v", err)
+	}
+	log.Printf("[ModelCheck] Character fixture ready: agent=%s (%s), traits=%d, reflections=%d, relationships=%d, projects=%d, location_memories=%d, prompt_mode=%s",
+		fixture.AgentName, fixture.AgentID, len(fixture.Traits), len(fixture.SelfReflections),
+		len(fixture.Relationships), len(fixture.Projects), len(fixture.LocationMemories), promptMode)
+
+	testCases, err := buildTestCases(fixture, promptMode)
 	if err != nil {
 		log.Fatalf("Error building test cases: %v", err)
 	}
@@ -208,7 +238,7 @@ func main() {
 				continue
 			}
 
-			log.Printf("[ModelCheck] Testing model %q with context size %d...", modelName, ctxSize)
+			log.Printf("[ModelCheck] Testing model %q with context size %d (%d prompts)...", modelName, ctxSize, len(testCases))
 
 			activeCases := testCases
 			if *quickFlag {
@@ -320,6 +350,8 @@ func main() {
 				ModelName:        modelName,
 				Backend:          backend,
 				ContextSize:      ctxSize,
+				PromptMode:       promptMode,
+				DBPath:           *dbPathFlag,
 				Temperature:      *tempFlag,
 				TopP:             *topPFlag,
 				TopK:             *topKFlag,
@@ -355,32 +387,224 @@ func main() {
 	log.Printf("[ModelCheck] Benchmarking completed successfully.")
 }
 
-func buildTestCases() ([]testCase, error) {
-	systemPromptHeader := `You are an AI agent in OurVillage. Respond ONLY with valid JSON matching the intent schema. Do not wrap in markdown or add extra text. Keep "thought" concise (under 15 words).
-Valid Action Enums: MOVE, TRAVEL, CHAT, TRANSFER, GIVE, FORAGE, COLLECT, PLANT, HARVEST, CANCEL_ACTION, DROP, PICKUP, EQUIP, UNEQUIP, CRAFT, LOOK, STATUS, BUY, SELL, RESTOCK, EAT, DRINK, REST.
-Schema format:
-{
-  "thought": "<reasoning>",
-  "action": "<ACTION_ENUM>",
-  "payload": { ... }
+func formatDisplayName(id string) string {
+	words := strings.Split(id, "_")
+	for i, w := range words {
+		if len(w) > 0 {
+			words[i] = strings.ToUpper(w[:1]) + w[1:]
+		}
+	}
+	return strings.Join(words, " ")
 }
 
-Examples:
-- Move: {"thought": "Walking to mill", "action": "MOVE", "payload": {"target_location": "grain_mill"}}
-- Forage: {"thought": "Gathering wood", "action": "FORAGE", "payload": {"target_resource": "firewood"}}
-- Chat: {"thought": "Greeting John", "action": "CHAT", "payload": {"message": "Hello John!"}}
-- Craft: {"thought": "Making workbench", "action": "CRAFT", "payload": {"recipe_id": "workbench"}}
+func loadCharacterFixture(dbPath, agentIDFlag string) (*characterFixture, error) {
+	agentID := strings.TrimSpace(agentIDFlag)
+	if agentID == "" && dbPath != "" {
+		stem := strings.TrimSuffix(filepath.Base(dbPath), filepath.Ext(dbPath))
+		stem = strings.TrimSuffix(stem, "_memory")
+		if stem != "" {
+			agentID = stem
+		}
+	}
+	if agentID == "" {
+		agentID = "martha_miller"
+	}
 
-Task: `
+	f := &characterFixture{
+		AgentID:         agentID,
+		AgentName:       formatDisplayName(agentID),
+		PeerReflections: make(map[string][]memory.Reflection),
+	}
 
-	actionPrompts := []struct {
-		category string
-		task     string
-	}{
-		{"action_move", `You are Martha the Miller in OurVillage. You are currently at village_square. You need to walk to the grain_mill to start grinding flour.`},
-		{"action_forage", `You are Martha the Miller. You are at the forest_edge. You need to gather firewood to heat the mill.`},
-		{"action_craft", `You are Martha the Miller. You are at the woodworking_shop. You have timber and tools. You need to craft a workbench.`},
-		{"action_chat", `You are Martha the Miller. You encounter John the Blacksmith at the tavern. Send a friendly chat message asking about iron prices.`},
+	if dbPath != "" {
+		if strings.HasPrefix(dbPath, "~/") {
+			if home, err := os.UserHomeDir(); err == nil {
+				dbPath = filepath.Join(home, dbPath[2:])
+			}
+		}
+		if _, err := os.Stat(dbPath); err != nil {
+			return nil, fmt.Errorf("character database %q not found: %w", dbPath, err)
+		}
+
+		// Open via SQLite URI read-only so benchmarking never modifies or locks the character DB
+		roURI := fmt.Sprintf("file:%s?mode=ro", filepath.ToSlash(dbPath))
+		store, err := memory.NewClientMemoryStore(roURI)
+		if err != nil {
+			// Fallback to direct path if URI mode fails on custom VFS
+			store, err = memory.NewClientMemoryStore(dbPath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to open character DB %q: %w", dbPath, err)
+			}
+		}
+		defer store.Close()
+
+		if traits, err := store.GetIdentityTraits(); err == nil {
+			f.Traits = traits
+		}
+		if refs, err := store.GetRecentSelfReflections(6); err == nil {
+			f.SelfReflections = refs
+		}
+		if rels, err := store.GetRecentRelationships(6); err == nil {
+			f.Relationships = rels
+			for _, rel := range rels {
+				if peerRefs, refErr := store.GetReflectionsForPeer(rel.PeerID, 4); refErr == nil {
+					f.PeerReflections[rel.PeerID] = peerRefs
+				}
+			}
+		}
+		if projects, err := store.GetProjects(true, 6); err == nil {
+			f.Projects = projects
+		}
+		if locMems, err := store.GetLocationMemories(); err == nil {
+			f.LocationMemories = locMems
+		}
+		if evts, err := store.GetUnreflectedEvents(10); err == nil {
+			f.UnreflectedEvts = evts
+		}
+		if projEvts, err := store.GetUnprocessedProjectEvents(10); err == nil {
+			f.ProjectEvts = projEvts
+		}
+	}
+
+	// Populate realistic defaults for any empty slices so both DB-backed and standalone runs work
+	if len(f.Traits) == 0 {
+		f.Traits = []memory.IdentityTrait{
+			{Key: "craft_philosophy", Value: "Steady milling and honest measures keep the whole village fed.", SalienceScore: 8},
+			{Key: "community_bond", Value: "I keep my word to neighbors who depend on morning flour deliveries.", SalienceScore: 7},
+		}
+	}
+	if len(f.SelfReflections) == 0 {
+		f.SelfReflections = []memory.SelfReflection{
+			{Tick: 390, ReflectionText: "Checked the millstones before dawn so the morning wheat batch would grind cleanly."},
+		}
+	}
+	if len(f.Relationships) == 0 {
+		f.Relationships = []memory.RelationshipMemory{
+			{
+				PeerID:      "eleanor_clerk",
+				Summary:     "Eleanor manages town hall ledgers and coordinates village grain requisitions.",
+				Commitments: []string{"Confirm weekly flour quota for the town pantry"},
+				UpdatedTick: 410,
+			},
+			{
+				PeerID:      "gideon_forge",
+				Summary:     "Gideon runs the blacksmith forge and supplies iron fittings for mill repairs.",
+				Commitments: []string{},
+				UpdatedTick: 380,
+			},
+		}
+	}
+	if len(f.Projects) == 0 {
+		f.Projects = []memory.PersonalProject{
+			{
+				ID:          "millrace-sediment-guard",
+				Title:       "Install removable grate on millrace intake",
+				Motivation:  "Stop river silt from fouling the waterwheel paddles before evening grain deliveries",
+				Status:      "active",
+				Progress:    "Inspected intake channel and measured width",
+				NextStep:    "Source iron bars from Gideon at the forge",
+				People:      []string{"gideon_forge"},
+				Locations:   []string{"town_mill", "blacksmith"},
+				UpdatedTick: 400,
+			},
+		}
+	}
+	if len(f.LocationMemories) == 0 {
+		f.LocationMemories = []memory.LocationMemory{
+			{
+				LocationID:     "blacksmith",
+				LocationName:   "Blacksmith Forge",
+				MemoryCategory: "shop",
+				MemoryText:     "Sells: Iron Bar (iron_bar - 4 gold, 2.0 kg each, stock: 6), Iron Wrench (iron_wrench - 8 gold, 1.5 kg each, stock: 2)",
+				UpdatedAtTick:  395,
+			},
+			{
+				LocationID:     "town_mill",
+				LocationName:   "Town Mill",
+				MemoryCategory: "recipes",
+				MemoryText:     "Recipes: Fine Flour (recipe_id: fine_flour, output: 2x fine_flour)",
+				UpdatedAtTick:  400,
+			},
+		}
+	}
+
+	return f, nil
+}
+
+func buildSpatialContext(f *characterFixture, smallSystem bool) (*spatial.ContextManager, []spatial.PeerMemoryContext, []spatial.LocationMemoryContext) {
+	cm := spatial.NewContextManager(spatial.ContextManagerConfig{
+		AgentID:         f.AgentID,
+		AgentName:       f.AgentName,
+		InitialLocation: "town_mill",
+		LocationName:    "Town Mill",
+		MaxSensoryLines: 6,
+		SmallSystem:     smallSystem,
+		DefaultGold:     18,
+		DefaultEnergy:   82,
+	})
+
+	traitsMap := make(map[string]string, len(f.Traits))
+	for _, t := range f.Traits {
+		traitsMap[t.Key] = t.Value
+	}
+	cm.SetIdentityTraits(traitsMap)
+
+	var refs []string
+	for _, r := range f.SelfReflections {
+		refs = append(refs, r.ReflectionText)
+	}
+	cm.SetSelfReflections(refs)
+
+	var projects []spatial.PersonalProjectContext
+	for _, p := range f.Projects {
+		projects = append(projects, spatial.PersonalProjectContext{
+			Title:      p.Title,
+			Motivation: p.Motivation,
+			Progress:   p.Progress,
+			NextStep:   p.NextStep,
+		})
+	}
+	cm.SetPersonalProjects(projects)
+
+	var peerMems []spatial.PeerMemoryContext
+	for _, rel := range f.Relationships {
+		var rTexts []string
+		for _, r := range f.PeerReflections[rel.PeerID] {
+			rTexts = append(rTexts, r.ReflectionText)
+		}
+		peerMems = append(peerMems, spatial.PeerMemoryContext{
+			PeerID:      rel.PeerID,
+			PeerName:    formatDisplayName(rel.PeerID),
+			Summary:     rel.Summary,
+			Commitments: rel.Commitments,
+			Reflections: rTexts,
+		})
+	}
+
+	var locMems []spatial.LocationMemoryContext
+	for _, lm := range f.LocationMemories {
+		locMems = append(locMems, spatial.LocationMemoryContext{
+			LocationID:     lm.LocationID,
+			LocationName:   lm.LocationName,
+			MemoryCategory: lm.MemoryCategory,
+			MemoryText:     lm.MemoryText,
+		})
+	}
+
+	cm.IngestTimeTick(spatial.TimeTickMessage{
+		Tick:       425,
+		InGameTime: "09:30",
+		IsNight:    false,
+		Weather:    "clear",
+	})
+
+	return cm, peerMems, locMems
+}
+
+func buildGameplayCasesForMode(f *characterFixture, smallSystem bool) []testCase {
+	modeLabel := "regular"
+	if smallSystem {
+		modeLabel = "small"
 	}
 
 	validateGameIntent := func(output string) (bool, bool, string) {
@@ -396,27 +620,283 @@ Task: `
 	}
 
 	var cases []testCase
-	for _, ap := range actionPrompts {
+
+	// Scenario 1: Autonomous Needs Priority (Low Hunger with Bread in Inventory -> EAT)
+	{
+		cm, peerMems, locMems := buildSpatialContext(f, smallSystem)
+		syncPayload := `{
+			"type": "STATE_SYNC",
+			"status": "OK",
+			"current_tick": 425,
+			"private_status": {
+				"id": "` + f.AgentID + `",
+				"name": "` + f.AgentName + `",
+				"gold": 18,
+				"hunger": 22,
+				"energy": 78,
+				"health": 95,
+				"status": "IDLE",
+				"current_location": "town_mill",
+				"home_location_id": "millers_cottage",
+				"home_location_name": "Miller's Cottage",
+				"work_location_id": "town_mill",
+				"work_location_name": "Town Mill",
+				"carrying_weight_kg": 4.5,
+				"max_capacity_kg": 20.0,
+				"overburden_limit_kg": 25.0,
+				"slots_used": 2,
+				"max_slots": 10,
+				"encumbrance": "LIGHT",
+				"skills": [{"skill_id": "milling", "level": 4, "experience": 420, "xp_into_level": 20, "xp_to_next_level": 80}],
+				"inventory": [
+					{"item_id": "bread", "name": "Bread", "quantity": 2},
+					{"item_id": "wheat", "name": "Wheat", "quantity": 4}
+				]
+			},
+			"location": {
+				"id": "town_mill",
+				"name": "Town Mill",
+				"description": "A stone watermill beside the river with heavy grinding stones and sacks of grain.",
+				"owner_id": "` + f.AgentID + `",
+				"characters_present": [],
+				"workstations": [{"id": "millstone", "name": "Millstone"}],
+				"available_recipes": [
+					{
+						"recipe_id": "fine_flour",
+						"recipe_name": "Fine Flour",
+						"output_item_id": "fine_flour",
+						"output_quantity": 2,
+						"duration_ticks": 3,
+						"energy_cost": 8,
+						"ingredients": [{"item_id": "wheat", "quantity": 2}]
+					}
+				],
+				"connected_locations": [
+					{"location_id": "town_square", "location_name": "Town Square", "travel_ticks": 1}
+				]
+			}
+		}`
+		_ = cm.IngestDirectResponse([]byte(syncPayload))
 		cases = append(cases, testCase{
-			Category:     ap.category,
-			Prompt:       systemPromptHeader + ap.task,
+			Category:     fmt.Sprintf("action_needs_%s", modeLabel),
+			Prompt:       cm.BuildPrompt(peerMems, locMems),
 			UseGrammar:   true,
 			ValidateFunc: validateGameIntent,
 		})
 	}
 
-	// Production Memory Prompt 1: Relationship Reflection (Martha -> Eleanor)
-	relEvents := []memory.EventRecord{
-		{ID: 101, Tick: 412, PeerID: "eleanor_clerk", EventType: "CHAT", RawPayload: `{"speaker":"eleanor_clerk","message":"Martha, you look exhausted from hauling sacks all morning. Have some warm tea before you head back to the mill."}`},
-		{ID: 102, Tick: 413, PeerID: "eleanor_clerk", EventType: "CHAT", RawPayload: `{"speaker":"martha_miller","message":"Thank you, Eleanor. Once the afternoon wheat batch is ground, I will bring a fresh sack of fine flour by the town hall."}`},
-		{ID: 103, Tick: 415, PeerID: "eleanor_clerk", EventType: "TRANSFER", RawPayload: `{"from":"eleanor_clerk","to":"martha_miller","item":"herbal_tea","quantity":1}`},
+	// Scenario 2: Crafting at Workstation (Wheat in Inventory + Fine Flour Recipe -> CRAFT)
+	{
+		cm, peerMems, locMems := buildSpatialContext(f, smallSystem)
+		syncPayload := `{
+			"type": "STATE_SYNC",
+			"status": "OK",
+			"current_tick": 425,
+			"private_status": {
+				"id": "` + f.AgentID + `",
+				"name": "` + f.AgentName + `",
+				"gold": 18,
+				"hunger": 82,
+				"energy": 84,
+				"health": 100,
+				"status": "IDLE",
+				"current_location": "town_mill",
+				"work_location_id": "town_mill",
+				"work_location_name": "Town Mill",
+				"carrying_weight_kg": 4.0,
+				"max_capacity_kg": 20.0,
+				"overburden_limit_kg": 25.0,
+				"slots_used": 1,
+				"max_slots": 10,
+				"encumbrance": "LIGHT",
+				"skills": [{"skill_id": "milling", "level": 4, "experience": 420, "xp_into_level": 20, "xp_to_next_level": 80}],
+				"inventory": [
+					{"item_id": "wheat", "name": "Wheat", "quantity": 4}
+				]
+			},
+			"location": {
+				"id": "town_mill",
+				"name": "Town Mill",
+				"description": "A stone watermill beside the river with heavy grinding stones.",
+				"owner_id": "` + f.AgentID + `",
+				"characters_present": [],
+				"workstations": [{"id": "millstone", "name": "Millstone"}],
+				"available_recipes": [
+					{
+						"recipe_id": "fine_flour",
+						"recipe_name": "Fine Flour",
+						"output_item_id": "fine_flour",
+						"output_quantity": 2,
+						"duration_ticks": 3,
+						"energy_cost": 8,
+						"ingredients": [{"item_id": "wheat", "quantity": 2}]
+					}
+				],
+				"connected_locations": [
+					{"location_id": "town_square", "location_name": "Town Square", "travel_ticks": 1}
+				]
+			}
+		}`
+		_ = cm.IngestDirectResponse([]byte(syncPayload))
+		cases = append(cases, testCase{
+			Category:     fmt.Sprintf("action_craft_%s", modeLabel),
+			Prompt:       cm.BuildPrompt(peerMems, locMems),
+			UseGrammar:   true,
+			ValidateFunc: validateGameIntent,
+		})
 	}
+
+	// Scenario 3: Multi-Step Project Travel (Source Iron Bars at Blacksmith -> TRAVEL)
+	{
+		cm, peerMems, locMems := buildSpatialContext(f, smallSystem)
+		syncPayload := `{
+			"type": "STATE_SYNC",
+			"status": "OK",
+			"current_tick": 425,
+			"private_status": {
+				"id": "` + f.AgentID + `",
+				"name": "` + f.AgentName + `",
+				"gold": 18,
+				"hunger": 80,
+				"energy": 85,
+				"health": 100,
+				"status": "IDLE",
+				"current_location": "town_mill",
+				"carrying_weight_kg": 1.5,
+				"max_capacity_kg": 20.0,
+				"overburden_limit_kg": 25.0,
+				"slots_used": 1,
+				"max_slots": 10,
+				"encumbrance": "LIGHT",
+				"inventory": [
+					{"item_id": "iron_wrench", "name": "Iron Wrench", "quantity": 1}
+				]
+			},
+			"location": {
+				"id": "town_mill",
+				"name": "Town Mill",
+				"description": "A stone watermill beside the river.",
+				"characters_present": [],
+				"connected_locations": [
+					{"location_id": "town_square", "location_name": "Town Square", "travel_ticks": 1}
+				]
+			},
+			"location_graph": [
+				{"from_location_id": "town_mill", "to_location_id": "town_square"},
+				{"from_location_id": "town_square", "to_location_id": "blacksmith"}
+			]
+		}`
+		_ = cm.IngestDirectResponse([]byte(syncPayload))
+		cases = append(cases, testCase{
+			Category:     fmt.Sprintf("action_travel_%s", modeLabel),
+			Prompt:       cm.BuildPrompt(peerMems, locMems),
+			UseGrammar:   true,
+			ValidateFunc: validateGameIntent,
+		})
+	}
+
+	// Scenario 4: Social Dialogue Response (Peer Present + Direct Question -> CHAT)
+	{
+		cm, peerMems, locMems := buildSpatialContext(f, smallSystem)
+		syncPayload := `{
+			"type": "STATE_SYNC",
+			"status": "OK",
+			"current_tick": 425,
+			"private_status": {
+				"id": "` + f.AgentID + `",
+				"name": "` + f.AgentName + `",
+				"gold": 18,
+				"hunger": 78,
+				"energy": 80,
+				"health": 100,
+				"status": "IDLE",
+				"current_location": "town_mill",
+				"carrying_weight_kg": 3.0,
+				"max_capacity_kg": 20.0,
+				"overburden_limit_kg": 25.0,
+				"slots_used": 1,
+				"max_slots": 10,
+				"encumbrance": "LIGHT",
+				"inventory": [
+					{"item_id": "fine_flour", "name": "Fine Flour", "quantity": 2}
+				]
+			},
+			"location": {
+				"id": "town_mill",
+				"name": "Town Mill",
+				"description": "A stone watermill beside the river.",
+				"characters_present": [
+					{"id": "eleanor_clerk", "name": "Eleanor Clerk"}
+				],
+				"connected_locations": [
+					{"location_id": "town_square", "location_name": "Town Square", "travel_ticks": 1}
+				]
+			}
+		}`
+		_ = cm.IngestDirectResponse([]byte(syncPayload))
+		cm.IngestChat("eleanor_clerk", "Good morning! Do you have any fine flour ready for the town pantry yet?")
+		cases = append(cases, testCase{
+			Category:     fmt.Sprintf("action_chat_%s", modeLabel),
+			Prompt:       cm.BuildPrompt(peerMems, locMems),
+			UseGrammar:   true,
+			ValidateFunc: validateGameIntent,
+		})
+	}
+
+	return cases
+}
+
+func buildTestCases(f *characterFixture, promptMode string) ([]testCase, error) {
+	var cases []testCase
+
+	if promptMode == "small" || promptMode == "both" {
+		cases = append(cases, buildGameplayCasesForMode(f, true)...)
+	}
+	if promptMode == "regular" || promptMode == "both" {
+		cases = append(cases, buildGameplayCasesForMode(f, false)...)
+	}
+
+	// Production Memory Prompt 1: Relationship Reflection (uses synthesizer with concrete agentID)
+	peerID := "eleanor_clerk"
 	prevRel := memory.RelationshipMemory{
-		PeerID:      "eleanor_clerk",
+		PeerID:      peerID,
 		Summary:     "Eleanor manages town hall ledgers and coordinates village grain requisitions.",
 		Commitments: []string{"Confirm weekly flour quota for the town pantry"},
 	}
-	relPrompt := memory.BuildRelationshipPrompt("eleanor_clerk", relEvents, prevRel)
+	if len(f.Relationships) > 0 {
+		peerID = f.Relationships[0].PeerID
+		prevRel = f.Relationships[0]
+	}
+
+	relEvents := []memory.EventRecord{
+		{ID: 101, Tick: 412, PeerID: peerID, EventType: "CHAT", RawPayload: fmt.Sprintf(`{"speaker":%q,"message":"You look exhausted from hauling sacks all morning. Have some warm tea before you head back."}`, peerID)},
+		{ID: 102, Tick: 413, PeerID: peerID, EventType: "CHAT", RawPayload: fmt.Sprintf(`{"speaker":%q,"message":"Thank you. Once the afternoon batch is finished, I will bring a fresh sack of fine flour by the town hall."}`, f.AgentID)},
+		{ID: 103, Tick: 415, PeerID: peerID, EventType: "TRANSFER", RawPayload: fmt.Sprintf(`{"from":%q,"to":%q,"item":"herbal_tea","quantity":1}`, peerID, f.AgentID)},
+	}
+	for _, ev := range f.UnreflectedEvts {
+		if ev.PeerID != "" && ev.PeerID != f.AgentID {
+			peerID = ev.PeerID
+			for _, r := range f.Relationships {
+				if r.PeerID == peerID {
+					prevRel = r
+					break
+				}
+			}
+			var matching []memory.EventRecord
+			for _, candidate := range f.UnreflectedEvts {
+				if candidate.PeerID == peerID {
+					matching = append(matching, candidate)
+				}
+			}
+			if len(matching) > 0 {
+				relEvents = matching
+			}
+			break
+		}
+	}
+
+	synth := memory.NewReflectionSynthesizer(nil, nil, f.AgentID, 0, 0)
+	relPrompt := synth.BuildReflectionPrompt(peerID, relEvents, prevRel)
 	cases = append(cases, testCase{
 		Category:   "memory_relationship",
 		Prompt:     relPrompt,
@@ -437,19 +917,23 @@ Task: `
 		},
 	})
 
-	// Production Memory Prompt 2: Self-Identity Reflection (Eldon the Millwright)
-	eldonTraits := []memory.IdentityTrait{
-		{Key: "craft_philosophy", Value: "Preventative maintenance keeps the waterwheel turning smoothly.", SalienceScore: 8},
+	// Production Memory Prompt 2: Self-Identity Reflection
+	selfEvents := []memory.EventRecord{
+		{ID: 201, Tick: 420, PeerID: f.AgentID, EventType: "LOOK", RawPayload: `{"location":"town_mill","observation":"Main drive axle grease levels are low and sediment is building up in the millrace intake channel."}`},
+		{ID: 202, Tick: 422, PeerID: f.AgentID, EventType: "REST", RawPayload: `{"location":"home","energy":44,"hunger":77,"reason":"Pausing before noon shift to recover energy and inspect millrace clearance."}`},
+		{ID: 203, Tick: 425, PeerID: f.AgentID, EventType: "STATUS", RawPayload: `{"inventory":["iron_wrench","wheat","flour"],"energy":68,"hunger":79}`},
 	}
-	eldonRecentRefs := []memory.SelfReflection{
-		{Tick: 390, ReflectionText: "Replaced a worn wooden cog on the secondary drive shaft before dawn."},
+	var ownUnreflected []memory.EventRecord
+	for _, ev := range f.UnreflectedEvts {
+		if ev.PeerID == f.AgentID {
+			ownUnreflected = append(ownUnreflected, ev)
+		}
 	}
-	eldonEvents := []memory.EventRecord{
-		{ID: 201, Tick: 420, PeerID: "eldon_millwright", EventType: "LOOK", RawPayload: `{"location":"town_mill","observation":"Main drive axle grease levels are low and sediment is building up in the millrace intake channel."}`},
-		{ID: 202, Tick: 422, PeerID: "eldon_millwright", EventType: "REST", RawPayload: `{"location":"eldons_room","energy":44,"hunger":77,"reason":"Pausing before noon shift to recover energy and inspect millrace clearance."}`},
-		{ID: 203, Tick: 425, PeerID: "eldon_millwright", EventType: "STATUS", RawPayload: `{"inventory":["iron_wrench","wheat","flour"],"energy":68,"hunger":79}`},
+	if len(ownUnreflected) > 0 {
+		selfEvents = ownUnreflected
 	}
-	selfPrompt := memory.BuildSelfIdentityPrompt("eldon_millwright", 425, eldonTraits, eldonRecentRefs, eldonEvents)
+
+	selfPrompt := synth.BuildSelfIdentityPrompt(425, f.Traits, f.SelfReflections, selfEvents)
 	cases = append(cases, testCase{
 		Category:   "memory_self_identity",
 		Prompt:     selfPrompt,
@@ -470,21 +954,12 @@ Task: `
 		},
 	})
 
-	// Production Memory Prompt 3: Personal Projects Synthesis (Eldon)
-	existingProjects := []memory.PersonalProject{
-		{
-			ID:          "millrace-sediment-guard",
-			Title:       "Install removable grate on millrace intake",
-			Motivation:  "Stop river silt from fouling the waterwheel paddles before evening grain deliveries",
-			Status:      "active",
-			Progress:    "Inspected intake channel and measured width",
-			NextStep:    "Source iron bars from Gideon at the forge",
-			People:      []string{"gideon_forge"},
-			Locations:   []string{"town_mill", "blacksmith"},
-			UpdatedTick: 400,
-		},
+	// Production Memory Prompt 3: Personal Projects Synthesis
+	projEvents := selfEvents
+	if len(f.ProjectEvts) > 0 {
+		projEvents = f.ProjectEvts
 	}
-	projectsPrompt, err := memory.BuildProjectsPrompt(eldonEvents, existingProjects)
+	projectsPrompt, err := memory.BuildProjectsPrompt(projEvents, f.Projects)
 	if err != nil {
 		return nil, err
 	}
@@ -753,3 +1228,4 @@ Provide your evaluation in valid JSON format:
 	}
 	return "unsupported judge provider"
 }
+
