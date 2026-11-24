@@ -35,6 +35,7 @@ type BenchmarkResult struct {
 	RawJSONValid    bool    `json:"raw_json_valid"`
 	JSONValid       bool    `json:"json_valid"`
 	IntentValid     bool    `json:"intent_valid"`
+	ActionMatched   bool    `json:"action_matched"`
 	ValidationError string  `json:"validation_error,omitempty"`
 	JudgeEvaluation string  `json:"judge_evaluation,omitempty"`
 	Timestamp       string  `json:"timestamp"`
@@ -61,25 +62,38 @@ type ModelReport struct {
 }
 
 type ModelSummary struct {
-	ModelName        string  `json:"model_name"`
-	Backend          string  `json:"backend"`
-	ContextSize      int     `json:"context_size"`
-	TotalPrompts     int     `json:"total_prompts"`
-	RawJSONValidCnt  int     `json:"raw_json_valid_count"`
-	JSONValidCount   int     `json:"json_valid_count"`
-	IntentValidCount int     `json:"intent_valid_count"`
-	RawJSONValidPct  float64 `json:"raw_json_valid_pct"`
-	JSONValidPct     float64 `json:"json_valid_pct"`
-	IntentValidPct   float64 `json:"intent_valid_pct"`
-	AvgTokensPerSec  float64 `json:"avg_tokens_per_sec"`
-	AvgDurationMs    float64 `json:"avg_duration_ms"`
+	ModelName           string  `json:"model_name"`
+	Backend             string  `json:"backend"`
+	ContextSize         int     `json:"context_size"`
+	TotalPrompts        int     `json:"total_prompts"`
+	RawJSONValidCnt     int     `json:"raw_json_valid_count"`
+	JSONValidCount      int     `json:"json_valid_count"`
+	IntentValidCount    int     `json:"intent_valid_count"`
+	ActionMatchCount    int     `json:"action_match_count"`
+	RawJSONValidPct     float64 `json:"raw_json_valid_pct"`
+	JSONValidPct        float64 `json:"json_valid_pct"`
+	IntentValidPct      float64 `json:"intent_valid_pct"`
+	ActionMatchPct      float64 `json:"action_match_pct"`
+	SmallPrompts        int     `json:"small_prompts"`
+	SmallIntentPct      float64 `json:"small_intent_pct"`
+	SmallActionMatchPct float64 `json:"small_action_match_pct"`
+	SmallAvgDurationMs  float64 `json:"small_avg_duration_ms"`
+	RegPrompts          int     `json:"reg_prompts"`
+	RegIntentPct        float64 `json:"reg_intent_pct"`
+	RegActionMatchPct   float64 `json:"reg_action_match_pct"`
+	RegAvgDurationMs    float64 `json:"reg_avg_duration_ms"`
+	MemPrompts          int     `json:"mem_prompts"`
+	MemJSONPct          float64 `json:"mem_json_pct"`
+	AvgTokensPerSec     float64 `json:"avg_tokens_per_sec"`
+	AvgDurationMs       float64 `json:"avg_duration_ms"`
 }
 
 type testCase struct {
-	Category     string
-	Prompt       string
-	UseGrammar   bool
-	ValidateFunc func(output string) (jsonValid bool, intentValid bool, errStr string)
+	Category        string
+	Prompt          string
+	UseGrammar      bool
+	ExpectedActions []string
+	ValidateFunc    func(output string) (jsonValid bool, intentValid bool, errStr string)
 }
 
 type characterFixture struct {
@@ -118,7 +132,7 @@ func main() {
 	judgeProviderFlag := flag.String("judge-provider", "", "Online LLM judge provider (e.g., openai, gemini)")
 	judgeModelFlag := flag.String("judge-model", "", "Online LLM judge model name (defaults: gemini-2.5-flash for gemini, gpt-4o for openai)")
 	judgeApiKeyFlag := flag.String("judge-api-key", "", "Online LLM judge API key")
-	rejudgeFlag := flag.Bool("rejudge", false, "Re-run LLM judge only on existing JSON reports in --output-dir where judge_evaluation is missing or errored")
+	rejudgeFlag := flag.Bool("rejudge", false, "Re-score action matches and re-run LLM judge on existing JSON reports in --output-dir")
 	flag.Parse()
 
 	judgeProvider := strings.ToLower(strings.TrimSpace(*judgeProviderFlag))
@@ -140,9 +154,6 @@ func main() {
 	}
 
 	if *rejudgeFlag {
-		if judgeProvider == "" || *judgeApiKeyFlag == "" {
-			log.Fatalf("Error: --rejudge requires --judge-provider and --judge-api-key")
-		}
 		rejudgeReports(*outputDirFlag, judgeProvider, judgeModel, *judgeApiKeyFlag)
 		return
 	}
@@ -338,6 +349,7 @@ func main() {
 					RawJSONValid:    rawJSONValid,
 					JSONValid:       jsonValid,
 					IntentValid:     intentValid,
+					ActionMatched:   intentValid && checkActionMatch(tc.Category, output, tc.ExpectedActions),
 					ValidationError: valErrStr,
 					JudgeEvaluation: judgeEval,
 					Timestamp:       time.Now().Format(time.RFC3339),
@@ -402,6 +414,7 @@ func loadCharacterFixture(dbPath, agentIDFlag string) (*characterFixture, error)
 	if agentID == "" && dbPath != "" {
 		stem := strings.TrimSuffix(filepath.Base(dbPath), filepath.Ext(dbPath))
 		stem = strings.TrimSuffix(stem, "_memory")
+		stem = strings.TrimPrefix(stem, "memory_")
 		if stem != "" {
 			agentID = stem
 		}
@@ -678,10 +691,11 @@ func buildGameplayCasesForMode(f *characterFixture, smallSystem bool) []testCase
 		}`
 		_ = cm.IngestDirectResponse([]byte(syncPayload))
 		cases = append(cases, testCase{
-			Category:     fmt.Sprintf("action_needs_%s", modeLabel),
-			Prompt:       cm.BuildPrompt(peerMems, locMems),
-			UseGrammar:   true,
-			ValidateFunc: validateGameIntent,
+			Category:        fmt.Sprintf("action_needs_%s", modeLabel),
+			Prompt:          cm.BuildPrompt(peerMems, locMems),
+			UseGrammar:      true,
+			ExpectedActions: []string{"EAT"},
+			ValidateFunc:    validateGameIntent,
 		})
 	}
 
@@ -739,10 +753,11 @@ func buildGameplayCasesForMode(f *characterFixture, smallSystem bool) []testCase
 		}`
 		_ = cm.IngestDirectResponse([]byte(syncPayload))
 		cases = append(cases, testCase{
-			Category:     fmt.Sprintf("action_craft_%s", modeLabel),
-			Prompt:       cm.BuildPrompt(peerMems, locMems),
-			UseGrammar:   true,
-			ValidateFunc: validateGameIntent,
+			Category:        fmt.Sprintf("action_craft_%s", modeLabel),
+			Prompt:          cm.BuildPrompt(peerMems, locMems),
+			UseGrammar:      true,
+			ExpectedActions: []string{"CRAFT"},
+			ValidateFunc:    validateGameIntent,
 		})
 	}
 
@@ -788,10 +803,11 @@ func buildGameplayCasesForMode(f *characterFixture, smallSystem bool) []testCase
 		}`
 		_ = cm.IngestDirectResponse([]byte(syncPayload))
 		cases = append(cases, testCase{
-			Category:     fmt.Sprintf("action_travel_%s", modeLabel),
-			Prompt:       cm.BuildPrompt(peerMems, locMems),
-			UseGrammar:   true,
-			ValidateFunc: validateGameIntent,
+			Category:        fmt.Sprintf("action_travel_%s", modeLabel),
+			Prompt:          cm.BuildPrompt(peerMems, locMems),
+			UseGrammar:      true,
+			ExpectedActions: []string{"TRAVEL", "MOVE"},
+			ValidateFunc:    validateGameIntent,
 		})
 	}
 
@@ -836,10 +852,11 @@ func buildGameplayCasesForMode(f *characterFixture, smallSystem bool) []testCase
 		_ = cm.IngestDirectResponse([]byte(syncPayload))
 		cm.IngestChat("eleanor_clerk", "Good morning! Do you have any fine flour ready for the town pantry yet?")
 		cases = append(cases, testCase{
-			Category:     fmt.Sprintf("action_chat_%s", modeLabel),
-			Prompt:       cm.BuildPrompt(peerMems, locMems),
-			UseGrammar:   true,
-			ValidateFunc: validateGameIntent,
+			Category:        fmt.Sprintf("action_chat_%s", modeLabel),
+			Prompt:          cm.BuildPrompt(peerMems, locMems),
+			UseGrammar:      true,
+			ExpectedActions: []string{"CHAT"},
+			ValidateFunc:    validateGameIntent,
 		})
 	}
 
@@ -985,13 +1002,45 @@ func buildTestCases(f *characterFixture, promptMode string) ([]testCase, error) 
 
 func extractJSONObject(raw string) (string, bool) {
 	trimmed := strings.TrimSpace(raw)
-	start := strings.Index(trimmed, "{")
-	end := strings.LastIndex(trimmed, "}")
-	if start < 0 || end <= start {
+	objStart, objEnd := strings.Index(trimmed, "{"), strings.LastIndex(trimmed, "}")
+	arrStart, arrEnd := strings.Index(trimmed, "["), strings.LastIndex(trimmed, "]")
+	if arrStart >= 0 && arrEnd > arrStart && (objStart < 0 || arrStart < objStart) {
+		candidate := trimmed[arrStart : arrEnd+1]
+		return candidate, json.Valid([]byte(candidate))
+	}
+	if objStart < 0 || objEnd <= objStart {
 		return "", false
 	}
-	candidate := trimmed[start : end+1]
+	candidate := trimmed[objStart : objEnd+1]
 	return candidate, json.Valid([]byte(candidate))
+}
+
+func checkActionMatch(category string, output string, expected []string) bool {
+	if len(expected) == 0 {
+		switch {
+		case strings.HasPrefix(category, "action_needs"):
+			expected = []string{"EAT"}
+		case strings.HasPrefix(category, "action_craft"):
+			expected = []string{"CRAFT"}
+		case strings.HasPrefix(category, "action_travel"):
+			expected = []string{"TRAVEL", "MOVE"}
+		case strings.HasPrefix(category, "action_chat"):
+			expected = []string{"CHAT"}
+		default:
+			return false
+		}
+	}
+	intent, err := dispatcher.ParseAndRepairIntent(output)
+	if err != nil {
+		return false
+	}
+	got := strings.ToUpper(strings.TrimSpace(intent.Action))
+	for _, exp := range expected {
+		if got == strings.ToUpper(exp) {
+			return true
+		}
+	}
+	return false
 }
 
 func computeSummary(report ModelReport) ModelSummary {
@@ -999,6 +1048,12 @@ func computeSummary(report ModelReport) ModelSummary {
 	rawJSONValidCount := 0
 	jsonValidCount := 0
 	intentValidCount := 0
+	actionMatchCount := 0
+	smallPrompts, smallIntentCount, smallActionCount := 0, 0, 0
+	var smallDurationMs int64
+	regPrompts, regIntentCount, regActionCount := 0, 0, 0
+	var regDurationMs int64
+	memPrompts, memJSONCount := 0, 0
 	var totalTokensPerSec float64
 	var totalDurationMs int64
 
@@ -1012,42 +1067,103 @@ func computeSummary(report ModelReport) ModelSummary {
 		if r.IntentValid {
 			intentValidCount++
 		}
+		matched := r.ActionMatched || (r.IntentValid && checkActionMatch(r.PromptCategory, r.OutputText, nil))
+		if matched {
+			actionMatchCount++
+		}
+
+		switch {
+		case strings.HasSuffix(r.PromptCategory, "_small"):
+			smallPrompts++
+			if r.IntentValid {
+				smallIntentCount++
+			}
+			if matched {
+				smallActionCount++
+			}
+			smallDurationMs += r.DurationMs
+		case strings.HasSuffix(r.PromptCategory, "_regular"):
+			regPrompts++
+			if r.IntentValid {
+				regIntentCount++
+			}
+			if matched {
+				regActionCount++
+			}
+			regDurationMs += r.DurationMs
+		case strings.HasPrefix(r.PromptCategory, "memory_"):
+			memPrompts++
+			if r.JSONValid {
+				memJSONCount++
+			}
+		}
+
 		totalTokensPerSec += r.TokensPerSec
 		totalDurationMs += r.DurationMs
 	}
 
-	var rawJSONValidPct, jsonValidPct, intentValidPct, avgTokensPerSec, avgDurationMs float64
+	var s ModelSummary
+	s.ModelName = report.ModelName
+	s.Backend = report.Backend
+	s.ContextSize = report.ContextSize
+	s.TotalPrompts = totalPrompts
+	s.RawJSONValidCnt = rawJSONValidCount
+	s.JSONValidCount = jsonValidCount
+	s.IntentValidCount = intentValidCount
+	s.ActionMatchCount = actionMatchCount
+	s.SmallPrompts = smallPrompts
+	s.RegPrompts = regPrompts
+	s.MemPrompts = memPrompts
+
 	if totalPrompts > 0 {
-		rawJSONValidPct = float64(rawJSONValidCount) / float64(totalPrompts) * 100.0
-		jsonValidPct = float64(jsonValidCount) / float64(totalPrompts) * 100.0
-		intentValidPct = float64(intentValidCount) / float64(totalPrompts) * 100.0
-		avgTokensPerSec = totalTokensPerSec / float64(totalPrompts)
-		avgDurationMs = float64(totalDurationMs) / float64(totalPrompts)
+		s.RawJSONValidPct = float64(rawJSONValidCount) / float64(totalPrompts) * 100.0
+		s.JSONValidPct = float64(jsonValidCount) / float64(totalPrompts) * 100.0
+		s.IntentValidPct = float64(intentValidCount) / float64(totalPrompts) * 100.0
+		s.ActionMatchPct = float64(actionMatchCount) / float64(totalPrompts) * 100.0
+		s.AvgTokensPerSec = totalTokensPerSec / float64(totalPrompts)
+		s.AvgDurationMs = float64(totalDurationMs) / float64(totalPrompts)
+	}
+	if smallPrompts > 0 {
+		s.SmallIntentPct = float64(smallIntentCount) / float64(smallPrompts) * 100.0
+		s.SmallActionMatchPct = float64(smallActionCount) / float64(smallPrompts) * 100.0
+		s.SmallAvgDurationMs = float64(smallDurationMs) / float64(smallPrompts)
+	}
+	if regPrompts > 0 {
+		s.RegIntentPct = float64(regIntentCount) / float64(regPrompts) * 100.0
+		s.RegActionMatchPct = float64(regActionCount) / float64(regPrompts) * 100.0
+		s.RegAvgDurationMs = float64(regDurationMs) / float64(regPrompts)
+	}
+	if memPrompts > 0 {
+		s.MemJSONPct = float64(memJSONCount) / float64(memPrompts) * 100.0
 	}
 
-	return ModelSummary{
-		ModelName:        report.ModelName,
-		Backend:          report.Backend,
-		ContextSize:      report.ContextSize,
-		TotalPrompts:     totalPrompts,
-		RawJSONValidCnt:  rawJSONValidCount,
-		JSONValidCount:   jsonValidCount,
-		IntentValidCount: intentValidCount,
-		RawJSONValidPct:  rawJSONValidPct,
-		JSONValidPct:     jsonValidPct,
-		IntentValidPct:   intentValidPct,
-		AvgTokensPerSec:  avgTokensPerSec,
-		AvgDurationMs:    avgDurationMs,
-	}
+	return s
 }
 
 func printAndSaveSummary(summaries []ModelSummary, outputDir string) {
 	log.Print("\n=== BENCHMARK SUMMARY REPORT ===")
-	log.Printf("%-35s | %-7s | %-5s | %-9s | %-9s | %-9s | %-8s", "Model", "Context", "Total", "RawJSON %", "JSON %", "Intent %", "Tok/s")
-	log.Printf("%s", strings.Repeat("-", 98))
+	log.Printf("%-35s | %-4s | %-12s | %-9s | %-8s | %-10s | %-7s | %-8s | %-8s",
+		"Model", "Ctx", "Small Intent", "Small Act", "Small ms", "Reg Intent", "Reg Act", "Reg ms", "Mem JSON")
+	log.Printf("%s", strings.Repeat("-", 120))
 	for _, s := range summaries {
-		log.Printf("%-35s | %-7d | %-5d | %8.1f%% | %8.1f%% | %8.1f%% | %8.2f",
-			s.ModelName, s.ContextSize, s.TotalPrompts, s.RawJSONValidPct, s.JSONValidPct, s.IntentValidPct, s.AvgTokensPerSec)
+		smallInt, smallAct, smallMs := "N/A", "N/A", "N/A"
+		if s.SmallPrompts > 0 {
+			smallInt = fmt.Sprintf("%5.1f%%", s.SmallIntentPct)
+			smallAct = fmt.Sprintf("%5.1f%%", s.SmallActionMatchPct)
+			smallMs = fmt.Sprintf("%8.0f", s.SmallAvgDurationMs)
+		}
+		regInt, regAct, regMs := "N/A", "N/A", "N/A"
+		if s.RegPrompts > 0 {
+			regInt = fmt.Sprintf("%5.1f%%", s.RegIntentPct)
+			regAct = fmt.Sprintf("%5.1f%%", s.RegActionMatchPct)
+			regMs = fmt.Sprintf("%8.0f", s.RegAvgDurationMs)
+		}
+		memJSON := "N/A"
+		if s.MemPrompts > 0 {
+			memJSON = fmt.Sprintf("%5.1f%%", s.MemJSONPct)
+		}
+		log.Printf("%-35s | %3dk | %12s | %9s | %8s | %10s | %7s | %8s | %8s",
+			s.ModelName, s.ContextSize/1024, smallInt, smallAct, smallMs, regInt, regAct, regMs, memJSON)
 	}
 
 	summaryFilePath := filepath.Join(outputDir, "summary.json")
@@ -1086,7 +1202,24 @@ func rejudgeReports(outputDir, provider, modelName, apiKey string) {
 		updated := false
 		for i := range report.Results {
 			res := &report.Results[i]
-			if !strings.HasPrefix(res.PromptCategory, "memory_") && res.PromptIndex < 4 {
+
+			actionMatched := res.IntentValid && checkActionMatch(res.PromptCategory, res.OutputText, nil)
+			if res.ActionMatched != actionMatched {
+				res.ActionMatched = actionMatched
+				updated = true
+			}
+			if res.PromptCategory == "memory_projects" && !res.JSONValid {
+				if cleaned, ok := extractJSONObject(res.OutputText); ok {
+					if _, parseErr := memory.ParseProjectUpdates(cleaned, 425); parseErr == nil {
+						res.JSONValid = true
+						res.IntentValid = true
+						res.ValidationError = ""
+						updated = true
+					}
+				}
+			}
+
+			if provider == "" || apiKey == "" || !strings.HasPrefix(res.PromptCategory, "memory_") {
 				continue
 			}
 			needsJudge := strings.TrimSpace(res.JudgeEvaluation) == "" ||
