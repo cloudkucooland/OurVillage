@@ -137,17 +137,13 @@ func (p *LlamaPureEngine) buildGenerateOptions(opts GenerationOptions) llama.Gen
 		genOpts.MaxTokens = 512
 	}
 
-	grammar := opts.Grammar
-	if grammar == "" {
-		grammar = p.defaultGrammar
-	}
-	if grammar != "" {
-		genOpts.Sampling.Grammar = grammar
+	if opts.Grammar != "" {
+		genOpts.Sampling.Grammar = opts.Grammar
 	}
 
 	if opts.Temperature > 0 {
 		genOpts.Sampling.Temperature = opts.Temperature
-	} else if grammar != "" {
+	} else if opts.Grammar != "" {
 		genOpts.Sampling.Temperature = 0.25
 	} else if p.config.Temperature > 0 {
 		genOpts.Sampling.Temperature = p.config.Temperature
