@@ -273,4 +273,3 @@ func (m TUIModel) activeTabContent() string {
 		return ""
 	}
 }
-

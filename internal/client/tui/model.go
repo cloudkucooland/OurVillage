@@ -214,7 +214,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.listenSynthesisStatus()
 
-		case selfIdentityMsg:
+	case selfIdentityMsg:
 		m.identityLoadError = ""
 		if msg.err != nil {
 			m.identityLoadError = msg.err.Error()
@@ -331,4 +331,3 @@ func (m *TUIModel) refreshViewportContent(resetToTop bool) {
 		m.viewport.GotoBottom()
 	}
 }
-
