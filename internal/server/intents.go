@@ -371,40 +371,40 @@ func (s *Server) handleTransfer(agentID string, intentID string, rawPayload json
 
 	tx, err := s.db.Begin()
 	if err != nil {
-		s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
-		return
+	        s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
+	        return
 	}
 	defer tx.Rollback()
 
+	var recipientExists int
+	err = tx.QueryRow("SELECT COUNT(*) FROM characters WHERE id = ?", payload.RecipientID).Scan(&recipientExists)
+	if err != nil || recipientExists == 0 {
+	        s.sendDirectError(agentID, intentID, "RECIPIENT_NOT_FOUND", fmt.Sprintf("Recipient %s not found", payload.RecipientID))
+	        return
+	}
+
 	if payload.Amount > 0 {
-		var senderGold int
-		err := tx.QueryRow("SELECT gold FROM characters WHERE id = ?", agentID).Scan(&senderGold)
-		if err != nil {
-			s.sendDirectError(agentID, intentID, "SENDER_NOT_FOUND", "Sender character not found")
-			return
-		}
-		if senderGold < payload.Amount {
-			s.sendDirectError(agentID, intentID, "INSUFFICIENT_GOLD", fmt.Sprintf("Have %d gold, requested transfer of %d", senderGold, payload.Amount))
-			return
-		}
+	        var senderGold int
+	        err := tx.QueryRow("SELECT gold FROM characters WHERE id = ?", agentID).Scan(&senderGold)
+	        if err != nil {
+	                s.sendDirectError(agentID, intentID, "SENDER_NOT_FOUND", "Sender character not found")
+	                return
+	        }
+	        if senderGold < payload.Amount {
+	                s.sendDirectError(agentID, intentID, "INSUFFICIENT_GOLD", fmt.Sprintf("Have %d gold, requested transfer of %d", senderGold, payload.Amount))
+	                return
+	        }
 
-		var recipientExists int
-		err = tx.QueryRow("SELECT COUNT(*) FROM characters WHERE id = ?", payload.RecipientID).Scan(&recipientExists)
-		if err != nil || recipientExists == 0 {
-			s.sendDirectError(agentID, intentID, "RECIPIENT_NOT_FOUND", fmt.Sprintf("Recipient %s not found", payload.RecipientID))
-			return
-		}
-
-		_, err = tx.Exec("UPDATE characters SET gold = gold - ? WHERE id = ?", payload.Amount, agentID)
-		if err != nil {
-			s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
-			return
-		}
-		_, err = tx.Exec("UPDATE characters SET gold = gold + ? WHERE id = ?", payload.Amount, payload.RecipientID)
-		if err != nil {
-			s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
-			return
-		}
+	        _, err = tx.Exec("UPDATE characters SET gold = gold - ? WHERE id = ?", payload.Amount, agentID)
+	        if err != nil {
+	                s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
+	                return
+	        }
+	        _, err = tx.Exec("UPDATE characters SET gold = gold + ? WHERE id = ?", payload.Amount, payload.RecipientID)
+	        if err != nil {
+	                s.sendDirectError(agentID, intentID, "DB_ERROR", err.Error())
+	                return
+	        }
 	}
 
 	if payload.ItemID != "" && payload.Quantity > 0 {

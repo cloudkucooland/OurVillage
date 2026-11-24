@@ -55,6 +55,30 @@ var defaultFarmCrops = []FarmCrop{
 		GrowthTicks:   24,
 		YieldQuantity: 3,
 	},
+	{
+		ID:            "chamomile",
+		Name:          "Chamomile",
+		SeedItemID:    "chamomile_seeds",
+		HarvestItemID: "chamomile",
+		GrowthTicks:   20,
+		YieldQuantity: 3,
+	},
+	{
+		ID:            "hops",
+		Name:          "Wild Hops",
+		SeedItemID:    "hop_seeds",
+		HarvestItemID: "wild_hops",
+		GrowthTicks:   32,
+		YieldQuantity: 3,
+	},
+	{
+		ID:            "culinary_herbs",
+		Name:          "Culinary Herbs",
+		SeedItemID:    "herb_seeds",
+		HarvestItemID: "culinary_herbs",
+		GrowthTicks:   16,
+		YieldQuantity: 4,
+	},
 }
 
 // SeedFarming ensures the communal field, crop items, definitions, and plots exist without resetting world state.

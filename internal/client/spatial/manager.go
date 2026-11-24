@@ -1491,7 +1491,40 @@ func (cm *ContextManager) Inventory() []string {
 }
 
 func (cm *ContextManager) FormatSensoryLogs() []string {
-	cm.mu.RLock()
-	defer cm.mu.RUnlock()
-	return cm.displayBuffer.FormatLogs()
+        cm.mu.RLock()
+        defer cm.mu.RUnlock()
+        return cm.displayBuffer.FormatLogs()
+}
+
+func (cm *ContextManager) ConnectedLocationIDs() []string {
+        cm.mu.RLock()
+        defer cm.mu.RUnlock()
+        var ids []string
+        for _, c := range cm.currentConnectedLocations {
+                ids = append(ids, c.LocationID)
+        }
+        return ids
+}
+
+func (cm *ContextManager) InventoryItemIDs() []string {
+        cm.mu.RLock()
+        defer cm.mu.RUnlock()
+        var ids []string
+        for _, item := range cm.inventoryDetails {
+                ids = append(ids, item.ItemID)
+        }
+        if len(ids) == 0 {
+                return cm.inventory
+        }
+        return ids
+}
+
+func (cm *ContextManager) AvailableRecipeIDs() []string {
+        cm.mu.RLock()
+        defer cm.mu.RUnlock()
+        var ids []string
+        for _, r := range cm.currentAvailableRecipes {
+                ids = append(ids, r.RecipeID)
+        }
+        return ids
 }

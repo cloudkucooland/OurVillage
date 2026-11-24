@@ -158,6 +158,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.ClearScreen
 		case tea.KeyTab:
 			m.tab = (m.tab + 1) % 6
+			m.refreshViewportContent(true)
 			if m.tab == 3 {
 				return m, m.loadSelfIdentity()
 			} else if m.tab == 4 {
@@ -185,17 +186,10 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.Height = 5
 		}
 		m.textInput.Width = msg.Width - 6
+		m.refreshViewportContent(false)
 
 	case TickMsg:
-		// Periodic refresh of viewport content from sensory ring buffer
-		logs := m.ctxMgr.FormatSensoryLogs()
-		content := strings.Join(logs, "\n")
-		wrapped := lipgloss.NewStyle().Width(m.viewport.Width).Render(content)
-		followTail := m.viewport.AtBottom()
-		m.viewport.SetContent(wrapped)
-		if followTail {
-			m.viewport.GotoBottom()
-		}
+		m.refreshViewportContent(false)
 		return m, tea.Tick(1*time.Second, func(t time.Time) tea.Msg {
 			return TickMsg(t)
 		})
@@ -220,13 +214,16 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.listenSynthesisStatus()
 
-	case selfIdentityMsg:
+		case selfIdentityMsg:
 		m.identityLoadError = ""
 		if msg.err != nil {
 			m.identityLoadError = msg.err.Error()
 		} else {
 			m.identityTraits = msg.traits
 			m.selfReflections = msg.reflections
+		}
+		if m.tab == 3 {
+			m.refreshViewportContent(false)
 		}
 		return m, nil
 
@@ -237,6 +234,9 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.personalProjects = msg.projects
 		}
+		if m.tab == 4 {
+			m.refreshViewportContent(false)
+		}
 		return m, nil
 
 	case locationMemoryMsg:
@@ -245,6 +245,9 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.locationLoadError = msg.err.Error()
 		} else {
 			m.locationMemories = msg.memories
+		}
+		if m.tab == 5 {
+			m.refreshViewportContent(false)
 		}
 		return m, nil
 	}
@@ -308,3 +311,24 @@ func (m *TUIModel) handleInput(input string) tea.Cmd {
 	// Default normal text input treated as subconscious influence hint
 	return m.influenceCmd(input)
 }
+
+func (m *TUIModel) refreshViewportContent(resetToTop bool) {
+	content := m.activeTabContent()
+	width := m.viewport.Width
+	if width <= 0 {
+		width = 80
+	}
+	wrapped := lipgloss.NewStyle().Width(width).Render(content)
+	followTail := m.tab == 0 && m.viewport.AtBottom()
+	m.viewport.SetContent(wrapped)
+	if resetToTop {
+		if m.tab == 0 {
+			m.viewport.GotoBottom()
+		} else {
+			m.viewport.GotoTop()
+		}
+	} else if followTail {
+		m.viewport.GotoBottom()
+	}
+}
+

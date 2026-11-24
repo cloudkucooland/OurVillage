@@ -93,55 +93,79 @@ func (m TUIModel) View() string {
 	tabRow := strings.Join(renderedTabs, "  ")
 
 	// 3. Tab Content View
-	var contentBody string
+	mainPane := paneStyle.Width(m.width - 2).Render(tabRow + "\n\n" + m.viewport.View())
+
+	// 4. Status / Feedback line
+	var statusLine string
+	if m.errMessage != "" {
+		statusLine = errorStyle.Render("ERROR: " + m.errMessage)
+		if m.backgroundStatus != "" {
+			statusLine += "\n" + infoStyle.Render(m.backgroundStatus)
+		}
+	} else if m.isThinking {
+		statusLine = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true).Render("🧠 LLM Engine active (thinking & generating intent)...")
+		if m.backgroundStatus != "" {
+			statusLine += "\n" + infoStyle.Render(m.backgroundStatus)
+		}
+	} else if m.backgroundStatus != "" {
+		statusLine = infoStyle.Render(m.backgroundStatus)
+	} else if m.infoMessage != "" {
+		statusLine = infoStyle.Render("INFO: " + m.infoMessage)
+	} else {
+		statusLine = "Type /help for slash commands."
+	}
+
+	// 5. Input Bar
+	inputView := m.textInput.View()
+
+	return fmt.Sprintf("%s\n%s\n%s\n%s", header, mainPane, statusLine, inputView)
+}
+
+func (m TUIModel) activeTabContent() string {
 	switch m.tab {
 	case 0:
-		contentBody = m.viewport.View()
+		logs := m.ctxMgr.FormatSensoryLogs()
+		return strings.Join(logs, "\n")
 	case 1:
 		inv := m.ctxMgr.Inventory()
 		if len(inv) == 0 {
-			contentBody = "Inventory is empty."
-		} else {
-			contentBody = "=== INVENTORY ===\n" + strings.Join(inv, "\n")
+			return "Inventory is empty."
 		}
+		return "=== INVENTORY ===\n" + strings.Join(inv, "\n")
 	case 2:
 		known := m.ctxMgr.KnownCharacterIDs()
 		if len(known) == 0 {
-			contentBody = "No known peers recorded."
-		} else {
-			// Sort alphabetically by character name
-			sort.Slice(known, func(i, j int) bool {
-				nameI := m.ctxMgr.GetCharacterName(known[i])
-				nameJ := m.ctxMgr.GetCharacterName(known[j])
-				return nameI < nameJ
-			})
-
-			var peerMems []spatial.PeerMemoryContext
-			if m.fetchPeerMemories != nil {
-				peerMems = m.fetchPeerMemories()
-			}
-			memMap := make(map[string][]string)
-			for _, pm := range peerMems {
-				memMap[pm.PeerID] = pm.Reflections
-			}
-
-			var lines []string
-			lines = append(lines, "=== KNOWN CHARACTERS & RELATIONSHIPS ===")
-			for _, pid := range known {
-				name := m.ctxMgr.GetCharacterName(pid)
-				lines = append(lines, fmt.Sprintf("• %s (%s)", name, pid))
-				refs := memMap[pid]
-				if len(refs) == 0 {
-					lines = append(lines, "  [No recorded memories or perceptions yet]")
-				} else {
-					for _, r := range refs {
-						lines = append(lines, fmt.Sprintf("  - Reflection: %s", r))
-					}
-				}
-				lines = append(lines, "")
-			}
-			contentBody = strings.Join(lines, "\n")
+			return "No known peers recorded."
 		}
+		sort.Slice(known, func(i, j int) bool {
+			return m.ctxMgr.GetCharacterName(known[i]) < m.ctxMgr.GetCharacterName(known[j])
+		})
+
+		var peerMems []spatial.PeerMemoryContext
+		if m.fetchPeerMemories != nil {
+			peerMems = m.fetchPeerMemories()
+		}
+		memMap := make(map[string][]string)
+		for _, pm := range peerMems {
+			memMap[pm.PeerID] = pm.Reflections
+		}
+
+		var lines []string
+		lines = append(lines, "=== KNOWN CHARACTERS & RELATIONSHIPS ===")
+		for _, pid := range known {
+			name := m.ctxMgr.GetCharacterName(pid)
+			lines = append(lines, fmt.Sprintf("• %s (%s)", name, pid))
+			refs := memMap[pid]
+			if len(refs) == 0 {
+				lines = append(lines, "  [No recorded memories or perceptions yet]")
+			} else {
+				for _, r := range refs {
+					lines = append(lines, fmt.Sprintf("  - Reflection: %s", r))
+				}
+			}
+			lines = append(lines, "")
+		}
+		return strings.Join(lines, "\n")
 	case 3:
 		var lines []string
 		lines = append(lines, "=== CORE BELIEFS & IDENTITY TRAITS ===")
@@ -164,7 +188,7 @@ func (m TUIModel) View() string {
 				lines = append(lines, fmt.Sprintf("- [Tick %d] %s", reflection.Tick, reflection.ReflectionText))
 			}
 		}
-		contentBody = strings.Join(lines, "\n")
+		return strings.Join(lines, "\n")
 	case 4:
 		var lines []string
 		lines = append(lines, "=== PERSONAL PROJECTS ===")
@@ -193,7 +217,7 @@ func (m TUIModel) View() string {
 				lines = append(lines, "")
 			}
 		}
-		contentBody = strings.Join(lines, "\n")
+		return strings.Join(lines, "\n")
 	case 5:
 		var lines []string
 		lines = append(lines, "=== LOCATION KNOWLEDGE & MEMORIES ===")
@@ -244,33 +268,9 @@ func (m TUIModel) View() string {
 				lines = append(lines, "")
 			}
 		}
-		contentBody = strings.Join(lines, "\n")
+		return strings.Join(lines, "\n")
+	default:
+		return ""
 	}
-
-	mainPane := paneStyle.Width(m.width - 2).Render(tabRow + "\n\n" + contentBody)
-
-	// 4. Status / Feedback line
-	var statusLine string
-	if m.errMessage != "" {
-		statusLine = errorStyle.Render("ERROR: " + m.errMessage)
-		if m.backgroundStatus != "" {
-			statusLine += "\n" + infoStyle.Render(m.backgroundStatus)
-		}
-	} else if m.isThinking {
-		statusLine = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true).Render("🧠 LLM Engine active (thinking & generating intent)...")
-		if m.backgroundStatus != "" {
-			statusLine += "\n" + infoStyle.Render(m.backgroundStatus)
-		}
-	} else if m.backgroundStatus != "" {
-		statusLine = infoStyle.Render(m.backgroundStatus)
-	} else if m.infoMessage != "" {
-		statusLine = infoStyle.Render("INFO: " + m.infoMessage)
-	} else {
-		statusLine = "Type /help for slash commands."
-	}
-
-	// 5. Input Bar
-	inputView := m.textInput.View()
-
-	return fmt.Sprintf("%s\n%s\n%s\n%s", header, mainPane, statusLine, inputView)
 }
+

@@ -74,8 +74,15 @@ func (m PlayerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlL:
 			return m, tea.ClearScreen
 		case tea.KeyTab:
-			m.tab = (m.tab + 1) % 3
-			return m, nil
+		        val := strings.TrimSpace(m.textInput.Value())
+		        if val == "" {
+		                m.tab = (m.tab + 1) % 3
+		                return m, nil
+		        }
+		        completed := m.completeInput(val)
+		        m.textInput.SetValue(completed)
+		        m.textInput.SetCursor(len(completed))
+		        return m, nil
 		case tea.KeyEnter:
 			input := strings.TrimSpace(m.textInput.Value())
 			m.textInput.Reset()
@@ -406,9 +413,65 @@ func buildPlayerIntent(input string) (dispatcher.Intent, error) {
 		return dispatcher.Intent{}, fmt.Errorf("encode %s command: %w", action, err)
 	}
 	return dispatcher.ValidateIntent(dispatcher.Intent{
-		IntentID: dispatcher.GenerateIntentID(),
-		Source:   "player_tui",
-		Action:   action,
-		Payload:  payloadBytes,
+	        IntentID: dispatcher.GenerateIntentID(),
+	        Source:   "player_tui",
+	        Action:   action,
+	        Payload:  payloadBytes,
 	})
-}
+	}
+
+	func (m PlayerModel) completeInput(val string) string {
+	parts := strings.SplitN(val, " ", 2)
+	cmd := strings.ToLower(parts[0])
+
+	commands := []string{
+	        "/help", "/look", "/l", "/move", "/m", "/locations", "/locs",
+	        "/chat", "/c", "/transfer", "/give", "/forage", "/craft", "/buy", "/sell", "/status",
+	        "/eat", "/drink", "/drop", "/pickup", "/equip", "/unequip", "/rest",
+	}
+
+	if len(parts) == 1 {
+	        for _, c := range commands {
+	                if strings.HasPrefix(c, cmd) {
+	                        return c + " "
+	                }
+	        }
+	        return val
+	}
+
+	arg := parts[1]
+	switch cmd {
+	case "/move", "/m":
+	        locations := m.ctxMgr.ConnectedLocationIDs()
+	        if len(locations) == 0 {
+	                locations = []string{"town_square", "market", "tavern", "town_mill", "blacksmith", "bakery", "church", "school", "town_hall", "lumberjack_lodge", "herbalist", "deep_forest", "prairie", "village_field", "riverbank", "mine"}
+	        }
+	        for _, loc := range locations {
+	                if strings.HasPrefix(loc, arg) {
+	                        return parts[0] + " " + loc
+	                }
+	        }
+	case "/transfer", "/give":
+	        characters := m.ctxMgr.KnownCharacterIDs()
+	        for _, ch := range characters {
+	                if strings.HasPrefix(ch, arg) {
+	                        return parts[0] + " " + ch
+	                }
+	        }
+	case "/craft":
+	        recipes := m.ctxMgr.AvailableRecipeIDs()
+	        for _, rec := range recipes {
+	                if strings.HasPrefix(rec, arg) {
+	                        return parts[0] + " " + rec
+	                }
+	        }
+	case "/eat", "/drink", "/drop", "/equip":
+	        items := m.ctxMgr.InventoryItemIDs()
+	        for _, item := range items {
+	                if strings.HasPrefix(item, arg) {
+	                        return parts[0] + " " + item
+	                }
+	        }
+	}
+	return val
+	}

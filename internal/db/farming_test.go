@@ -111,8 +111,8 @@ func TestFarmPlotAndCropPerception(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(perception.Location.FarmCrops) != 2 {
-		t.Fatalf("available farm crops = %+v, want wheat and vegetables", perception.Location.FarmCrops)
+	if len(perception.Location.FarmCrops) != 5 {
+		t.Fatalf("available farm crops = %+v, want 5 crops", perception.Location.FarmCrops)
 	}
 	foundVegetables := false
 	for _, crop := range perception.Location.FarmCrops {
@@ -270,7 +270,7 @@ func TestExistingWorldReceivesAgricultureDataWithoutFullReseed(t *testing.T) {
 	`).Scan(&connectionCount); err != nil {
 		t.Fatal(err)
 	}
-	if fieldCount != 1 || seedItemCount != 1 || connectionCount != 1 || shopSeedCount != 1 || cropCount != 2 {
+	if fieldCount != 1 || seedItemCount != 1 || connectionCount != 1 || shopSeedCount != 1 || cropCount != 5 {
 		t.Fatalf("migration incomplete: field=%d seed=%d connection=%d shop_seed=%d crops=%d",
 			fieldCount, seedItemCount, connectionCount, shopSeedCount, cropCount)
 	}
