@@ -459,18 +459,6 @@ func NewContextManager(cfg ContextManagerConfig) *ContextManager {
 		cm.energy = 100
 	}
 
-	/* cm.locationRules["town_square"] = []string{
-		"Public gathering area.",
-	}
-	cm.locationRules["town_mill"] = []string{
-		"You must charge a fair fee (1-2 gold) for grinding wheat.",
-		"Only trade-related talk during work hours.",
-	}
-	cm.locationRules["tavern"] = []string{
-		"No unprovoked violence; brawls result in sheriff fines.",
-		"Trade, gossip, and drinks are encouraged.",
-	} */
-
 	return cm
 }
 
@@ -1387,6 +1375,7 @@ func (cm *ContextManager) BuildPrompt(peerMemories []PeerMemoryContext, location
 		sb.WriteString("- For one connected step, use MOVE; for multi-step journeys, use TRAVEL with the final destination ID.\n")
 		sb.WriteString("- Supported actions: CHAT, MOVE, TRAVEL, FORAGE, PLANT, HARVEST, REST, EAT, BUY, SELL, CRAFT. Match the payload to the action; MOVE and TRAVEL require target_location.\n")
 		sb.WriteString("- Output MUST be valid JSON only with thought, action, and payload fields.\n")
+		sb.WriteString("- Keep thought under 25 words.\n")
 	} else {
 		if cm.health < 40 || cm.hunger < 30 || cm.energy < 25 {
 			sb.WriteString("Your physical needs take priority over conversation right now. Take a concrete action (EAT, REST, BUY, FORAGE, or TRAVEL) before chatting. ")
